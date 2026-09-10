@@ -39,6 +39,13 @@ export interface SubmitOnboardingResult {
   submittedAt: string;
 }
 
+export interface UploadResult {
+  objectKey: string;
+  fileName: string;
+  fileSize: number;
+  uploadedAt: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getApiBase(): string {
@@ -46,34 +53,56 @@ function getApiBase(): string {
 }
 
 function buildPayload(formData: OnboardingFormData): Record<string, unknown> {
-  const { personalInfo: p, i9Data, employmentReference, safetyEducation, signatureData, uploadedDocuments: docs } = formData;
+  const { personalInfo: p, i9Data, w4Data, employmentReferences, safetyEducation, signatureData, uploadedDocuments: docs } = formData;
+
+  // I-9 fields are now the primary source of personal identity (user edits them directly in the I-9).
+  // Fall back to personalInfo for any field not yet set in i9Data.
+  const i9p = i9Data;
 
   return {
-    // Top-level fields validated by the Worker schema
-    firstName: p.firstName,
-    lastName: p.lastName,
-    email: p.email,
-    phone: p.phone,
+    // Top-level fields validated by the Worker schema — prefer i9Data (user may have edited in I-9)
+    firstName: i9p.firstName || p.firstName,
+    lastName:  i9p.lastName  || p.lastName,
+    email:     i9p.email     || p.email,
+    phone:     i9p.phone     || p.phone,
     // Supplementary sections — Worker strips unknown keys via Zod
     personalInfo: {
-      middleInitial: p.middleInitial,
-      otherLastNames: p.otherLastNames,
-      dateOfBirth: p.dateOfBirth,
-      address: p.address,
-      aptNumber: p.aptNumber,
-      city: p.city,
-      state: p.state,
-      zip: p.zip,
+      middleInitial:  i9p.middleInitial  || p.middleInitial,
+      otherLastNames: i9p.otherLastNames || p.otherLastNames,
+      address:        i9p.address        || p.address,
+      aptNumber:      i9p.aptNumber      || p.aptNumber,
+      city:           i9p.city           || p.city,
+      state:          i9p.state          || p.state,
+      zip:            i9p.zip            || p.zip,
       // SSN intentionally omitted from network payload
     },
+    // i9SignatureDataUrl is a large base64 PNG — passed here for server-side PDF generation,
+    // then stripped from the stored payload_json in D1 by the Worker.
     i9Data,
-    employmentReference,
+    // W-4 data — ssn is passed for server-side PDF generation and then stripped from D1 payload_json by the Worker.
+    w4Data,
+    employmentReferences,
     safetyEducation,
     signatureData: {
       typedName: signatureData.typedName,
       signedDate: signatureData.signedDate,
       hasSignature: !!(signatureData.signatureDataUrl || signatureData.typedName),
     },
+    // Vaccine declination decisions + proof document metadata
+    vaccineDeclarations: Object.fromEntries(
+      Object.entries(formData.acknowledgements)
+        .filter(([, entry]) => entry.decision != null)
+        .map(([stepId, entry]) => [stepId, {
+          decision:       entry.decision,
+          typedSignature: entry.decision === 'declining' ? entry.typedSignature : undefined,
+          signedAt:       entry.decision === 'declining' ? entry.signedAt : undefined,
+          proofDocument:  entry.decision === 'providing_proof'
+            ? (formData.vaccineProofDocuments?.[stepId]
+              ? { name: formData.vaccineProofDocuments[stepId]!.name, size: formData.vaccineProofDocuments[stepId]!.size }
+              : null)
+            : undefined,
+        }])
+    ),
     // Document metadata only — File objects are not serializable
     documents: {
       listA:            docs.listA            ? { name: docs.listA.name,            size: docs.listA.size            } : null,
@@ -129,4 +158,44 @@ export async function submitOnboardingApplication(
   }
 
   return { applicationId: payload.applicationId, submittedAt: payload.submittedAt };
+}
+
+export async function uploadDocument(file: File): Promise<UploadResult> {
+  const url = `${getApiBase()}/api/uploads`;
+  const body = new FormData();
+  body.append('file', file);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', body });
+  } catch {
+    throw new ApiNetworkError();
+  }
+
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new ApiError('Server returned an unexpected response.', res.status);
+  }
+
+  if (!res.ok) {
+    const payload = json as { error?: string };
+    throw new ApiError(
+      payload.error ?? 'Upload failed. Please try again.',
+      res.status,
+    );
+  }
+
+  const payload = json as { objectKey?: string; fileName?: string; fileSize?: number; uploadedAt?: string };
+  if (!payload.objectKey || !payload.fileName || !payload.uploadedAt) {
+    throw new ApiError('Server returned an incomplete upload response.', res.status);
+  }
+
+  return {
+    objectKey: payload.objectKey,
+    fileName: payload.fileName,
+    fileSize: payload.fileSize ?? file.size,
+    uploadedAt: payload.uploadedAt,
+  };
 }

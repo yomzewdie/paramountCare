@@ -1,12 +1,11 @@
 'use client';
 
-import { User, Info } from 'lucide-react';
+import { User } from 'lucide-react';
 import { PersonalInfo } from '@/types/onboarding';
 import type { FieldErrors } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Input, Select } from '@/components/ui/FormField';
-import { SensitiveInput } from '@/components/ui/SensitiveInput';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -28,21 +27,11 @@ export function PersonalInfoSection({ data, onChange, errors = {} }: PersonalInf
 
   return (
     <div className="space-y-4">
-      {/* I-9 note */}
-      <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl">
-        <Info size={15} className="text-blue-500 mt-0.5 flex-shrink-0" />
-        <p className="text-sm text-blue-700 leading-relaxed">
-          Information on this page is used to complete{' '}
-          <span className="font-semibold">Form I-9 Section 1</span> (Employment Eligibility Verification).
-          Please enter your name exactly as it appears on your government-issued ID.
-        </p>
-      </div>
-
       <Card>
         <SectionHeader
           icon={<User size={20} />}
           title="Personal Information"
-          description="Enter your full legal name and contact details as they appear on your ID."
+          description="Enter your full legal name and contact details. Sensitive identity information (date of birth, SSN) will be collected in the Form I-9 step."
         />
         <CardBody>
           {/* Full legal name — I-9 field order: Last, First, Middle */}
@@ -89,28 +78,6 @@ export function PersonalInfoSection({ data, onChange, errors = {} }: PersonalInf
                 hint="Include all names under which you have been previously employed (e.g., maiden name)"
               />
             </div>
-          </div>
-
-          {/* Identity fields — I-9 Section 1 */}
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Identity & Verification</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-7">
-            <Input
-              label="Date of Birth"
-              required
-              type="date"
-              value={data.dateOfBirth}
-              onChange={update('dateOfBirth')}
-              error={errors.dateOfBirth}
-              hint="Required for Form I-9 Section 1"
-            />
-            <SensitiveInput
-              label="U.S. Social Security Number"
-              placeholder="XXX-XX-XXXX"
-              maskType="ssn"
-              value={data.ssn}
-              onChange={(value) => onChange({ ...data, ssn: value })}
-              hint="Optional — required only if your employer participates in E-Verify"
-            />
           </div>
 
           {/* Contact */}

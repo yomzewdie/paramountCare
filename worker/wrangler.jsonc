@@ -13,6 +13,21 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"r2_buckets": [
+		{
+			"binding": "UPLOADS_BUCKET",
+			"bucket_name": "paramountcare-uploads-dev",
+			"preview_bucket_name": "paramountcare-uploads-dev"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "paramountcare-db-dev",
+			"database_id": "207eaa94-b8e9-44f7-ba9c-2ccc39a5a5a4",
+			"migrations_dir": "migrations"
+		}
 	]
 	/**
 	 * Smart Placement

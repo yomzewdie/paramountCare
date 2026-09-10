@@ -1,11 +1,11 @@
 'use client';
 
 import { Briefcase, Check, Info } from 'lucide-react';
-import { EmploymentReference } from '@/types/onboarding';
+import type { EmploymentReference } from '@/types/onboarding';
 import type { FieldErrors } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { Input, Select, FieldWrapper } from '@/components/ui/FormField';
+import { Input, Select, Textarea, FieldWrapper } from '@/components/ui/FormField';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -18,19 +18,57 @@ interface EmploymentReferenceSectionProps {
   data: EmploymentReference;
   onChange: (data: EmploymentReference) => void;
   errors?: FieldErrors;
+  referenceNumber?: number;
 }
 
-export function EmploymentReferenceSection({ data, onChange, errors = {} }: EmploymentReferenceSectionProps) {
+function YesNoField({
+  label,
+  value,
+  onChange,
+  error,
+  required,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (v: boolean) => void;
+  error?: string;
+  required?: boolean;
+}) {
+  return (
+    <FieldWrapper label={label} required={required} error={error}>
+      <div className="flex gap-3 pt-0.5">
+        {([true, false] as const).map((opt) => (
+          <button
+            key={String(opt)}
+            type="button"
+            onClick={() => onChange(opt)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${
+              value === opt
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-blue-300'
+            }`}
+          >
+            {value === opt && <Check size={13} strokeWidth={3} />}
+            {opt ? 'Yes' : 'No'}
+          </button>
+        ))}
+      </div>
+    </FieldWrapper>
+  );
+}
+
+export function EmploymentReferenceSection({ data, onChange, errors = {}, referenceNumber }: EmploymentReferenceSectionProps) {
+  const refLabel = referenceNumber != null ? `#${referenceNumber}` : '';
   const set = <K extends keyof EmploymentReference>(field: K, value: EmploymentReference[K]) =>
     onChange({ ...data, [field]: value });
 
   const update = (field: keyof EmploymentReference) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       set(field, e.target.value as EmploymentReference[typeof field]);
 
   return (
     <div className="space-y-4">
-      {/* Clinical reference note — verbatim from form header */}
+      {/* Clinical reference requirements note */}
       <div className="flex items-start gap-3 p-4 bg-violet-50 border border-violet-100 rounded-xl">
         <Info size={16} className="text-violet-500 mt-0.5 flex-shrink-0" />
         <p className="text-sm text-violet-700 leading-relaxed">
@@ -40,11 +78,11 @@ export function EmploymentReferenceSection({ data, onChange, errors = {} }: Empl
         </p>
       </div>
 
-      {/* Applicant-completed section — matches form top half */}
+      {/* Applicant-completed section */}
       <Card>
         <SectionHeader
           icon={<Briefcase size={20} />}
-          title="Employment Reference Check #1"
+          title={`Employment Reference Check ${refLabel}`}
           description="Provide contact details for a clinical supervisor who can verify your employment history."
           iconColor="bg-violet-50 text-violet-600"
         />
@@ -129,10 +167,49 @@ export function EmploymentReferenceSection({ data, onChange, errors = {} }: Empl
               error={errors.supervisorPhone}
             />
           </div>
+
+          <div className="mt-5 pt-5 border-t border-slate-100 space-y-5">
+            <Textarea
+              label="Reason for Leaving"
+              required
+              placeholder="e.g. Contract ended, relocated, seeking new opportunities…"
+              value={data.reasonForLeaving}
+              onChange={update('reasonForLeaving')}
+              error={errors.reasonForLeaving}
+            />
+
+            <div className="space-y-3">
+              <YesNoField
+                label="Were you eligible for rehire at this employer?"
+                required
+                value={data.eligibleForRehire}
+                onChange={(v) => set('eligibleForRehire', v)}
+                error={errors.eligibleForRehire}
+              />
+              {data.eligibleForRehire === false && (
+                <Textarea
+                  label="Please explain"
+                  required
+                  placeholder="Describe the circumstances that affected your rehire eligibility…"
+                  value={data.rehireDetails}
+                  onChange={update('rehireDetails')}
+                  error={errors.rehireDetails}
+                />
+              )}
+            </div>
+
+            <Textarea
+              label="Additional Comments / Notes"
+              placeholder="Any other information relevant to this reference…"
+              value={data.comments}
+              onChange={update('comments')}
+              hint="Optional"
+            />
+          </div>
         </CardBody>
       </Card>
 
-      {/* Permission consent — verbatim from Employment Reference Check #1 form */}
+      {/* Permission consent */}
       <Card>
         <CardBody className="py-5">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
@@ -167,11 +244,6 @@ export function EmploymentReferenceSection({ data, onChange, errors = {} }: Empl
               </p>
             </div>
           </button>
-          {errors.permissionGranted && (
-            <p className="flex items-center gap-1.5 text-xs text-red-500 font-medium mt-2">
-              <FieldWrapper label="" error={errors.permissionGranted}><span /></FieldWrapper>
-            </p>
-          )}
           {errors.permissionGranted && (
             <p className="text-xs text-red-500 font-medium mt-2 flex items-center gap-1">
               <span className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />

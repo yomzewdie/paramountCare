@@ -1,17 +1,18 @@
 'use client';
 
 import {
-  ClipboardCheck, User, ShieldCheck, Upload, PenLine, Briefcase,
-  Check, FileCheck, AlertTriangle, Pencil, BookOpen, Star,
+  ClipboardCheck, User, ShieldCheck, Upload, Briefcase,
+  Check, FileCheck, AlertTriangle, Pencil, BookOpen, Star, ClipboardList, Syringe, ShieldX,
+  FileText,
 } from 'lucide-react';
-import { OnboardingFormData, OnboardingStep } from '@/types/onboarding';
+import { OnboardingFormData } from '@/types/onboarding';
 import { isStepValid } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 
 interface ReviewSectionProps {
   data: OnboardingFormData;
-  onEditStep?: (step: OnboardingStep) => void;
+  onEditStep?: (stepId: string) => void;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -21,9 +22,9 @@ function ReviewGroup({
 }: {
   title: string;
   icon: React.ReactNode;
-  step?: OnboardingStep;
+  step?: string;
   isComplete?: boolean;
-  onEdit?: (s: OnboardingStep) => void;
+  onEdit?: (stepId: string) => void;
   children: React.ReactNode;
 }) {
   return (
@@ -76,8 +77,19 @@ function BoolRow({ label, checked }: { label: string; checked: boolean }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
+const SHIFT_LABELS: Record<string, string> = {
+  day: 'Day (7a–7p)', evening: 'Evening (3p–11p)', night: 'Night (7p–7a)', any: 'Open to any',
+};
+const EMP_TYPE_LABELS: Record<string, string> = {
+  full_time: 'Full-Time', part_time: 'Part-Time', per_diem: 'Per Diem',
+};
+const EXP_LABELS: Record<string, string> = {
+  '0-1': 'Less than 1 year', '1-3': '1–3 years', '3-5': '3–5 years',
+  '5-10': '5–10 years', '10+': '10+ years',
+};
+
 export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
-  const { personalInfo: p, i9Data: i9, employmentReference: e, safetyEducation: s, uploadedDocuments: u, signatureData: sig } = data;
+  const { personalInfo: p, employmentApplication: ea, i9Data: i9, safetyEducation: s, uploadedDocuments: u } = data;
 
   const citizenshipLabels: Record<string, string> = {
     citizen:                   'U.S. Citizen',
@@ -92,12 +104,27 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
     passport: 'Foreign Passport',
   };
 
+  const refStepIds = ['employment_ref_1', 'employment_ref_2'];
+
+  const vaccineSteps = [
+    { stepId: 'hep_b_declination', name: 'Hepatitis B (HBV)' },
+    { stepId: 'tdap_declination',  name: 'Tdap' },
+    { stepId: 'flu_declination',   name: 'Influenza / H1N1' },
+  ];
   const stepValid = {
-    personal:   isStepValid('personal', data),
-    i9:         isStepValid('i9', data),
-    employment: isStepValid('employment', data),
-    safety:     isStepValid('safety', data),
-    signature:  isStepValid('signature', data),
+    personal_info:            isStepValid('personal_info', data),
+    employment_application:   isStepValid('employment_application', data),
+    w4:                       isStepValid('w4', data),
+    i9:                       isStepValid('i9', data),
+    employment_ref_1:         isStepValid('employment_ref_1', data),
+    employment_ref_2:         isStepValid('employment_ref_2', data),
+    safety_acknowledgements:  isStepValid('safety_acknowledgements', data),
+  };
+
+  const FILING_STATUS_LABELS: Record<string, string> = {
+    single_mfs: 'Single or Married filing separately',
+    mfj_qss: 'Married filing jointly or Qualifying surviving spouse',
+    hoh: 'Head of household',
   };
 
   const incompleteCount = Object.values(stepValid).filter((v) => !v).length;
@@ -147,17 +174,34 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
         <div className="space-y-4">
 
           {/* 1. Personal Info */}
-          <ReviewGroup title="Personal Information" icon={<User size={15} />} step="personal" isComplete={stepValid.personal} onEdit={onEditStep}>
+          <ReviewGroup title="Personal Information" icon={<User size={15} />} step="personal_info" isComplete={stepValid.personal_info} onEdit={onEditStep}>
             <Row label="Full Legal Name" value={[p.firstName, p.middleInitial, p.lastName].filter(Boolean).join(' ') || null} />
             {p.otherLastNames && <Row label="Other Last Names" value={p.otherLastNames} />}
-            <Row label="Date of Birth" value={p.dateOfBirth} />
             <Row label="Email" value={p.email} />
             <Row label="Phone" value={p.phone} />
             <Row label="Address" value={[p.address, p.aptNumber, p.city, p.state, p.zip].filter(Boolean).join(', ') || null} />
           </ReviewGroup>
 
-          {/* 2. I-9 */}
-          <ReviewGroup title="I-9 Employment Eligibility (Section 1)" icon={<Star size={15} />} step="i9" isComplete={stepValid.i9} onEdit={onEditStep}>
+          {/* 2. Employment Application */}
+          <ReviewGroup title="Employment Application" icon={<ClipboardList size={15} />} step="employment_application" isComplete={stepValid.employment_application} onEdit={onEditStep}>
+            <Row label="Position Applied For" value={ea.positionApplied} />
+            <Row label="Specialty / Unit" value={ea.specialtyPreference} />
+            <Row label="Employment Type" value={(EMP_TYPE_LABELS[ea.employmentType] ?? ea.employmentType) || null} />
+            <Row label="Shift Preference" value={(SHIFT_LABELS[ea.shiftPreference] ?? ea.shiftPreference) || null} />
+            <Row label="License Type" value={ea.licenseType || null} />
+            <Row label="License Number" value={ea.licenseNumber || null} />
+            <Row label="License State" value={ea.licenseState || null} />
+            <Row label="License Expires" value={ea.licenseExpiration || null} />
+            <Row label="Years of Experience" value={(EXP_LABELS[ea.yearsExperience] ?? ea.yearsExperience) || null} />
+            <Row label="Primary Specialty" value={ea.primarySpecialty || null} />
+            <Row label="Work Authorization" value={ea.authorizedToWork === true ? 'Authorized' : ea.authorizedToWork === false ? 'Not authorized' : null} />
+            <Row label="License Revocation/Suspension" value={ea.hasLicenseRevocation === true ? `Yes — ${ea.licenseRevocationDetails.slice(0, 80)}${ea.licenseRevocationDetails.length > 80 ? '…' : ''}` : ea.hasLicenseRevocation === false ? 'None' : null} />
+            <Row label="Emergency Contact" value={ea.emergencyContactName ? `${ea.emergencyContactName} (${ea.emergencyContactRelationship})` : null} />
+            <Row label="Emergency Phone" value={ea.emergencyContactPhone || null} />
+          </ReviewGroup>
+
+          {/* 3. I-9 */}
+          <ReviewGroup title="Form I-9 (Section 1)" icon={<Star size={15} />} step="i9" isComplete={stepValid.i9} onEdit={onEditStep}>
             <Row label="Status" value={i9.citizenshipStatus ? citizenshipLabels[i9.citizenshipStatus] : null} />
             {i9.citizenshipStatus === 'lawful_permanent_resident' && (
               <Row label="Alien Reg. No." value={i9.alienRegistrationNumber} />
@@ -174,30 +218,82 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
                 )}
               </>
             )}
-            <BoolRow label="Employee attestation acknowledged (under penalty of perjury)" checked={i9.attestationAcknowledged} />
+            <BoolRow
+              label="I-9 Section 1 signed electronically (under penalty of perjury)"
+              checked={
+                (i9.i9SignatureType === 'drawn' && !!i9.i9SignatureDataUrl) ||
+                (i9.i9SignatureType === 'typed' && !!i9.i9TypedSignature?.trim())
+              }
+            />
+            {i9.i9SignedDate && <Row label="Signed Date" value={i9.i9SignedDate} />}
           </ReviewGroup>
 
-          {/* 3. Employment Reference */}
-          <ReviewGroup title="Employment Reference Check #1" icon={<Briefcase size={15} />} step="employment" isComplete={stepValid.employment} onEdit={onEditStep}>
-            <Row label="Position Held" value={e.positionHeld} />
-            <Row label="Dates of Employment" value={e.employmentDateFrom && e.employmentDateTo ? `${e.employmentDateFrom} – ${e.employmentDateTo}` : null} />
-            <Row label="Employer" value={e.employerName} />
-            <Row label="Location" value={[e.employerCity, e.employerState].filter(Boolean).join(', ') || null} />
-            <Row label="Supervisor" value={e.supervisorName} />
-            <Row label="Supervisor Phone" value={e.supervisorPhone} />
-            <BoolRow label="Permission granted for PARAMOUNT CARE STAFFING, LLC to contact this reference" checked={e.permissionGranted} />
+          {/* 4. W-4 */}
+          <ReviewGroup title="IRS Form W-4 (2024)" icon={<FileText size={15} />} step="w4" isComplete={stepValid.w4} onEdit={onEditStep}>
+            <Row label="Name" value={[data.w4Data.firstNameMI, data.w4Data.lastName].filter(Boolean).join(' ') || null} />
+            <Row label="Address" value={[data.w4Data.address, data.w4Data.cityStateZip].filter(Boolean).join(', ') || null} />
+            <Row label="Filing Status" value={data.w4Data.filingStatus ? (FILING_STATUS_LABELS[data.w4Data.filingStatus] ?? data.w4Data.filingStatus) : null} />
+            {data.w4Data.multipleJobs && <Row label="Step 2(c)" value="Multiple jobs or spouse works — checked" />}
+            {(data.w4Data.totalDependents || data.w4Data.qualifyingChildren || data.w4Data.otherDependents) && (
+              <Row label="Dependents Total" value={`$${data.w4Data.totalDependents || '0'}`} />
+            )}
+            {data.w4Data.extraWithholding && <Row label="Extra Withholding" value={`$${data.w4Data.extraWithholding} / pay period`} />}
+            <BoolRow
+              label="W-4 signed electronically (under penalty of perjury)"
+              checked={!!data.w4Data.typedSignature.trim()}
+            />
+            {data.w4Data.signedDate && <Row label="Signed Date" value={data.w4Data.signedDate} />}
           </ReviewGroup>
 
-          {/* 4. Safety & Education */}
-          <ReviewGroup title="Safety & Education Exam" icon={<BookOpen size={15} />} step="safety" isComplete={stepValid.safety} onEdit={onEditStep}>
-            {safetyTopics.map((t) => (
-              <BoolRow key={t.key} label={t.label} checked={!!s[t.key]} />
-            ))}
-            <BoolRow label="Safety & Education Exam Attestation" checked={s.examAttestation} />
-          </ReviewGroup>
+          {/* 5. Vaccine Declarations */}
+          {vaccineSteps.some(({ stepId }) => !!data.acknowledgements[stepId]?.decision) && (
+            <ReviewGroup title="Vaccine Declarations" icon={<Syringe size={15} />}>
+              {vaccineSteps.map(({ stepId, name }) => {
+                const entry = data.acknowledgements[stepId];
+                if (!entry?.decision) return null;
+                const isVaccineComplete =
+                  entry.decision === 'providing_proof' ||
+                  (entry.decision === 'declining' && entry.checked && !!entry.typedSignature?.trim());
+                const proofFile = data.vaccineProofDocuments?.[stepId];
+                return (
+                  <div key={stepId} className="px-4 py-3 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${isVaccineComplete ? 'bg-emerald-500' : 'bg-amber-400'}`}>
+                        {isVaccineComplete
+                          ? <Check size={9} className="text-white" strokeWidth={3} />
+                          : <ShieldX size={9} className="text-white" />
+                        }
+                      </div>
+                      <span className="text-sm font-medium text-slate-700">{name}</span>
+                      <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
+                        entry.decision === 'providing_proof'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {entry.decision === 'providing_proof' ? 'Providing Proof' : 'Declining'}
+                      </span>
+                    </div>
+                    {entry.decision === 'declining' && entry.typedSignature && (
+                      <p className="text-xs text-slate-400 pl-6">
+                        Signed: <span className="italic text-slate-600">{entry.typedSignature}</span>
+                      </p>
+                    )}
+                    {entry.decision === 'providing_proof' && proofFile && (
+                      <p className="text-xs text-slate-400 pl-6 flex items-center gap-1">
+                        <FileCheck size={10} className="flex-shrink-0" />{proofFile.name}
+                      </p>
+                    )}
+                    {entry.decision === 'providing_proof' && !proofFile && (
+                      <p className="text-xs text-amber-500 pl-6">Proof not yet uploaded</p>
+                    )}
+                  </div>
+                );
+              })}
+            </ReviewGroup>
+          )}
 
-          {/* 5. Documents */}
-          <ReviewGroup title="Documents" icon={<Upload size={15} />} step="documents" onEdit={onEditStep}>
+          {/* 5. License & Credential Uploads — renumbered after vaccine section addition */}
+          <ReviewGroup title="License & Credential Uploads" icon={<Upload size={15} />} step="documents" onEdit={onEditStep}>
             {docSlots.map((slot) => {
               const file = u[slot.key];
               return (
@@ -221,29 +317,44 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
             })}
           </ReviewGroup>
 
-          {/* 6. Signature */}
-          <ReviewGroup title="Signature" icon={<PenLine size={15} />} step="signature" isComplete={stepValid.signature} onEdit={onEditStep}>
-            {sig.signatureDataUrl && sig.signatureDataUrl !== 'typed' ? (
-              <div className="p-4">
-                <p className="text-xs text-slate-400 mb-2">Drawn signature</p>
-                <div className="inline-block bg-white border border-slate-100 rounded-xl p-3">
-                  <img src={sig.signatureDataUrl} alt="Applicant signature" className="max-h-16" />
-                </div>
-              </div>
-            ) : sig.typedName ? (
-              <div className="p-4">
-                <p className="text-xs text-slate-400 mb-1">Typed signature</p>
-                <p className="text-2xl text-slate-800" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
-                  {sig.typedName}
-                </p>
-              </div>
-            ) : (
-              <div className="px-4 py-3">
-                <span className="text-sm text-amber-500 font-medium">Signature required before submitting</span>
-              </div>
-            )}
-            {sig.signedDate && <Row label="Signed On" value={sig.signedDate} />}
+          {/* Employment References (dynamic — renders one group per step ID) */}
+          {refStepIds.map((stepId, idx) => {
+            const e = data.employmentReferences?.[stepId];
+            if (!e) return null;
+            return (
+              <ReviewGroup
+                key={stepId}
+                title={`Employment Reference Check #${idx + 1}`}
+                icon={<Briefcase size={15} />}
+                step={stepId}
+                isComplete={stepValid[stepId as keyof typeof stepValid]}
+                onEdit={onEditStep}
+              >
+                <Row label="Position Held" value={e.positionHeld} />
+                <Row label="Dates of Employment" value={e.employmentDateFrom && e.employmentDateTo ? `${e.employmentDateFrom} – ${e.employmentDateTo}` : null} />
+                <Row label="Employer" value={e.employerName} />
+                <Row label="Location" value={[e.employerCity, e.employerState].filter(Boolean).join(', ') || null} />
+                <Row label="Supervisor" value={e.supervisorName} />
+                <Row label="Supervisor Phone" value={e.supervisorPhone} />
+                <Row label="Reason for Leaving" value={e.reasonForLeaving || null} />
+                <Row label="Eligible for Rehire" value={e.eligibleForRehire === true ? 'Yes' : e.eligibleForRehire === false ? 'No' : null} />
+                {e.eligibleForRehire === false && e.rehireDetails && (
+                  <Row label="Rehire Details" value={e.rehireDetails} />
+                )}
+                {e.comments && <Row label="Comments" value={e.comments} />}
+                <BoolRow label="Permission granted for PARAMOUNT CARE STAFFING, LLC to contact this reference" checked={e.permissionGranted} />
+              </ReviewGroup>
+            );
+          })}
+
+          {/* 5. Safety & Education */}
+          <ReviewGroup title="Safety & Education Exam" icon={<BookOpen size={15} />} step="safety_acknowledgements" isComplete={stepValid.safety_acknowledgements} onEdit={onEditStep}>
+            {safetyTopics.map((t) => (
+              <BoolRow key={t.key} label={t.label} checked={!!s[t.key]} />
+            ))}
+            <BoolRow label="Safety & Education Exam Attestation" checked={s.examAttestation} />
           </ReviewGroup>
+
         </div>
 
         <div className="mt-5 p-4 bg-blue-50 border border-blue-100 rounded-xl">

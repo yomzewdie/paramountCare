@@ -1,0 +1,58 @@
+# Root-level ignore rules for this repo.
+#
+# frontend/ and worker/ each have their own .gitignore for project-specific
+# build artifacts (node_modules, .next, .wrangler, etc.) — this file only
+# covers secrets and key material that could land anywhere in the repo,
+# including the root itself (see docs/ARCHITECTURE_DECISION_RECORDS.md §16).
+#
+# Deliberately narrow: no broad extension bans that could catch legitimate
+# application assets (e.g. this does NOT ignore *.pdf, *.json, or any
+# extensionless file in general — only well-known credential/key patterns).
+
+# ── SSH keys ──────────────────────────────────────────────────────────────────
+# Explicitly named: the keypair found sitting in the repo root during the
+# platform audit (never committed — see the ADR doc's security assessment).
+gitkey
+gitkey.pub
+
+# Default SSH key basenames, in case a future `ssh-keygen` run targets the
+# repo directory by accident instead of ~/.ssh/.
+id_rsa
+id_rsa.pub
+id_dsa
+id_dsa.pub
+id_ecdsa
+id_ecdsa.pub
+id_ed25519
+id_ed25519.pub
+
+# ── Certificates / signing keys ───────────────────────────────────────────────
+# Covers TLS/SSH private keys, PKCS#12/PFX bundles, X.509 certs, Java/Android
+# keystores, and iOS provisioning profiles (relevant once mobile signing
+# material exists).
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+*.mobileprovision
+
+# ── Local secrets / environment files ─────────────────────────────────────────
+# frontend/.gitignore and worker/.gitignore already cover their own .env* /
+# .dev.vars* files; these root-level patterns catch the same kind of file if
+# one is ever added directly at the repo root.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# ── Machine-local / editor-tool files ─────────────────────────────────────────
+# Named specifically, not a blanket ".claude/" ignore, in case shared
+# (non-local) config is ever added under .claude/ later.
+.DS_Store
+.claude/settings.local.json

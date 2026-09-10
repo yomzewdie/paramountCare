@@ -1,0 +1,404 @@
+# Paramount Care Staffing — Architecture Decision Records (ADR Set)
+
+**Status:** Discovery/decision phase only. No application code changed, no files moved, nothing rotated or deleted. This document stress-tests every major recommendation in [`PLATFORM_ARCHITECTURE_ASSESSMENT.md`](./PLATFORM_ARCHITECTURE_ASSESSMENT.md) before any implementation begins.
+**Prepared:** 2026-09-10
+
+This is an adversarial review of my own prior recommendations. Where the original assessment was too eager to replace working infrastructure, that is corrected here explicitly rather than quietly.
+
+---
+
+## 0. Summary table
+
+| ADR | Decision | Verdict | Timing |
+|---|---|---|---|
+| 001 | D1 → managed Postgres | **RECONSIDER** (walk back urgency) | Not now — defer to explicit trigger conditions |
+| 002 | Keep Cloudflare Workers | **APPROVE** | No change needed |
+| 003 | Keep Hono | **APPROVE** | No change needed |
+| 004 | Keep R2 | **APPROVE** | No change needed |
+| 005 | Expo / React Native for mobile | **APPROVE** | Later — after backend session + auth foundation |
+| 006 | Expo Router for mobile navigation | **APPROVE** | With mobile foundation (same phase as 005) |
+| 007 | Keep Next.js admin portal, extend in place | **APPROVE** | No change needed; extend incrementally |
+| 008 | New cross-platform auth architecture | **APPROVE** | Now — foundational, blocks mobile and session work |
+| 009 | Monorepo via pnpm + Turborepo, **without** renaming existing app folders | **RECONSIDER** (original rename plan walked back) | Now, but scoped down |
+| 010 | Extract `packages/domain` (types, validation, packet engine, completion) | **APPROVE** | Now — low risk, high leverage |
+| 011 | `onboarding_sessions`/`exam_submissions` become the authoritative resumable-session store | **APPROVE**, with two additive schema changes | Now/soon — before mobile feature build |
+| 012 | API versioning (`/v1`) + typed client via Hono RPC (not tRPC) | **APPROVE** | Now — cheap today, expensive after mobile ships to app stores |
+| 013 | Real dev/staging/production environment separation | **APPROVE** | Now — cheap today, expensive after real data exists |
+| 014 | Stand up CI/CD | **APPROVE** | Immediately — independent of everything else |
+
+---
+
+## 1. ADR-001 — Database: D1 vs. managed PostgreSQL
+
+**Current architecture:** Cloudflare D1 (SQLite), one database (`paramountcare-db-dev`), accessed directly from the Worker via the `DB` binding. Six tables, no reporting/analytics queries built yet, low write volume (pilot-scale).
+
+**Proposed in the original assessment:** migrate the system of record to managed Postgres (Neon/Supabase) via Cloudflare Hyperdrive, keep Workers/Hono for the API.
+
+**Self-challenge — is a change actually necessary?** No, not right now, and the original assessment should have said so more plainly. The justification I gave — "large production environment," "reporting/analytics" — was drawn from your framing of the *eventual* platform ambition, not from any concrete, present-day limitation. Nothing in the current codebase is bumping into a real D1 ceiling: there is no reporting feature built yet to be slow, no write-concurrency problem observed, and the one workaround visible in the migrations (`ALTER TABLE` limitations, handled at the app layer per the `0002_phase1.sql` comment) is a mild inconvenience, not a production incident. Recommending an infrastructure migration on anticipated future need, before that need is real, is precisely the kind of premature optimization your instruction told me to avoid.
+
+**Benefits (if done):** real JOIN-friendly relational engine for future reporting, point-in-time backup/restore, no SQLite-heritage `ALTER TABLE` constraints, larger ecosystem of tooling.
+
+**Costs and migration risk:** a new vendor relationship and a new network hop (Worker → Hyperdrive → Postgres) added to every request; rewriting every `db.prepare(...)` D1 call and its SQL dialect differences (`datetime('now')` vs. `NOW()`, `AUTOINCREMENT` vs. `SERIAL`/identity columns, D1's `.bind()`/`.first()`/`.all()` API vs. a Postgres driver's API); a real data-migration step once any production data exists (currently there is none — this is the cheapest this migration will ever be, which cuts against "wait," see below); and it front-loads cost/attention that could instead go toward the actual product pivot (mobile).
+
+**Alternatives:**
+- *Stay on D1 indefinitely* — lowest cost, but genuinely risks a harder migration later if the schema and data volume grow first.
+- *Move now, while there's no production data to migrate* — this is the strongest argument *for* doing it soon rather than never: migrating an empty-to-near-empty database is close to free; migrating a live one with real applicant PII is not.
+- *Move to Postgres later, gated on a concrete trigger* — defer the decision but write down what would make us revisit it, so it isn't forgotten by default.
+
+**Final recommendation:** **Do not migrate now.** Instead, set explicit trigger conditions and revisit when *any* of these become true: (a) a reporting/analytics feature is actually being designed and D1's query surface proves limiting in practice, (b) sustained write concurrency issues are observed, (c) the applicant base grows past pilot scale, or (d) real production data would otherwise need to be migrated live (i.e., do it *before* that becomes expensive, not after). Given trigger (d), the pragmatic middle path is: **decide this explicitly at the start of Phase 3 (backend foundation) in the roadmap, before the first real applicant account exists** — that is the last point at which the migration is still nearly free. If the team wants zero risk of ever doing a live-data migration, moving now (while the DB is effectively empty) is defensible; if the team wants to conserve effort for the mobile pivot, staying on D1 through the mobile launch and revisiting after is equally defensible. This is a judgment call on risk appetite, not an architecture question — flagging it for your decision rather than deciding it for you.
+
+**Timing:** Not automatic "now." **Decide explicitly before Phase 3 backend-foundation work begins** (see milestones, §6).
+
+---
+
+## 2. ADR-002 — Cloudflare Workers as the API runtime
+
+**Current architecture:** Hono app running on Cloudflare Workers, deployed via Wrangler.
+
+**Self-challenge:** is there any reason the mobile pivot requires a different backend runtime? No. Workers serve JSON over HTTP; a native mobile client is just another HTTP caller, no different from the admin portal's server-side fetches. Global edge placement, low idle cost, and the fact that this already works today are all real advantages with no offsetting need to change.
+
+**Benefits / Costs:** N/A — no change proposed.
+
+**Alternatives considered:** none seriously — I checked myself here rather than let the earlier document's Postgres discussion imply the whole backend was in question. It is only the *datastore* under discussion (ADR-001), not the compute layer.
+
+**Final recommendation:** **APPROVE, keep as-is.**
+
+**Timing:** No action.
+
+---
+
+## 3. ADR-003 — Hono as the web framework
+
+**Current architecture:** Hono 4, thin routing, typed `AppEnv`, middleware for CORS/auth.
+
+**Self-challenge:** any reason to replace it for a multi-client API? No — if anything, Hono is a *point in favor* of the API-design decision below (ADR-012), because `hono/client` gives an end-to-end typed RPC client for free from the existing route definitions, without adopting a new framework like tRPC.
+
+**Final recommendation:** **APPROVE, keep as-is.**
+
+**Timing:** No action.
+
+---
+
+## 4. ADR-004 — R2 for object storage
+
+**Current architecture:** R2 buckets for uploaded documents and generated PDFs, referenced by object key in D1/Postgres rows.
+
+**Self-challenge:** does going mobile change file-upload requirements enough to warrant a different store? No — R2 is reached over plain HTTP multipart upload today; a mobile client uploads the same way a browser does. S3-API compatibility also means this choice is independent of the D1-vs-Postgres decision (ADR-001) and independent of the mobile pivot entirely.
+
+**Final recommendation:** **APPROVE, keep as-is.**
+
+**Timing:** No action.
+
+---
+
+## 5. ADR-005 — Expo / React Native for the native mobile app
+
+**Current architecture:** no mobile code exists.
+
+**Self-challenge:** the original assessment recommended this on the strength of TypeScript-logic reuse. Stress-testing that: is there a scenario where full-native (Swift/Kotlin) is actually right? Yes, if there's an unstated requirement for camera/scanner fidelity or platform-specific interaction design beyond what this product needs (a long, mostly-form-and-signature-and-photo-upload wizard). Nothing observed in the codebase or the stated requirements suggests that bar. Is there a scenario where Flutter is right? Only if the team is willing to discard 100% of the existing TypeScript domain model (types, validation, packet engine, completion calculators) — a real cost with no corresponding benefit identified. The original recommendation holds up under scrutiny.
+
+**Benefits:** reuses `packages/domain` unchanged; one team, one language across admin + mobile + API; Expo's managed workflow covers camera, secure storage, and push without native-module setup for a first version.
+
+**Costs/migration risk:** none yet — this is greenfield, so "migration risk" here really means "risk of choosing wrong and having to redo it," which is mitigated by the fact that Expo apps can eject to bare React Native later if a specific native capability is ever missing, without a full rewrite.
+
+**Alternatives:** full native (rejected — throws away the TS investment for no identified requirement); Flutter (rejected — same reason); PWA-only (rejected as the *primary* channel since native iOS/Android was explicitly requested, but the existing Next.js onboarding flow should stay alive as a secondary web entry point rather than being deleted).
+
+**Final recommendation:** **APPROVE.**
+
+**Timing:** **Later, not now.** Building mobile screens against an auth model and a session backend that don't exist yet (today's state) means building on sand. Sequence this after ADR-008 (auth) and ADR-011 (server-authoritative sessions) are in place — see milestones.
+
+---
+
+## 6. ADR-006 — Expo Router for mobile navigation
+
+**Current architecture:** N/A (no mobile app).
+
+**Self-challenge:** the original assessment didn't address this explicitly; addressing it now since you asked directly. Is file-based routing actually a good fit, or is it routing-framework fashion? The honest case for it: the admin portal already uses Next.js App Router's file-based convention, so Expo Router gives the *same developer mental model* across the two web-shaped codebases (admin + mobile navigation structure), which lowers the cost of an engineer moving between them. The honest case against it: React Navigation (imperative/config-based, what Expo Router is itself built on) is more mature for deeply nested or highly dynamic navigation graphs. This app's navigation shape — a long linear wizard plus a handful of top-level screens (auth, home/status, profile, notifications) — is simple enough that Expo Router's convention-over-configuration doesn't fight the app's actual structure.
+
+**Benefits:** consistent mental model with the Next.js admin app; less boilerplate for a navigation graph this simple; typed routes.
+
+**Costs/migration risk:** low — greenfield, and if the navigation graph ever outgrows the convention, dropping to React Navigation primitives directly (which Expo Router sits on top of) is always available without a rewrite.
+
+**Alternatives:** React Navigation directly — more control, more boilerplate; not justified by this app's navigation complexity.
+
+**Final recommendation:** **APPROVE.**
+
+**Timing:** Same phase as ADR-005 (mobile foundation) — no reason to sequence separately.
+
+---
+
+## 7. ADR-007 — Keep the Next.js admin portal, extend in place
+
+**Current architecture:** Next.js 16 App Router, Server Components + Server Actions, working login/list/detail/pagination/filter/search.
+
+**Self-challenge:** is there pressure from the mobile pivot to replace this? None found. The admin portal is an internal, desk-bound tool; nothing about going mobile-first for *applicants* implies anything about how *staff* work. The only real question was whether it stays inside the same directory as the future mobile app in a monorepo (ADR-009) — a structural question, not a "should we rewrite it" question.
+
+**Final recommendation:** **APPROVE, keep and extend in place** (reviewer workflow, role gating, packet management, per the original assessment's §3.3).
+
+**Timing:** No structural change; feature work continues on its own cadence, decoupled from the mobile timeline.
+
+---
+
+## 8. ADR-008 — Cross-platform authentication architecture
+
+**Current architecture:** cookie-only HS256 JWT, admin-only, no refresh tokens, verification logic duplicated between the Worker and Next.js Edge middleware (see assessment §1.8).
+
+**Self-challenge:** could the existing design simply be "extended" rather than redesigned? No — a `Set-Cookie` response and browser-managed cookie jar has no equivalent in a native mobile HTTP client; there is no way to "add mobile support" to a cookie-based scheme without fundamentally changing how the token is issued, transmitted, and stored. This is the one component in the whole assessment that genuinely cannot be preserved as-is. That said, the *primitives* underneath it (PBKDF2 password hashing, HS256 JWT signing via Web Crypto) are sound and should be reused, not thrown out.
+
+### 8.1 Design
+
+**Two token types, one issuing service, one Worker-side verification path used by every client:**
+
+- **Access token** — short-lived (10–15 min) JWT, HS256 (existing primitive, reused), claims: `sub` (user id), `role` (`applicant` | `admin` | `super_admin`), `aud` (which surface it's scoped to), `iat`/`exp`. Stateless — the Worker verifies it the same way it does today (`requireAuth`), no DB lookup needed per request. Never persisted to disk on any client; lives in memory only (JS variable on web, in-memory store on mobile).
+- **Refresh token** — long-lived, **opaque** (random 256-bit value, not a JWT), stored **hashed** server-side in a new `refresh_tokens` table (`id`, `user_id`, `token_hash`, `family_id`, `device_label`, `created_at`, `expires_at`, `revoked_at`, `replaced_by_id`). Presenting a refresh token issues a new access token **and rotates the refresh token** (old one marked `replaced_by_id`, cannot be used again). If a already-rotated (dead) refresh token is ever presented again, treat it as theft/replay: revoke the entire `family_id` (every token descended from the original login), forcing re-authentication on all of that user's devices tied to that family. This is standard refresh-token-rotation-with-reuse-detection and is the industry baseline for exactly this problem.
+
+**Per-client storage:**
+
+| Client | Access token | Refresh token |
+|---|---|---|
+| iOS app | In memory (cleared on app kill; re-derived via refresh on relaunch) | iOS Keychain, via `expo-secure-store` (or native Keychain Services if bare RN) — can be configured with a biometry-gated access control flag |
+| Android app | In memory | Android Keystore-backed encrypted storage, via `expo-secure-store` — supports a biometric-gated unlock (`BiometricPrompt`) the same way |
+| Next.js admin portal | Never sent to browser JS — kept server-side only, exactly like today's pattern (`admin-api.ts` already reads the cookie server-side and forwards it; this doesn't change) | `HttpOnly; Secure; SameSite=Strict` cookie (today's mechanism, kept) |
+| Cloudflare Worker | N/A (issuer/verifier, not a holder) | `refresh_tokens` table is the source of truth for revocation |
+
+**Role-based admin access:** reuse the already-built-but-currently-unused `requireRole(...)` middleware (assessment §1.16 #4) — this finally gets a caller. Applicant-scoped endpoints (onboarding session read/write) get their own `requireApplicant`-style check verifying `role === 'applicant'` and that the session's owning `user_id` matches the token's `sub`, so one applicant can never read or write another's session by guessing a session ID.
+
+**Revocation:**
+- Logout → revoke that one refresh token (and its whole family if "log out everywhere" is requested).
+- Admin action ("revoke this user's access") → revoke all `refresh_tokens` rows for that `user_id`.
+- Reuse-detection revocation (above) is automatic and silent to the legitimate user (they just get logged out and have to sign back in — a reasonable response to a suspected stolen token).
+
+**Future biometric login:** this design supports it without a later re-architecture, because biometrics in this model are a **device-local gate on retrieving the already-issued refresh token**, not a separate server-side auth mechanism. Concretely: store the refresh token in `expo-secure-store` with `requireAuthentication: true` (iOS) / a Keystore key requiring `BiometricPrompt` (Android) from day one, even before any biometric *UI* is built — the app can simply not use that flag initially (falling back to "always allow"), and turning on the biometric prompt later is a client-side, non-breaking change to *when* the app is willing to read a token it already has, not a new grant type on the server.
+
+**Build vs. buy — self-challenge:** the original assessment left this as an open trade-off ("evaluate a managed provider vs. extend custom"). Forcing a decision now: **build/extend the custom design above.** Reasoning: (a) the hard parts — password hashing and JWT signing — already exist and are implemented correctly; what's missing (refresh rotation, a `refresh_tokens` table, per-client storage wiring) is a bounded, well-understood amount of work, not an open-ended one; (b) this system handles SSNs and health-authorization data, and outsourcing auth to a third party (Clerk/WorkOS/Firebase) introduces a new data processor for identity data that would need its own vendor/compliance review — a cost the original assessment underweighted; (c) the team has already demonstrated it can implement this class of primitive correctly (constant-time password comparison, timing-attack-aware login path). Reconsider this only if implementing MFA or anomaly detection later turns out to consume disproportionate engineering time — that is a legitimate future trigger to revisit a managed provider, but it is not a reason to default to one now.
+
+**Final recommendation:** **APPROVE** the design above; **RECONSIDER (reject) the managed-provider path for now**, revisit only if MFA/anomaly-detection needs outgrow in-house capacity.
+
+**Timing:** **Now.** This is foundational — both mobile app development (ADR-005) and server-authoritative onboarding sessions (ADR-011, since sessions need an owning `user_id`) depend on it existing first.
+
+---
+
+## 9. ADR-009 — Monorepo structure
+
+**Current architecture:** `frontend/`, `worker/`, `packages/shared/` — three independently-installed npm projects, no root `package.json`, `frontend` depends on `packages/shared` via a `file:` path (assessment §1.11, §5.1).
+
+**Original proposal:** pnpm workspaces + Turborepo, **and rename** `frontend/` → `apps/admin`, `worker/` → `apps/api`.
+
+**Self-challenge — this is exactly the kind of "restructure infrastructure that already works" your instruction told me to be conservative about, and the original document underweighted the churn cost.** Renaming two live, deployed directories touches: every relative import path in both codebases, Wrangler's `main`/deploy config (`worker/wrangler.jsonc`'s implicit working directory), any Vercel/hosting project root setting for the Next.js app, both `.env`/`.dev.vars` file locations, documentation, and muscle memory for anyone already working in the repo — for **zero functional benefit**. Workspace tooling (pnpm workspaces, Turborepo) does not require any particular folder names or a particular nesting depth; it only requires a `pnpm-workspace.yaml` glob and a root `package.json`. The rename was scope creep bundled into a genuinely useful idea (real workspace linking).
+
+**Revised proposal:** keep `frontend/` and `worker/` exactly where they are, named exactly as they are. Add:
+- A root `package.json` + `pnpm-workspace.yaml` covering `frontend`, `worker`, `packages/*` (and, later, a new `apps/mobile` or `mobile/` — new code, so its location is a free choice, no migration cost either way).
+- A root `turbo.json` for cached `build`/`test`/`lint` pipelines across the existing projects.
+- Replace `frontend`'s `file:../packages/shared` dependency with a real pnpm workspace link (`workspace:*`) — this is a one-line `package.json` change plus a lockfile regeneration, not a directory move.
+- **Do not rename `frontend/`→`apps/admin` or `worker/`→`apps/api`.** If the team later feels strongly about the `apps/` convention once a mobile app exists alongside them, that's a cheap, purely cosmetic rename to revisit then — but it is not worth doing now, and definitely not worth doing *before* anything else, as the original roadmap's "Phase 2" implied.
+
+**Benefits:** captures the real value (shared, type-checked, cached builds across projects; a proper link for `packages/domain`) without the churn.
+
+**Costs/migration risk:** minimal — adding root config files and swapping one dependency's protocol string is low-risk and easy to review as an isolated PR.
+
+**Alternatives:** multi-repo (rejected for the reasons in the original assessment §5.1 — still valid: the team is small, the coupling need between clients and shared domain logic is high, and independent release cadence isn't a current pain point).
+
+**Final recommendation:** **RECONSIDER and narrow the original plan** — approve the workspace tooling, reject the rename.
+
+**Timing:** Now — low risk, and it's a prerequisite for ADR-010 (`packages/domain` needs a real workspace link, not another `file:` hack).
+
+---
+
+## 10. ADR-010 — Extract `packages/domain` (types, validation, packet engine, completion calculators)
+
+**Current architecture:** `frontend/types/onboarding.ts`, `frontend/lib/validation.ts`, `frontend/lib/completion.ts` live inside the Next.js app; `packages/shared/src/packets.ts` is already extracted but frontend-only and not consumed by the Worker (assessment §1.9, §1.16 #3).
+
+**Self-challenge:** is this urgent, or nice-to-have? It's a genuine prerequisite, not a nice-to-have — ADR-011 (server-side session validation) and ADR-005 (mobile app) both need this logic available outside the Next.js app specifically. Doing it now, while it's a pure move-and-re-export with no behavior change, is far cheaper than doing it later once the Worker and a mobile app have each grown their own divergent copies.
+
+**Proposed:** move `frontend/types/onboarding.ts`, `validation.ts`, `completion.ts` into `packages/shared` (or a renamed `packages/domain` — naming detail, not load-bearing) alongside the existing `packets.ts`; re-export from `frontend/lib` as thin wrappers if needed to avoid touching every import site in the same PR; add it as a real dependency of `worker/` (closing the "designed to be shared, never actually was" gap).
+
+**Benefits:** one copy of business rules, consumable by the Worker (finally enabling real server-side validation), the future mobile app, and the existing admin/onboarding frontend.
+
+**Costs/migration risk:** low — this is a mechanical extraction of already-decoupled, framework-free TypeScript (verified in the original assessment: these files have no DOM/React dependency). The only real risk is import-path churn, mitigated by re-export shims during the transition.
+
+**Final recommendation:** **APPROVE.**
+
+**Timing:** **Now** — sequence immediately after ADR-009's workspace tooling lands (needs a real workspace link to depend on it from `worker/`), and before ADR-011's server-side validation work (which consumes it).
+
+---
+
+## 11. ADR-011 — `onboarding_sessions` / `exam_submissions` as the authoritative resumable-session store
+
+This was specifically called out for deeper scrutiny, so it gets a full analysis rather than a compressed table.
+
+**Current state (verified):** `onboarding_sessions` (session_id, packet_id/version, applicant identity fields, `step_states_json`, `form_data_json`, lifecycle `status`, optional `application_id` link) and `exam_submissions` (scored attempts, attempt-limit tracking) are fully migrated (`worker/migrations/0002_phase1.sql`) and have complete query modules (`worker/src/db/queries/onboardingSessions.ts`, `examSubmissions.ts`) — but zero routes reference them. The only live onboarding path is a single atomic `POST /api/submit-onboarding` at the very end of the flow; all in-progress state lives in browser `localStorage` only (assessment §1.9).
+
+**Question asked: should this schema become the authoritative server-side source for resumable onboarding across iOS, Android, and potentially web?**
+
+**Answer: yes — the schema's design is sound and should be wired up, not redesigned — but it needs two small, additive changes before it's ready to be the cross-device source of truth, and one policy decision about conflict handling.**
+
+**Why yes:** the shape is already correct for the job — one row per attempt (supporting "applicant abandons and restarts," which the migration's own comment anticipates), a step-state map keyed by packet step ID (matches the packet engine's step model exactly), and a pinned `packet_id`/`packet_version` per session (correctly prevents an in-progress session from being corrupted if the packet definition changes mid-flight — this is a subtle, correct design choice already made for us). There is no reason to design a new session model when this one already fits.
+
+**Gap 1 — no owning identity.** Today a session is identified only by a random `session_id` plus loose `email`/`name` fields captured mid-flow; there is no `user_id` foreign key because applicant accounts don't exist yet (ADR-008 territory). For this to be *the* cross-device source — the entire point of a mobile pivot needing server-side resumability — a session must eventually belong to an authenticated applicant, not just be knowable by whoever holds the `session_id` string. **Fix:** add a nullable `user_id` column now (nullable to support "start before creating an account," a reasonable onboarding UX — let someone begin the flow, then require account creation before it can sync across devices). On login/signup, "claim" any anonymous session created in the same browser/app instance by attaching `user_id`. This is a one-column additive migration, not a redesign.
+
+**Gap 2 — no conflict detection.** If the same applicant is signed in on both a phone and a browser and edits concurrently, whichever `updateSession` call lands last silently overwrites the other with no warning today. **Fix:** add a monotonically-incrementing `revision` integer column and enforce **optimistic concurrency control** on every write — no silent overwrite of any kind, including a "last write wins, but warn about it" variant. Concretely:
+
+- Every client fetches a session together with its current `revision`.
+- Every update request includes the `revision` the client last read.
+- The server accepts the write **only if** the submitted `revision` still matches the row's current `revision`; on success it persists the change and increments `revision` by one, atomically (single conditioned `UPDATE ... WHERE session_id = ? AND revision = ?`, checking the affected-row count).
+- If the submitted `revision` no longer matches (someone else's write landed first), the server takes no action on the data and returns an explicit conflict response (`409`) — it never silently applies the stale write, partially applies it, or picks a "winner" on the server's own judgment.
+- The client is required to handle the `409` explicitly rather than retrying blindly: re-fetch the current session state and either re-apply the user's in-flight edits on top of it or prompt them to reconcile, depending on what the specific screen can support. Silently discarding the conflicting local edit is **not** acceptable client behavior either — the requirement is graceful recovery, not silent loss on whichever side loses the race.
+
+This is a hard requirement, not a v1-simplification: onboarding data includes legally-signed acknowledgements and government-form fields, so an unnoticed overwrite is a compliance problem, not just a UX rough edge. Full operational-transform/CRDT-style field-level merging is still not required for v1 — rejecting a stale write and asking the client to reconcile is sufficient — but the rejection must always be explicit and visible, never silent.
+
+**What does *not* need to change:** `form_data_json` staying a single JSON blob (rather than being normalized into per-step rows) is fine for now — the packet engine already knows how to interpret it, and normalizing it is a performance/query-flexibility optimization with no current evidence it's needed; `exam_submissions`'s per-attempt design needs no changes at all.
+
+**Additional operational piece (not a schema change):** add a scheduled Cloudflare Cron Trigger to transition long-idle `active` sessions to `abandoned` after a configurable window — this is pure hygiene (keeps the admin portal's future "in-progress applications" view meaningful) and can be built independently of everything else here.
+
+**Final recommendation:** **APPROVE** wiring `onboarding_sessions`/`exam_submissions` as the authoritative source, **with the two additive migrations above** (`user_id`, `revision`) and mandatory optimistic-concurrency conflict handling (explicit `409` on a stale `revision`, no last-write-wins path in any form, client must recover gracefully rather than overwrite or silently drop data). Not implemented in M0 — this is a documentation-only update recording the decision for the milestone (M4) that actually builds the session endpoints.
+
+**Timing:** **Now/soon** — specifically, sequence this alongside ADR-008 (auth), since `user_id` requires an identity system to attach to. This pairing is a natural single workstream: "backend foundation" in the milestone sequence below.
+
+---
+
+## 12. ADR-012 — API design: versioning and a typed client
+
+**Current architecture:** hand-written `fetch` wrappers with manually duplicated response types in `frontend/lib/api.ts` and `admin-api.ts`; no API version prefix; no OpenAPI spec or generated client.
+
+**Original proposal:** add `/v1` versioning and a typed client, suggesting OpenAPI-generation or tRPC.
+
+**Self-challenge on the client-generation choice:** tRPC would require restructuring Hono's route-handler style into tRPC procedures — a real rewrite of the API's shape for a benefit Hono can already provide more cheaply. **Corrected recommendation: use `hono/client` (Hono's built-in RPC mode)** — type the exported `app` object and import `hc<AppType>()` from both the Next.js admin app and the future mobile app. This gives full end-to-end type safety (request/response shapes inferred directly from the route definitions) with **zero changes to how routes are written today** — it's additive, not a rewrite. It also works identically over plain `fetch` under the hood, so it's transport-compatible with React Native with no special handling.
+
+**Self-challenge on versioning:** is `/v1` premature for an API with two clients today (soon three)? The cost of adding it now is trivial (a path prefix); the cost of adding it *after* a mobile app is live in the App Store/Play Store is real, because mobile clients can't be force-upgraded the way a web deploy can — an unversioned breaking change would strand old app installs. This is a "cheap now, expensive later" item, not a judgment call.
+
+**Final recommendation:** **APPROVE** both — add `/v1` prefix, adopt `hono/client` for a shared typed client consumed by the admin portal and (later) the mobile app, replacing the hand-written `fetch` wrappers incrementally (no need to do it all in one PR).
+
+**Timing:** **Now** — cheapest before any mobile client exists to strand.
+
+---
+
+## 13. ADR-013 — Environment strategy (dev/staging/production)
+
+**Current architecture:** one environment, resources suffixed `-dev` (`paramountcare-db-dev`, `paramountcare-uploads-dev`), no `wrangler.jsonc` environment blocks, no separate secrets per environment (assessment §1.11, §1.15).
+
+**Self-challenge:** is this actually urgent relative to feature work? Yes, for the same "cheap now, expensive later" reason as ADR-012 and, arguably, more urgent than the D1 migration in ADR-001 — introducing `staging`/`production` `wrangler.jsonc` environments and provisioning separate D1/R2/secrets per environment is pure configuration, doable in an afternoon, and becomes progressively more disruptive the more real applicant data accumulates in the current single "-dev" environment that is implicitly being treated as production-adjacent.
+
+**Final recommendation:** **APPROVE.**
+
+**Timing:** **Now**, ideally before the first real (non-test) applicant submission happens in the current environment.
+
+---
+
+## 14. ADR-014 — CI/CD
+
+**Current architecture:** none. No `.github/workflows`, no automated test/typecheck/deploy gate of any kind (assessment §1.15).
+
+**Self-challenge:** any argument for waiting? None found — this is the one item in the entire set with no legitimate "later" case. It's independent of the mobile pivot, independent of every other ADR here, and its absence is *actively* costing correctness today: the broken test suite (§ below) has apparently been broken for some time with nothing to flag it.
+
+**Final recommendation:** **APPROVE.**
+
+**Timing:** **Immediately** — minimum bar: typecheck + (fixed) worker test suite on every PR, before any other roadmap work resumes.
+
+---
+
+## 15. Test suite baseline — stale tests vs. broken functionality
+
+Ran `npx vitest run` directly against the current `worker/` code (no code changes made). Full, categorized result:
+
+| Test | Result | Category | Evidence |
+|---|---|---|---|
+| `GET /health` returns ok status | ✅ Pass | — | — |
+| `POST /api/submit-onboarding` persists + returns 201 | ✅ Pass | — | — |
+| `POST /api/submit-onboarding` 422 on missing fields | ✅ Pass | — | — |
+| `POST /api/submit-onboarding` 422 on invalid email | ✅ Pass | — | — |
+| `POST /api/submit-onboarding` 400 on malformed JSON | ✅ Pass | — | — |
+| `GET /api/application/:id` returns 404 for unknown id | ❌ Fail | **Stale test** | Expects body `{error: "Application not found"}` (the message the *admin* handler returns), got `{error: "Not found"}` — the app-level fallback `notFound` handler. This proves the route `/api/application/:id` (unauthenticated) doesn't exist at all anymore; the request never reaches application-lookup code. |
+| `GET /api/application/:id` returns persisted data | ❌ Fail | **Stale test** | Expects 200 from an unauthenticated `/api/application/:id`; the real endpoint is `/api/admin/application/:id` and requires a valid `admin_token` cookie the test never sends. |
+| `GET /api/applications` paginated list | ❌ Fail | **Stale test** | Same cause: real endpoint is `/api/admin/applications`, auth-gated. |
+| `GET /api/applications` filters by search | ❌ Fail | **Stale test** | Same cause. |
+| `GET /api/applications` filters by status | ❌ Fail | **Stale test** | Same cause. |
+| `GET /api/applications` pagination params | ❌ Fail | **Stale test** | Same cause. |
+| `GET /api/application/:id` (extended) audit logs + phone | ❌ Fail | **Stale test** | Same cause. |
+| 404 handler for unknown routes | ✅ Pass | — | — |
+
+**Conclusion: all 7 failures share one root cause and it is a test-suite staleness issue, not a functional regression.** When the admin endpoints were moved from unauthenticated `/api/application*` to authenticated `/api/admin/application*` (a correct, deliberate security improvement — requiring auth to read applicant PII), the test suite was never updated to follow the move, and none of the moved-endpoint tests were ever rewritten to send an auth cookie. I independently verified the *actual* `/api/admin/*` handlers by reading `worker/src/routes/admin.ts` and confirmed the pagination, search, status-filter, and audit-log logic the failing tests try to assert on is present and looks correct — there's no code-level evidence of a real functional bug, only a coverage gap.
+
+**Baseline conclusion for pre-migration planning:**
+- **0 of 13 tests indicate broken production functionality.**
+- **7 of 13 tests are stale** (wrong path, missing auth) and should be rewritten, not "fixed" in place, since the thing they were testing (an open, unauthenticated application-lookup API) is intentionally gone.
+- **Net result: `/api/admin/*` — the routes actually serving the admin portal today — has zero automated test coverage.** That is the real risk here, not the red X's themselves. Treat "rewrite these 7 tests against `/api/admin/*` with a real auth cookie, plus add coverage for `/api/auth/*`" as one clearly-scoped, low-risk task — recommended as part of ADR-014's CI stand-up, since there's no point gating CI on a suite that's known-wrong.
+
+(Per your instruction, none of this has been fixed — this is the baseline only.)
+
+---
+
+## 16. Security incident assessment — `gitkey` / `gitkey.pub`
+
+Treating this with the rigor of an actual incident review, not a casual note.
+
+**What was found:** an OpenSSH ed25519 private key (`gitkey`) and its matching public key (`gitkey.pub`, comment `yoazeb@gmail.com`) sitting in the repository's working directory root.
+
+**Investigation performed (read-only, nothing modified):**
+- `git ls-files | grep -i gitkey` → **no output.** The files are not tracked in the current index.
+- `git log --all --full-history -- gitkey gitkey.pub` → **no output.** No commit, on any branch, ever added these paths.
+- Exhaustive scan: enumerated every commit reachable from any ref (`git rev-list --all`) and listed every tree at every commit (`git ls-tree -r`) grepping for any `gitkey*` blob → **zero matches in the entire object graph.**
+- `git reflog show --all` → the repository has exactly **one commit total** (`3855af8`, "Initial onboarding platform architecture"), no rewritten history, no dangling commits, no evidence of a prior version that included the key and was later removed.
+- `git count-objects -v` → 83 loose objects, 0 packs — consistent with a small, single-commit repo; nothing hidden in a pack that a shallow check would miss.
+- `git remote -v` → one remote, `git@github.com:yzewdie/paramountCare.git` (SSH). Since the key was never committed, it was never part of anything pushed to this or any other remote.
+- File permissions: `gitkey` is `-rw-------` (0600, correctly restrictive — whoever generated it did set safe permissions locally). `gitkey.pub` is `-rw-r--r--` (0644, expected/harmless for a public key).
+- No file anywhere in the repository (`grep -rl "gitkey"`) references these files by name — they are not wired into any script, deploy config, or SSH config within the repo. They appear to be a standalone artifact, most likely generated by running `ssh-keygen` with an output path inside this working directory by habit/accident rather than into `~/.ssh/`.
+- Root-level `.gitignore`: **does not exist.** `.git/info/exclude` is the untouched default template. This means nothing in the repo's configuration currently prevents `gitkey`/`gitkey.pub` from being swept up by a future `git add -A` or `git add .` — the fact that they're untracked *today* is incidental, not enforced.
+
+**Severity assessment: low, and currently contained — but not zero.** The key has never been committed, never pushed, and lives in a single-commit personal repo with no evidence of external exposure. The risk is entirely forward-looking: a future broad `git add` by anyone working in this directory would commit it, and from that point it would be a real secret in version-controlled history (and, on the next push, on GitHub). This is a "close the door before it happens" situation, not a "the horse has left the barn" one.
+
+**Remediation plan (not executed — awaiting your approval):**
+1. Add a root-level `.gitignore` including, at minimum, `gitkey`, `gitkey.pub`, `*.pem`, `id_*`, `id_*.pub`, and `.env*` (the latter because `frontend/.env.local` and `worker/.dev.vars` carry real secrets today and are currently only protected by nested `.gitignore` files inside `frontend/`/`worker/` respectively, not a root policy — worth confirming those nested ignores are actually catching them, which they appear to, per `git status` showing no `.env*` files as untracked-but-unignored).
+2. Move `gitkey`/`gitkey.pub` out of the repository working directory entirely — to `~/.ssh/` (renamed to something conventional) if the key is still needed for anything (e.g., it may be an ad hoc deploy key for the `paramountCare` GitHub remote — worth checking GitHub's repo "Deploy keys" settings before assuming it's unused), or deleted if it isn't.
+3. **Rotation is optional, not mandatory**, given the "never committed, never pushed" finding — recommended only as defense-in-depth if there's any chance this key's private half was ever copied elsewhere (email, Slack, another machine) outside of git, which is outside what a repository audit can determine. Your call.
+4. No action has been taken on any of the above pending your go-ahead — this section is the assessment, not the fix.
+
+---
+
+## 17. Smallest safe sequence of implementation milestones
+
+Ordered so nothing is built on a foundation that will be redesigned out from under it, and so every milestone is independently reviewable and shippable.
+
+**M0 — Hygiene (no architecture risk, do immediately, can run in parallel with everything else)**
+- Add root `.gitignore` (§16), decide + optionally execute `gitkey` remediation.
+- Stand up CI: typecheck all projects + run the worker test suite (accepting its current known-stale failures as a documented baseline, or gating only on the 6 passing tests until they're rewritten).
+- Rewrite the 7 stale tests against the real `/api/admin/*` routes with a valid auth cookie (§15) — small, well-scoped, zero design risk.
+
+**M1 — Repository/workspace tooling (ADR-009, ADR-010)**
+- Add root `package.json` + `pnpm-workspace.yaml` + `turbo.json` — no directory renames.
+- Swap `frontend`'s `file:../packages/shared` for a real `workspace:*` link.
+- Extract `types/onboarding.ts`, `validation.ts`, `completion.ts` into the shared package alongside `packets.ts`; re-export thin shims from `frontend/lib` to avoid a big-bang import-path change.
+- Add `packages/shared` (or `packages/domain`) as a real dependency of `worker/`.
+
+**M2 — Environment separation (ADR-013)**
+- Introduce `staging`/`production` blocks in `wrangler.jsonc`; provision separate D1 + R2 resources per environment; move secrets to per-environment Cloudflare secrets rather than shared `.dev.vars` values.
+- Explicitly decide ADR-001 (D1 vs. Postgres) at this point, before any real applicant data exists in a non-dev environment — this is the natural, last-cheap moment for that call.
+
+**M3 — API contract foundation (ADR-012)**
+- Add `/v1` prefix to all routes.
+- Introduce `hono/client`-based typed client; migrate the admin portal's `lib/api.ts`/`admin-api.ts` to it incrementally.
+
+**M4 — Backend foundation: auth + server-authoritative sessions (ADR-008, ADR-011)**
+This is the true foundation for the mobile pivot and should not be split across separate milestones, since they share the same `user_id` concept:
+- Build the `users` table (discriminated by role: `applicant` | `admin` | `super_admin`), migrating `admin_users` into it or keeping it as a parallel table joined by role — implementation detail to settle at design time.
+- Build `refresh_tokens` table + rotation/reuse-detection logic; wire `requireRole` into admin routes for the first time.
+- Add `user_id` (nullable) and `revision` columns to `onboarding_sessions`; build the session create/read/update/claim endpoints against the existing `onboardingSessions.ts`/`examSubmissions.ts` query modules, enforcing the packet engine's validation (now importable from the shared package per M1) server-side for the first time.
+- Move the packet-based step validation server-side, closing the "server trusts the client" gap.
+
+**M5 — Mobile foundation (ADR-005, ADR-006)**
+- Expo app skeleton + Expo Router navigation shell, secure-token-storage wiring configured for future biometric gating from day one (even with biometric UI deferred).
+- Prove `packages/domain` types/validation compile and run correctly under React Native.
+- No onboarding screens yet — this milestone is scaffolding + auth integration against M4, nothing else.
+
+**M6 — First onboarding packet on mobile**
+- Rebuild one packet (`general_rn`) end-to-end as native screens against the M4 session API — camera-based document capture, native signature capture, resumable/offline-tolerant session sync using the `revision`-based conflict check from ADR-011.
+- Treat this as the proof point before porting the remaining specialty packets.
+
+**M7 — Remaining packets + admin portal enhancements**
+- Port the remaining specialization packets to mobile.
+- Extend the admin portal per assessment §3.3 (reviewer workflow, packet/content management, role-gated actions using the now-wired `requireRole`).
+
+Everything after M7 (AI/analytics, notifications center, broader production hardening) follows the original roadmap's Phases 8–9 and is intentionally left unscheduled here until the earlier, load-bearing milestones are actually approved and underway.
+
+---
+
+**Nothing above has been implemented.** This document is the decision surface — waiting for your approval (per-ADR, or as a set) before any code, migration, or repository change is made.

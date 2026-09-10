@@ -1,25 +1,34 @@
 'use client';
 
 import { Check } from 'lucide-react';
-import { STEPS, OnboardingStep } from '@/types/onboarding';
+import type { PacketStep, StepStates } from '@pcs/shared';
 import type { StepCompletion } from '@/lib/completion';
+import { getStepShortLabel } from '@/lib/packet-ui';
 
 interface ProgressStepsProps {
-  currentStep: OnboardingStep;
-  completedSteps: Set<OnboardingStep>;
-  stepCompletions: Record<OnboardingStep, StepCompletion>;
+  steps: PacketStep[];
+  currentStepId: string;
+  stepStates: StepStates;
+  stepCompletions: Record<string, StepCompletion>;
   overallPercent: number;
-  onStepClick: (step: OnboardingStep) => void;
+  onStepClick: (stepId: string) => void;
+  canNavigateTo: (stepId: string) => boolean;
 }
 
+// Beyond this threshold the stepper switches to compact (circles only, no labels).
+const COMPACT_THRESHOLD = 9;
+
 export function ProgressSteps({
-  currentStep,
-  completedSteps,
+  steps,
+  currentStepId,
+  stepStates,
   stepCompletions,
   overallPercent,
   onStepClick,
+  canNavigateTo,
 }: ProgressStepsProps) {
-  const currentIndex = STEPS.findIndex((s) => s.id === currentStep);
+  const currentIndex = steps.findIndex((s) => s.id === currentStepId);
+  const compact = steps.length >= COMPACT_THRESHOLD;
 
   return (
     <div className="w-full space-y-3">
@@ -37,25 +46,27 @@ export function ProgressSteps({
 
       {/* Desktop stepper */}
       <div className="hidden md:flex items-center justify-between pt-1">
-        {STEPS.map((step, idx) => {
-          const isCompleted = completedSteps.has(step.id);
-          const isCurrent = step.id === currentStep;
-          const isReachable = isCompleted || isCurrent || idx <= currentIndex;
-          const stepPct = stepCompletions[step.id].percent;
+        {steps.map((step, idx) => {
+          const isCompleted        = stepStates[step.id] === 'completed';
+          const isCurrent          = step.id === currentStepId;
+          const isReachable        = canNavigateTo(step.id);
+          const stepPct            = stepCompletions[step.id]?.percent ?? 0;
           const hasPartialProgress = !isCompleted && !isCurrent && stepPct > 0;
 
           return (
-            <div key={step.id} className="flex items-center flex-1">
+            <div key={step.id} className="flex items-center flex-1 min-w-0">
               <button
                 onClick={() => isReachable && onStepClick(step.id)}
                 disabled={!isReachable}
-                className="flex flex-col items-center gap-1.5 group min-w-0"
+                className="flex flex-col items-center gap-1 group min-w-0"
                 aria-label={`Go to ${step.label}`}
                 aria-current={isCurrent ? 'step' : undefined}
+                title={compact ? step.label : undefined}
               >
                 <div
                   className={`
-                    relative w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold transition-all duration-200
+                    relative flex items-center justify-center font-semibold transition-all duration-200 rounded-full
+                    ${compact ? 'w-7 h-7 text-xs' : 'w-9 h-9 text-sm'}
                     ${isCompleted
                       ? 'bg-blue-600 text-white shadow-sm shadow-blue-200'
                       : isCurrent
@@ -66,20 +77,22 @@ export function ProgressSteps({
                     ${isReachable && !isCurrent ? 'group-hover:scale-105' : ''}
                   `}
                 >
-                  {isCompleted ? <Check size={16} strokeWidth={2.5} /> : idx + 1}
+                  {isCompleted ? <Check size={compact ? 12 : 16} strokeWidth={2.5} /> : idx + 1}
                 </div>
-                <span
-                  className={`text-xs font-medium whitespace-nowrap transition-colors ${
-                    isCurrent ? 'text-blue-600' : isCompleted ? 'text-slate-600' : 'text-slate-400'
-                  }`}
-                >
-                  {step.shortLabel}
-                </span>
+                {!compact && (
+                  <span
+                    className={`text-xs font-medium whitespace-nowrap transition-colors ${
+                      isCurrent ? 'text-blue-600' : isCompleted ? 'text-slate-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {getStepShortLabel(step)}
+                  </span>
+                )}
               </button>
 
-              {idx < STEPS.length - 1 && (
+              {idx < steps.length - 1 && (
                 <div
-                  className="flex-1 h-px mx-2 mb-5 rounded-full transition-all duration-500"
+                  className={`flex-1 h-px rounded-full transition-all duration-500 ${compact ? 'mx-0.5' : 'mx-2'} ${compact ? '' : 'mb-5'}`}
                   style={{ background: isCompleted ? '#2563eb' : '#e2e8f0' }}
                 />
               )}
@@ -89,10 +102,10 @@ export function ProgressSteps({
       </div>
 
       {/* Mobile: segmented bar */}
-      <div className="flex md:hidden gap-1 pt-1">
-        {STEPS.map((step, idx) => {
-          const isCompleted = completedSteps.has(step.id);
-          const isCurrent = step.id === currentStep;
+      <div className="flex md:hidden gap-0.5 pt-1">
+        {steps.map((step, idx) => {
+          const isCompleted = stepStates[step.id] === 'completed';
+          const isCurrent   = step.id === currentStepId;
           return (
             <div
               key={step.id}
@@ -110,13 +123,13 @@ export function ProgressSteps({
         })}
       </div>
 
-      {/* Mobile: current step label */}
-      <div className="flex md:hidden justify-between items-center">
-        <span className="text-sm font-semibold text-blue-600">
-          {STEPS.find((s) => s.id === currentStep)?.label}
+      {/* Current step label — always shown below the stepper */}
+      <div className="flex justify-between items-center">
+        <span className={`text-sm font-semibold text-blue-600 ${compact ? '' : 'md:hidden'}`}>
+          {steps.find((s) => s.id === currentStepId)?.label}
         </span>
-        <span className="text-xs text-slate-400">
-          {currentIndex + 1} / {STEPS.length}
+        <span className={`text-xs text-slate-400 ${compact ? '' : 'md:hidden'}`}>
+          {currentIndex + 1} / {steps.length}
         </span>
       </div>
     </div>

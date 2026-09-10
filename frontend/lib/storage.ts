@@ -1,29 +1,40 @@
+import type { StepStates } from '@pcs/shared';
 import type {
   OnboardingFormData,
-  OnboardingStep,
   PersonalInfo,
+  EmploymentApplicationData,
   I9Data,
+  W4Data,
   EmploymentReference,
   SafetyEducationData,
   SignatureData,
+  AcknowledgementEntry,
 } from '@/types/onboarding';
+import { defaultFormData } from '@/types/onboarding';
 
-const FORM_KEY = 'pcs_onboarding_v2';
-const STEP_KEY = 'pcs_onboarding_step_v2';
+// v9: employmentReference → employmentReferences (Record<string, EmploymentReference>) + new ref fields.
+const SESSION_KEY = 'pcs_onboarding_v9';
 
-// File objects cannot be serialized — store metadata only.
+// ── Storable shape (File objects are not JSON-serializable) ───────────────────
+
 interface StorableUploadedFile {
   name: string;
   size: number;
   type: string;
+  objectKey?: string;
+  uploadedAt?: string;
 }
 
 interface StorableFormData {
   personalInfo: PersonalInfo;
+  employmentApplication: EmploymentApplicationData;
   i9Data: I9Data;
-  employmentReference: EmploymentReference;
+  w4Data?: W4Data;
+  employmentReferences: Record<string, EmploymentReference>;
   safetyEducation: SafetyEducationData;
   signatureData: SignatureData;
+  acknowledgements: Record<string, AcknowledgementEntry>;
+  vaccineProofDocuments?: Record<string, StorableUploadedFile | null>;
   uploadedDocuments: {
     listA: StorableUploadedFile | null;
     listB: StorableUploadedFile | null;
@@ -33,16 +44,32 @@ interface StorableFormData {
   };
 }
 
+interface StoredSession {
+  packetId: string;
+  packetVersion: number;
+  currentStepId: string;
+  stepStates: StepStates;
+  formData: StorableFormData;
+}
+
+// ── Serialization ─────────────────────────────────────────────────────────────
+
 function toStorable(data: OnboardingFormData): StorableFormData {
   const stripFile = (f: OnboardingFormData['uploadedDocuments'][keyof OnboardingFormData['uploadedDocuments']]) =>
-    f ? { name: f.name, size: f.size, type: f.type } : null;
+    f ? { name: f.name, size: f.size, type: f.type, objectKey: f.objectKey, uploadedAt: f.uploadedAt } : null;
 
   return {
-    personalInfo: data.personalInfo,
-    i9Data: data.i9Data,
-    employmentReference: data.employmentReference,
-    safetyEducation: data.safetyEducation,
-    signatureData: data.signatureData,
+    personalInfo:          data.personalInfo,
+    employmentApplication: data.employmentApplication,
+    i9Data:                data.i9Data,
+    w4Data:                data.w4Data,
+    employmentReferences:  data.employmentReferences,
+    safetyEducation:       data.safetyEducation,
+    signatureData:         data.signatureData,
+    acknowledgements:      data.acknowledgements,
+    vaccineProofDocuments: Object.fromEntries(
+      Object.entries(data.vaccineProofDocuments ?? {}).map(([k, f]) => [k, f ? stripFile(f) : null]),
+    ),
     uploadedDocuments: {
       listA:            stripFile(data.uploadedDocuments.listA),
       listB:            stripFile(data.uploadedDocuments.listB),
@@ -54,16 +81,23 @@ function toStorable(data: OnboardingFormData): StorableFormData {
 }
 
 function restoreFile(f: StorableUploadedFile | null) {
-  return f ? { ...f, restoredFromCache: true } : null;
+  if (!f) return null;
+  return { ...f, restoredFromCache: true };
 }
 
 function fromStorable(stored: StorableFormData): OnboardingFormData {
   return {
-    personalInfo: stored.personalInfo,
-    i9Data: stored.i9Data,
-    employmentReference: stored.employmentReference,
-    safetyEducation: stored.safetyEducation,
-    signatureData: stored.signatureData,
+    personalInfo:          stored.personalInfo          ?? defaultFormData.personalInfo,
+    employmentApplication: stored.employmentApplication  ?? defaultFormData.employmentApplication,
+    i9Data:                stored.i9Data                ?? defaultFormData.i9Data,
+    w4Data:                stored.w4Data                ?? defaultFormData.w4Data,
+    employmentReferences:  stored.employmentReferences  ?? defaultFormData.employmentReferences,
+    safetyEducation:       stored.safetyEducation       ?? defaultFormData.safetyEducation,
+    signatureData:         stored.signatureData         ?? defaultFormData.signatureData,
+    acknowledgements:      stored.acknowledgements      ?? {},
+    vaccineProofDocuments: Object.fromEntries(
+      Object.entries(stored.vaccineProofDocuments ?? {}).map(([k, f]) => [k, restoreFile(f)]),
+    ),
     uploadedDocuments: {
       listA:            restoreFile(stored.uploadedDocuments.listA),
       listB:            restoreFile(stored.uploadedDocuments.listB),
@@ -74,10 +108,24 @@ function fromStorable(stored: StorableFormData): OnboardingFormData {
   };
 }
 
-export function saveOnboardingData(data: OnboardingFormData, step: OnboardingStep): void {
+// ── Public API ────────────────────────────────────────────────────────────────
+
+export function saveOnboardingData(
+  data: OnboardingFormData,
+  currentStepId: string,
+  packetId: string,
+  packetVersion: number,
+  stepStates: StepStates,
+): void {
   try {
-    localStorage.setItem(FORM_KEY, JSON.stringify(toStorable(data)));
-    localStorage.setItem(STEP_KEY, step);
+    const session: StoredSession = {
+      packetId,
+      packetVersion,
+      currentStepId,
+      stepStates,
+      formData: toStorable(data),
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   } catch {
     // localStorage unavailable (private browsing, storage full, SSR)
   }
@@ -85,18 +133,23 @@ export function saveOnboardingData(data: OnboardingFormData, step: OnboardingSte
 
 export interface RestoredSession {
   formData: OnboardingFormData;
-  step: OnboardingStep;
+  currentStepId: string;
+  packetId: string;
+  packetVersion: number;
+  stepStates: StepStates;
 }
 
 export function loadOnboardingData(): RestoredSession | null {
   try {
-    const raw = localStorage.getItem(FORM_KEY);
-    const step = localStorage.getItem(STEP_KEY) as OnboardingStep | null;
+    const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-    const stored: StorableFormData = JSON.parse(raw);
+    const session: StoredSession = JSON.parse(raw);
     return {
-      formData: fromStorable(stored),
-      step: step ?? 'personal',
+      formData:      fromStorable(session.formData),
+      currentStepId: session.currentStepId,
+      packetId:      session.packetId,
+      packetVersion: session.packetVersion ?? 0,
+      stepStates:    session.stepStates ?? {},
     };
   } catch {
     return null;
@@ -105,8 +158,7 @@ export function loadOnboardingData(): RestoredSession | null {
 
 export function clearOnboardingData(): void {
   try {
-    localStorage.removeItem(FORM_KEY);
-    localStorage.removeItem(STEP_KEY);
+    localStorage.removeItem(SESSION_KEY);
   } catch {
     // ignore
   }

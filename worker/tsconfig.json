@@ -39,7 +39,10 @@
 		"types": [
 			"./worker-configuration.d.ts",
 			"node"
-		]
+		],
+		"paths": {
+			"@pcs/shared": ["../packages/shared/src/index.ts"]
+		}
 	},
 	"exclude": ["test"],
 	"include": ["worker-configuration.d.ts", "src/**/*.ts"]

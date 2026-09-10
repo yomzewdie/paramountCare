@@ -6,10 +6,11 @@ import {
   ChevronLeft, ChevronRight, Send, HeartPulse,
   CheckCircle2, Loader2, Save, Trash2, Mail, Calendar, ArrowRight, Phone,
 } from 'lucide-react';
+import { PACKETS, canNavigateToStep, type StepStates, type PacketStep } from '@pcs/shared';
 import {
-  OnboardingFormData, OnboardingStep, STEPS, defaultFormData,
-  PersonalInfo, I9Data, EmploymentReference, SafetyEducationData,
-  UploadedDocuments, SignatureData,
+  OnboardingFormData, defaultFormData,
+  PersonalInfo, EmploymentApplicationData, I9Data, EmploymentReference, SafetyEducationData,
+  UploadedDocuments, AcknowledgementEntry, defaultEmploymentReference,
 } from '@/types/onboarding';
 import { saveOnboardingData, loadOnboardingData, clearOnboardingData } from '@/lib/storage';
 import { validateStep } from '@/lib/validation';
@@ -21,18 +22,21 @@ import { I9Section } from '@/components/onboarding/I9Section';
 import { EmploymentReferenceSection } from '@/components/onboarding/EmploymentReferenceSection';
 import { SafetySection } from '@/components/onboarding/SafetySection';
 import { UploadSection } from '@/components/onboarding/UploadSection';
-import { SignatureSection } from '@/components/onboarding/SignatureSection';
 import { ReviewSection } from '@/components/onboarding/ReviewSection';
+import { AcknowledgementSection } from '@/components/onboarding/AcknowledgementSection';
+import { VaccineDeclinationSection } from '@/components/onboarding/VaccineDeclinationSection';
+import { EmploymentApplicationSection } from '@/components/onboarding/EmploymentApplicationSection';
+import { W4Section } from '@/components/onboarding/W4Section';
 import { Button } from '@/components/ui/Button';
 import { submitOnboardingApplication, ApiValidationError, ApiNetworkError } from '@/lib/api';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Packet ────────────────────────────────────────────────────────────────────
+//
+// Phase A: hardcoded to general_rn.
+// Phase 1B: will come from a URL search param (e.g. ?packet=icu_rn) or a
+// server-side session record returned on page load.
 
-const STEP_ORDER: OnboardingStep[] = STEPS.map((s) => s.id);
-
-function stepIndex(step: OnboardingStep) {
-  return STEP_ORDER.indexOf(step);
-}
+const PACKET = PACKETS['general_rn'];
 
 // ── Animation ────────────────────────────────────────────────────────────────
 
@@ -42,6 +46,160 @@ const slideVariants = {
   exit:  (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
 };
 const transition = { duration: 0.22, ease: [0.4, 0, 0.2, 1] as const };
+
+// ── Placeholder for steps not yet fully implemented ──────────────────────────
+
+function ComingSoonStep({ step }: { step: PacketStep }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      <div className="flex items-center gap-3 px-5 py-4 bg-amber-50 border-b border-amber-100">
+        <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">Coming soon</span>
+      </div>
+      <div className="px-5 py-6 space-y-3">
+        <p className="text-sm font-medium text-slate-700">{step.label}</p>
+        <p className="text-sm text-slate-500 leading-relaxed">
+          {step.config?.text ?? 'This step will be available in a future update.'}
+        </p>
+        <p className="text-xs text-slate-400 pt-1">Click <strong>Continue</strong> to proceed.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Packet step renderer ─────────────────────────────────────────────────────
+// Dispatches on step.type + step.subtype — never on step.id.
+// Any packet variant with the same step type renders the correct component.
+
+interface StepRendererProps {
+  step: PacketStep | undefined;
+  formData: OnboardingFormData;
+  errors: FieldErrors;
+  updateFormData: <K extends keyof OnboardingFormData>(key: K, value: OnboardingFormData[K]) => void;
+  onEditStep: (stepId: string) => void;
+}
+
+function getAck(formData: OnboardingFormData, stepId: string): AcknowledgementEntry {
+  return formData.acknowledgements[stepId] ?? { checked: false, typedSignature: '', signedAt: '' };
+}
+
+function StepRenderer({ step, formData, errors, updateFormData, onEditStep }: StepRendererProps) {
+  if (!step) return null;
+
+  const updateAck = (entry: AcknowledgementEntry) =>
+    updateFormData('acknowledgements', { ...formData.acknowledgements, [step.id]: entry });
+
+  switch (step.type) {
+    case 'personal_info':
+      return (
+        <PersonalInfoSection
+          data={formData.personalInfo}
+          onChange={(v: PersonalInfo) => updateFormData('personalInfo', v)}
+          errors={errors}
+        />
+      );
+
+    case 'government_form':
+      if (step.subtype === 'i9') {
+        return (
+          <I9Section
+            data={formData.i9Data}
+            personalInfo={formData.personalInfo}
+            onChange={(v: I9Data) => updateFormData('i9Data', v)}
+            errors={errors}
+          />
+        );
+      }
+      if (step.subtype === 'w4') {
+        return (
+          <W4Section
+            data={formData.w4Data}
+            personalInfo={formData.personalInfo}
+            onChange={(v) => updateFormData('w4Data', v)}
+            errors={errors}
+          />
+        );
+      }
+      return <ComingSoonStep step={step} />;
+
+    case 'internal_form':
+      if (step.subtype === 'employment_application') {
+        return (
+          <EmploymentApplicationSection
+            data={formData.employmentApplication}
+            onChange={(v: EmploymentApplicationData) => updateFormData('employmentApplication', v)}
+            errors={errors}
+          />
+        );
+      }
+      // direct_deposit and other internal forms — placeholder until implemented
+      return <ComingSoonStep step={step} />;
+
+    case 'employment_reference':
+      return (
+        <EmploymentReferenceSection
+          referenceNumber={step.config?.referenceNumber}
+          data={formData.employmentReferences[step.id] ?? defaultEmploymentReference}
+          onChange={(v: EmploymentReference) =>
+            updateFormData('employmentReferences', { ...formData.employmentReferences, [step.id]: v })
+          }
+          errors={errors}
+        />
+      );
+
+    case 'acknowledgement':
+      if (step.config?.hasDeclination) {
+        return (
+          <VaccineDeclinationSection
+            step={step}
+            data={getAck(formData, step.id)}
+            onChange={updateAck}
+            proofDocument={formData.vaccineProofDocuments?.[step.id] ?? null}
+            onProofDocumentChange={(file) =>
+              updateFormData('vaccineProofDocuments', {
+                ...formData.vaccineProofDocuments,
+                [step.id]: file,
+              })
+            }
+            errors={errors}
+          />
+        );
+      }
+      if (step.config?.acknowledgementId === 'safety_acknowledgements') {
+        return (
+          <SafetySection
+            data={formData.safetyEducation}
+            onChange={(v: SafetyEducationData) => updateFormData('safetyEducation', v)}
+          />
+        );
+      }
+      return (
+        <AcknowledgementSection
+          step={step}
+          data={getAck(formData, step.id)}
+          onChange={updateAck}
+          errors={errors}
+        />
+      );
+
+    case 'exam':
+      // Specialization clinical exam — placeholder until exam engine is built
+      return <ComingSoonStep step={step} />;
+
+    case 'document_upload':
+      return (
+        <UploadSection
+          data={formData.uploadedDocuments}
+          onChange={(v: UploadedDocuments) => updateFormData('uploadedDocuments', v)}
+        />
+      );
+
+    case 'review':
+      return <ReviewSection data={formData} onEditStep={onEditStep} />;
+
+    default:
+      return null;
+  }
+}
 
 // ── Saved badge ──────────────────────────────────────────────────────────────
 
@@ -66,35 +224,44 @@ function SavedBadge({ visible }: { visible: boolean }) {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OnboardingDemoPage() {
-  const [currentStep, setCurrentStep] = useState<OnboardingStep>('personal');
-  const [formData, setFormData] = useState<OnboardingFormData>(defaultFormData);
-  const [completedSteps, setCompletedSteps] = useState<Set<OnboardingStep>>(new Set());
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [direction, setDirection] = useState(1);
-  const [showSaved, setShowSaved] = useState(false);
+  const [currentStep, setCurrentStep] = useState<string>(PACKET.steps[0].id);
+  const [formData, setFormData]       = useState<OnboardingFormData>(defaultFormData);
+  const [stepStates, setStepStates]   = useState<StepStates>({});
+  const [errors, setErrors]           = useState<FieldErrors>({});
+  const [direction, setDirection]     = useState(1);
+  const [showSaved, setShowSaved]     = useState(false);
   const [hasRestoredSession, setHasRestoredSession] = useState(false);
-  const [showRestoreBanner, setShowRestoreBanner] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [appId, setAppId] = useState('');
+  const [showRestoreBanner, setShowRestoreBanner]   = useState(false);
+  const [submitting, setSubmitting]   = useState(false);
+  const [submitted, setSubmitted]     = useState(false);
+  const [appId, setAppId]             = useState('');
   const [submittedAt, setSubmittedAt] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const badgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Derived navigation helpers ───────────────────────────────────────────
+
+  const currentIndex = PACKET.steps.findIndex((s) => s.id === currentStep);
+  const isFirst = currentIndex === 0;
+  const isLast  = currentIndex === PACKET.steps.length - 1;
 
   // ── Restore session ──────────────────────────────────────────────────────
 
   useEffect(() => {
     const saved = loadOnboardingData();
-    if (saved) {
-      setFormData(saved.formData);
-      setCurrentStep(saved.step);
-      const idx = stepIndex(saved.step);
-      setCompletedSteps(new Set(STEP_ORDER.slice(0, idx) as OnboardingStep[]));
-      setHasRestoredSession(true);
-      setShowRestoreBanner(true);
-    }
+    if (!saved) return;
+
+    // Discard sessions from a different packet or an older packet version.
+    // Version bumps happen when steps are added, removed, or reordered.
+    if (saved.packetId !== PACKET.id || saved.packetVersion !== PACKET.version) return;
+
+    setFormData(saved.formData);
+    setCurrentStep(saved.currentStepId);
+    setStepStates(saved.stepStates);
+    setHasRestoredSession(true);
+    setShowRestoreBanner(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -103,13 +270,13 @@ export default function OnboardingDemoPage() {
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveOnboardingData(formData, currentStep);
+      saveOnboardingData(formData, currentStep, PACKET.id, PACKET.version, stepStates);
       setShowSaved(true);
       if (badgeTimer.current) clearTimeout(badgeTimer.current);
       badgeTimer.current = setTimeout(() => setShowSaved(false), 2500);
     }, 700);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [formData, currentStep]);
+  }, [formData, currentStep, stepStates]);
 
   // ── Form updater ─────────────────────────────────────────────────────────
 
@@ -122,15 +289,17 @@ export default function OnboardingDemoPage() {
 
   // ── Navigation ───────────────────────────────────────────────────────────
 
-  const goToStep = useCallback((step: OnboardingStep, dir?: number) => {
-    setDirection(dir ?? (stepIndex(step) > stepIndex(currentStep) ? 1 : -1));
+  const goToStep = useCallback((stepId: string, dir?: number) => {
+    const targetIndex = PACKET.steps.findIndex((s) => s.id === stepId);
+    setDirection(dir ?? (targetIndex > currentIndex ? 1 : -1));
     setErrors({});
-    setCurrentStep(step);
+    setCurrentStep(stepId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [currentStep]);
+  }, [currentIndex]);
 
   const advance = () => {
-    const errs = validateStep(currentStep, formData);
+    const currentPacketStep = PACKET.steps[currentIndex];
+    const errs = validateStep(currentStep, formData, currentPacketStep);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       setTimeout(() => {
@@ -139,22 +308,20 @@ export default function OnboardingDemoPage() {
       }, 50);
       return;
     }
-    const idx = stepIndex(currentStep);
-    setCompletedSteps((prev) => new Set([...prev, currentStep]));
+    setStepStates((prev) => ({ ...prev, [currentStep]: 'completed' }));
     setErrors({});
-    if (idx < STEP_ORDER.length - 1) {
+    if (currentIndex < PACKET.steps.length - 1) {
       setDirection(1);
-      setCurrentStep(STEP_ORDER[idx + 1]);
+      setCurrentStep(PACKET.steps[currentIndex + 1].id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const retreat = () => {
-    const idx = stepIndex(currentStep);
-    if (idx > 0) {
+    if (currentIndex > 0) {
       setDirection(-1);
       setErrors({});
-      setCurrentStep(STEP_ORDER[idx - 1]);
+      setCurrentStep(PACKET.steps[currentIndex - 1].id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -166,7 +333,7 @@ export default function OnboardingDemoPage() {
       const result = await submitOnboardingApplication(formData);
       setAppId(result.applicationId);
       setSubmittedAt(result.submittedAt);
-      setCompletedSteps((prev) => new Set([...prev, currentStep]));
+      setStepStates((prev) => ({ ...prev, [currentStep]: 'completed' }));
       clearOnboardingData();
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -190,8 +357,8 @@ export default function OnboardingDemoPage() {
   const handleClearProgress = () => {
     clearOnboardingData();
     setFormData(defaultFormData);
-    setCurrentStep('personal');
-    setCompletedSteps(new Set());
+    setCurrentStep(PACKET.steps[0].id);
+    setStepStates({});
     setErrors({});
     setHasRestoredSession(false);
     setShowRestoreBanner(false);
@@ -200,12 +367,10 @@ export default function OnboardingDemoPage() {
 
   // ── Derived ──────────────────────────────────────────────────────────────
 
-  const isFirst = stepIndex(currentStep) === 0;
-  const isLast = currentStep === 'review';
-  const stepCompletions = useMemo(() => computeStepCompletion(formData), [formData]);
-  const overallPercent = useMemo(() => computeOverallCompletion(formData), [formData]);
+  const stepCompletions  = useMemo(() => computeStepCompletion(formData), [formData]);
+  const overallPercent   = useMemo(() => computeOverallCompletion(formData), [formData]);
   const currentCompletion = stepCompletions[currentStep];
-  const currentStepLabel = STEPS.find((s) => s.id === currentStep)?.label ?? '';
+  const currentStepLabel  = PACKET.steps[currentIndex]?.label ?? '';
 
   // ── Submitted ────────────────────────────────────────────────────────────
 
@@ -243,11 +408,13 @@ export default function OnboardingDemoPage() {
             </div>
           </div>
           <ProgressSteps
-            currentStep={currentStep}
-            completedSteps={completedSteps}
+            steps={PACKET.steps}
+            currentStepId={currentStep}
+            stepStates={stepStates}
             stepCompletions={stepCompletions}
             overallPercent={overallPercent}
-            onStepClick={(step) => goToStep(step)}
+            onStepClick={(stepId) => goToStep(stepId)}
+            canNavigateTo={(stepId) => canNavigateToStep(PACKET, stepStates, stepId)}
           />
         </div>
       </header>
@@ -290,10 +457,10 @@ export default function OnboardingDemoPage() {
           <div>
             <h2 className="text-2xl font-bold text-slate-900">{currentStepLabel}</h2>
             <p className="text-sm text-slate-500 mt-1">
-              Step {stepIndex(currentStep) + 1} of {STEPS.length}
+              Step {currentIndex + 1} of {PACKET.steps.length}
             </p>
           </div>
-          {currentStep !== 'review' && (
+          {currentStep !== 'review' && currentCompletion && (
             <div className="flex flex-col items-end gap-1 flex-shrink-0">
               <span className="text-xs font-semibold text-slate-500">
                 {currentCompletion.completed}/{currentCompletion.total}
@@ -320,51 +487,13 @@ export default function OnboardingDemoPage() {
             transition={transition}
             className="mb-8"
           >
-            {currentStep === 'personal' && (
-              <PersonalInfoSection
-                data={formData.personalInfo}
-                onChange={(v: PersonalInfo) => updateFormData('personalInfo', v)}
-                errors={errors}
-              />
-            )}
-            {currentStep === 'i9' && (
-              <I9Section
-                data={formData.i9Data}
-                onChange={(v: I9Data) => updateFormData('i9Data', v)}
-                errors={errors}
-              />
-            )}
-            {currentStep === 'employment' && (
-              <EmploymentReferenceSection
-                data={formData.employmentReference}
-                onChange={(v: EmploymentReference) => updateFormData('employmentReference', v)}
-                errors={errors}
-              />
-            )}
-            {currentStep === 'safety' && (
-              <SafetySection
-                data={formData.safetyEducation}
-                onChange={(v: SafetyEducationData) => updateFormData('safetyEducation', v)}
-              />
-            )}
-            {currentStep === 'documents' && (
-              <UploadSection
-                data={formData.uploadedDocuments}
-                onChange={(v: UploadedDocuments) => updateFormData('uploadedDocuments', v)}
-              />
-            )}
-            {currentStep === 'signature' && (
-              <SignatureSection
-                data={formData.signatureData}
-                onChange={(v: SignatureData) => updateFormData('signatureData', v)}
-              />
-            )}
-            {currentStep === 'review' && (
-              <ReviewSection
-                data={formData}
-                onEditStep={(step) => goToStep(step, -1)}
-              />
-            )}
+            <StepRenderer
+              step={PACKET.steps[currentIndex]}
+              formData={formData}
+              errors={errors}
+              updateFormData={updateFormData}
+              onEditStep={(stepId) => goToStep(stepId, -1)}
+            />
           </motion.div>
         </AnimatePresence>
 
@@ -443,7 +572,7 @@ export default function OnboardingDemoPage() {
 // ── Submitted state ──────────────────────────────────────────────────────────
 
 function SubmittedState({ formData, appId, submittedAt }: { formData: OnboardingFormData; appId: string; submittedAt: string }) {
-  const name = [formData.personalInfo.firstName, formData.personalInfo.lastName].filter(Boolean).join(' ');
+  const name  = [formData.personalInfo.firstName, formData.personalInfo.lastName].filter(Boolean).join(' ');
   const email = formData.personalInfo.email;
 
   return (
@@ -496,10 +625,10 @@ function SubmittedState({ formData, appId, submittedAt }: { formData: Onboarding
           <h3 className="text-sm font-semibold text-slate-700 mb-4">What happens next</h3>
           <div className="space-y-4">
             {[
-              { icon: <Mail size={15} className="text-blue-500" />, title: 'Confirmation email', desc: `Sent to ${email || 'your email address'} shortly`, timing: 'Now' },
-              { icon: <Calendar size={15} className="text-violet-500" />, title: 'Application & I-9 review', desc: 'Our team reviews your documents and verifies Form I-9', timing: '1–2 days' },
-              { icon: <Phone size={15} className="text-emerald-500" />, title: 'Onboarding call', desc: 'We schedule a brief call to discuss your placement preferences', timing: '2–3 days' },
-              { icon: <ArrowRight size={15} className="text-orange-500" />, title: 'Begin placement', desc: 'Matched with a facility and ready to start', timing: '1–2 weeks' },
+              { icon: <Mail size={15} className="text-blue-500" />,    title: 'Confirmation email',      desc: `Sent to ${email || 'your email address'} shortly`,                     timing: 'Now'      },
+              { icon: <Calendar size={15} className="text-violet-500" />, title: 'Application & I-9 review', desc: 'Our team reviews your documents and verifies Form I-9',             timing: '1–2 days' },
+              { icon: <Phone size={15} className="text-emerald-500" />, title: 'Onboarding call',        desc: 'We schedule a brief call to discuss your placement preferences',      timing: '2–3 days' },
+              { icon: <ArrowRight size={15} className="text-orange-500" />, title: 'Begin placement',    desc: 'Matched with a facility and ready to start',                          timing: '1–2 weeks'},
             ].map((item, i) => (
               <div key={i} className="flex items-start gap-3">
                 <div className="w-7 h-7 bg-slate-50 rounded-lg flex items-center justify-center flex-shrink-0 border border-slate-100">
