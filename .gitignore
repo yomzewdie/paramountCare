@@ -1,13 +1,20 @@
 # Root-level ignore rules for this repo.
 #
 # frontend/ and worker/ each have their own .gitignore for project-specific
-# build artifacts (node_modules, .next, .wrangler, etc.) — this file only
-# covers secrets and key material that could land anywhere in the repo,
-# including the root itself (see docs/ARCHITECTURE_DECISION_RECORDS.md §16).
+# build artifacts (node_modules, .next, .wrangler, etc.) — this file covers
+# secrets/key material that could land anywhere in the repo (see
+# docs/ARCHITECTURE_DECISION_RECORDS.md §16), plus dependency directories that
+# now exist at additional levels since the pnpm workspace (M1) was introduced
+# (root node_modules/, packages/*/node_modules/).
 #
-# Deliberately narrow: no broad extension bans that could catch legitimate
-# application assets (e.g. this does NOT ignore *.pdf, *.json, or any
-# extensionless file in general — only well-known credential/key patterns).
+# Deliberately narrow otherwise: no broad extension bans that could catch
+# legitimate application assets (e.g. this does NOT ignore *.pdf, *.json, or
+# any extensionless file in general — only well-known credential/key patterns
+# and the standard node_modules/ convention).
+
+# ── Dependencies (pnpm workspace) ─────────────────────────────────────────────
+# Unanchored, so it matches at every level: root, packages/*, frontend, worker.
+node_modules/
 
 # ── SSH keys ──────────────────────────────────────────────────────────────────
 # Explicitly named: the keypair found sitting in the repo root during the

@@ -7,16 +7,20 @@ import { uploads } from './routes/uploads';
 import { auth } from './routes/auth';
 import { admin } from './routes/admin';
 
-const app = new Hono<AppEnv>();
-
-app.use('*', cors());
-
-app.route('/health',     health);
-app.route('/api/auth',   auth);
-app.route('/api/admin',  admin);
-app.route('/api',        onboarding);
-app.route('/api/uploads', uploads);
+// Routes are chained (rather than called as separate statements) so that
+// TypeScript can infer the merged route type below. Runtime registration
+// order and behavior are unchanged either way — this only affects what the
+// exported `AppType` type carries for hono/client consumers (see
+// packages/api-client).
+const app = new Hono<AppEnv>()
+  .use('*', cors())
+  .route('/health', health)
+  .route('/api/auth', auth)
+  .route('/api/admin', admin)
+  .route('/api', onboarding)
+  .route('/api/uploads', uploads);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
+export type AppType = typeof app;
 export default app;

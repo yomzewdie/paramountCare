@@ -207,7 +207,7 @@ function truncate(text: string, font: PDFFont, size: number, maxWidth: number): 
   return out === text ? text : out + '…';
 }
 
-function fieldBox(page: PDFPage, label: string, value: string, x: number, y: number, w: number, h: number, regular: PDFFont, bold: PDFFont) {
+function fieldBox(page: PDFPage, label: string, value: string, x: number, y: number, w: number, h: number, regular: PDFFont) {
   rect(page, x, y, w, h, LGRAY, MGRAY, 0.4);
   txt(page, label, x + 4, y + h - 9, 6, regular, DGRAY);
   txt(page, truncate(value || '—', regular, 9, w - 8), x + 4, y + 5, 9, regular, BLACK);
@@ -260,24 +260,24 @@ async function generateFallbackPdf(input: I9PdfInput): Promise<Uint8Array> {
   y -= 2;
 
   const lnW = Math.floor(CW * 0.40); const fnW = Math.floor(CW * 0.36); const miW = CW - lnW - fnW;
-  fieldBox(page, 'Last Name (Family Name)', input.lastName,    ML, y - 32, lnW, 32, regular, bold);
-  fieldBox(page, 'First Name (Given Name)', input.firstName,   ML + lnW, y - 32, fnW, 32, regular, bold);
-  fieldBox(page, 'Middle Initial', input.middleInitial,         ML + lnW + fnW, y - 32, miW, 32, regular, bold);
+  fieldBox(page, 'Last Name (Family Name)', input.lastName,    ML, y - 32, lnW, 32, regular);
+  fieldBox(page, 'First Name (Given Name)', input.firstName,   ML + lnW, y - 32, fnW, 32, regular);
+  fieldBox(page, 'Middle Initial', input.middleInitial,         ML + lnW + fnW, y - 32, miW, 32, regular);
   y -= 32;
-  fieldBox(page, 'Other Last Names Used', input.otherLastNames || 'N/A', ML, y - 26, CW, 26, regular, bold);
+  fieldBox(page, 'Other Last Names Used', input.otherLastNames || 'N/A', ML, y - 26, CW, 26, regular);
   y -= 26;
 
   const addrW = Math.floor(CW * 0.38); const aptW = Math.floor(CW * 0.10); const dobW = Math.floor(CW * 0.26); const ssnW = CW - addrW - aptW - dobW;
-  fieldBox(page, 'Address',         input.address,        ML, y - 28, addrW, 28, regular, bold);
-  fieldBox(page, 'Apt. Number',     input.aptNumber || '—', ML + addrW, y - 28, aptW, 28, regular, bold);
-  fieldBox(page, 'Date of Birth',   input.dateOfBirth,    ML + addrW + aptW, y - 28, dobW, 28, regular, bold);
-  fieldBox(page, 'U.S. SSN',        maskSSN(input.ssn),   ML + addrW + aptW + dobW, y - 28, ssnW, 28, regular, bold);
+  fieldBox(page, 'Address',         input.address,        ML, y - 28, addrW, 28, regular);
+  fieldBox(page, 'Apt. Number',     input.aptNumber || '—', ML + addrW, y - 28, aptW, 28, regular);
+  fieldBox(page, 'Date of Birth',   input.dateOfBirth,    ML + addrW + aptW, y - 28, dobW, 28, regular);
+  fieldBox(page, 'U.S. SSN',        maskSSN(input.ssn),   ML + addrW + aptW + dobW, y - 28, ssnW, 28, regular);
   y -= 28;
 
   const cityW = Math.floor(CW * 0.50); const stateW = Math.floor(CW * 0.20); const zipW = CW - cityW - stateW;
-  fieldBox(page, 'City or Town', input.city,  ML, y - 26, cityW, 26, regular, bold);
-  fieldBox(page, 'State',        input.state, ML + cityW, y - 26, stateW, 26, regular, bold);
-  fieldBox(page, 'ZIP Code',     input.zip,   ML + cityW + stateW, y - 26, zipW, 26, regular, bold);
+  fieldBox(page, 'City or Town', input.city,  ML, y - 26, cityW, 26, regular);
+  fieldBox(page, 'State',        input.state, ML + cityW, y - 26, stateW, 26, regular);
+  fieldBox(page, 'ZIP Code',     input.zip,   ML + cityW + stateW, y - 26, zipW, 26, regular);
   y -= 34;
 
   txt(page, 'I attest, under penalty of perjury, that I am (check one of the following boxes) and that the information I have provided is true and correct.', ML, y, 8, italic, DGRAY);

@@ -1,0 +1,41 @@
+name: CI
+
+# Validation only — no deploys, no App Store / Play Store steps. See M1 in
+# docs/ARCHITECTURE_DECISION_RECORDS.md.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - platform/mobile-app
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (all workspaces)
+        run: pnpm run typecheck
+
+      - name: Lint (all workspaces)
+        run: pnpm run lint
+
+      - name: Worker tests
+        run: pnpm --filter worker run test
+
+      - name: Frontend build
+        run: pnpm --filter frontend run build
+
+      - name: Worker dry-run build
+        run: pnpm --filter worker exec wrangler deploy --dry-run

@@ -2,23 +2,31 @@
   "name": "worker",
   "version": "0.0.0",
   "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "test": "vitest",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@eslint/js": "^9",
     "@types/node": "^25.9.1",
+    "eslint": "^9",
     "typescript": "^5.5.2",
+    "typescript-eslint": "^8",
     "vitest": "~3.2.0",
     "wrangler": "^4.93.1"
   },
   "dependencies": {
-    "hono": "^4.12.21",
+    "@pcs/shared": "workspace:*",
+    "hono": "4.12.21",
     "pdf-lib": "^1.17.1",
-    "zod": "^4.4.3"
+    "zod": "4.4.3"
   }
 }

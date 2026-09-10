@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    // "dom" is included only for standard Web API globals used in domain types
+    // (e.g. UploadedFile.file?: File) — File/FormData are implemented by
+    // browsers, Node 18+, and the Workers runtime alike; this is not a
+    // browser-only dependency.
+    "lib": ["es2022", "dom"],
+    "module": "es2022",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

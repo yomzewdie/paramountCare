@@ -391,7 +391,7 @@ export function EmploymentApplicationSection({
             <div className="flex items-start gap-2.5 p-3 bg-blue-50 border border-blue-100 rounded-xl">
               <Info size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-blue-700 leading-relaxed">
-                Answering "Yes" to any background question does not automatically disqualify you from employment.
+                Answering &quot;Yes&quot; to any background question does not automatically disqualify you from employment.
                 All disclosures are reviewed on a case-by-case basis in accordance with applicable California and
                 federal law, including the Fair Chance Act.
               </p>

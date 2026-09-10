@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored, minified third-party runtime asset (pdf.js worker build) —
+    // not application code, should never be linted.
+    "public/pdf.worker.min.mjs",
   ]),
 ]);
 

@@ -6,20 +6,21 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@pcs/shared": "file:../packages/shared",
+    "@pcs/shared": "workspace:*",
     "@types/react-signature-canvas": "^1.0.7",
-    "framer-motion": "^12.40.0",
-    "lucide-react": "^1.16.0",
+    "framer-motion": "12.40.0",
+    "lucide-react": "1.16.0",
     "next": "16.2.6",
     "pdfjs-dist": "^5.7.284",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-dropzone": "^15.0.0",
     "react-signature-canvas": "^1.1.0-alpha.2",
-    "zod": "^4.4.3"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

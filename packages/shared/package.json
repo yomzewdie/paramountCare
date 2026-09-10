@@ -5,6 +5,19 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./packets": "./src/packets.ts",
+    "./onboarding": "./src/onboarding.ts",
+    "./validation": "./src/validation.ts",
+    "./completion": "./src/completion.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.2"
   }
 }

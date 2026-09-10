@@ -257,6 +257,13 @@ export default function OnboardingDemoPage() {
     // Version bumps happen when steps are added, removed, or reordered.
     if (saved.packetId !== PACKET.id || saved.packetVersion !== PACKET.version) return;
 
+    // Restoring from localStorage must happen in an effect, not a lazy
+    // useState initializer: localStorage doesn't exist during SSR, so the
+    // first client render has to match the server's output before this runs,
+    // or React reports a hydration mismatch. The resulting extra render pass
+    // is unavoidable for this pattern and is scoped to a one-time,
+    // mount-only restore (empty dependency array below).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFormData(saved.formData);
     setCurrentStep(saved.currentStepId);
     setStepStates(saved.stepStates);

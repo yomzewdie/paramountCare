@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    // Matches worker/tsconfig.json's target/lib: this package's typecheck
+    // transitively type-checks the whole worker/src tree (via the AppType
+    // import), so a mismatched lib/target here produces spurious errors
+    // (e.g. Uint8Array/BufferSource) that don't exist under worker's own
+    // tsconfig. worker-configuration.d.ts (included below) already supplies
+    // the Fetch API ambient globals Hono needs — no "dom" lib required.
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "es2022",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  // worker-configuration.d.ts declares the ambient `Env`/D1/R2 globals that
+  // the imported AppType transitively references — it must be in-scope here
+  // the same way it is in worker/tsconfig.json itself.
+  "include": ["src/**/*.ts", "../../worker/worker-configuration.d.ts"]
+}
