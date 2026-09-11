@@ -6,6 +6,8 @@ import { onboarding } from './routes/onboarding';
 import { uploads } from './routes/uploads';
 import { auth } from './routes/auth';
 import { admin } from './routes/admin';
+import { sessions } from './routes/sessions';
+import { invites } from './routes/invites';
 
 // Routes are chained (rather than called as separate statements) so that
 // TypeScript can infer the merged route type below. Runtime registration
@@ -17,8 +19,10 @@ const app = new Hono<AppEnv>()
   .route('/health', health)
   .route('/api/auth', auth)
   .route('/api/admin', admin)
+  .route('/api/admin/invites', invites)
   .route('/api', onboarding)
-  .route('/api/uploads', uploads);
+  .route('/api/uploads', uploads)
+  .route('/api/sessions', sessions);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 

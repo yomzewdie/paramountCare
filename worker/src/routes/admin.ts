@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
+import { requireRole } from '../middleware/requireRole';
 import {
   findApplicationById,
   listApplications,
@@ -11,8 +12,15 @@ import { findAuditLogsByApplicationId } from '../db/queries/auditLogs';
 
 export const admin = new Hono<AppEnv>();
 
-// All routes require a valid admin JWT.
+// All routes require a valid admin JWT AND an admin/super_admin role.
+//
+// The role check matters more than it used to: requireAuth now accepts any
+// validly-signed token, including applicant tokens (see
+// middleware/requireAuth.ts) — without this requireRole call, a valid
+// applicant access token would satisfy requireAuth and reach these
+// PII-bearing routes. This closes that gap.
 admin.use('*', requireAuth);
+admin.use('*', requireRole('admin', 'super_admin'));
 
 // ── GET /api/admin/applications ───────────────────────────────────────────────
 

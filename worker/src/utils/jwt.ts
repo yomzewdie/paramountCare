@@ -1,14 +1,27 @@
 // JWT HS256 via Web Crypto — no third-party dependency.
 
+export type UserType = 'admin' | 'applicant';
+
 export interface JwtPayload {
-  sub: string;   // admin user email
-  role: string;  // 'super_admin' | 'admin'
+  sub: string;       // email — kept as the email for both token kinds so
+                      // existing consumers reading `sub` as an email
+                      // (e.g. GET /api/auth/me for admin) are unaffected.
+  uid: number;        // numeric id in admin_users or users, per userType.
+  role: string;       // 'super_admin' | 'admin' | 'applicant'
+  userType: UserType;
+  jti: string;         // random per-issuance id — guarantees two tokens
+                        // issued with identical claims in the same second
+                        // (e.g. immediate refresh) are never byte-identical.
   iat: number;
   exp: number;
 }
 
 const ALG = { name: 'HMAC', hash: 'SHA-256' } as const;
-const EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
+
+// Default access-token lifetime for newly-issued applicant/mobile tokens.
+// Admin's login call site passes its own (longer, unchanged) expiry
+// explicitly — see worker/src/routes/auth.ts.
+export const DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS = 15 * 60; // 15 minutes
 
 function b64url(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -34,9 +47,13 @@ async function importKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-export async function signJwt(payload: Omit<JwtPayload, 'iat' | 'exp'>, secret: string): Promise<string> {
+export async function signJwt(
+  payload: Omit<JwtPayload, 'iat' | 'exp' | 'jti'>,
+  secret: string,
+  expirySeconds: number = DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const full: JwtPayload = { ...payload, iat: now, exp: now + EXPIRY_SECONDS };
+  const full: JwtPayload = { ...payload, jti: crypto.randomUUID(), iat: now, exp: now + expirySeconds };
 
   const header = b64url(new TextEncoder().encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
   const body   = b64url(new TextEncoder().encode(JSON.stringify(full)));

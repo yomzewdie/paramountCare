@@ -25,6 +25,17 @@ interface AdminEmailData {
   status: string;
 }
 
+interface InvitationEmailData {
+  to: string;
+  inviteUrl: string;
+  expiresAt: string;
+}
+
+interface VerificationCodeEmailData {
+  to: string;
+  code: string;
+}
+
 async function sendEmail(apiKey: string, payload: ResendPayload): Promise<void> {
   const res = await fetch(RESEND_API_URL, {
     method: 'POST',
@@ -102,6 +113,61 @@ export async function sendAdminNotification(
     from: FROM_ADDRESS,
     to: adminEmail,
     subject: 'New Onboarding Application Submitted',
+    text,
+  });
+}
+
+export async function sendApplicantInvitation(
+  apiKey: string,
+  data: InvitationEmailData,
+): Promise<void> {
+  const expires = new Date(data.expiresAt).toLocaleString('en-US', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  });
+
+  const text = [
+    "You've been invited to complete onboarding with Paramount Care Staffing.",
+    '',
+    'Use the link below to create your account and get started:',
+    data.inviteUrl,
+    '',
+    `This invitation expires ${expires} UTC.`,
+    '',
+    'If you were not expecting this invitation, you can safely ignore this email.',
+    '',
+    'Thank you,',
+    'Paramount Care Staffing',
+  ].join('\n');
+
+  await sendEmail(apiKey, {
+    from: FROM_ADDRESS,
+    to: data.to,
+    subject: "You're invited to onboard with Paramount Care Staffing",
+    text,
+  });
+}
+
+export async function sendEmailVerificationCode(
+  apiKey: string,
+  data: VerificationCodeEmailData,
+): Promise<void> {
+  const text = [
+    'Your Paramount Care Staffing verification code is:',
+    '',
+    data.code,
+    '',
+    'This code expires in 10 minutes. If you did not request this code, you can safely ignore this email.',
+    '',
+    'Thank you,',
+    'Paramount Care Staffing',
+  ].join('\n');
+
+  await sendEmail(apiKey, {
+    from: FROM_ADDRESS,
+    to: data.to,
+    subject: 'Your verification code',
     text,
   });
 }

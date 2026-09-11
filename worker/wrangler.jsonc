@@ -28,7 +28,14 @@
 			"database_id": "207eaa94-b8e9-44f7-ba9c-2ccc39a5a5a4",
 			"migrations_dir": "migrations"
 		}
-	]
+	],
+	// "development" here — this is still the single pre-environment-split
+	// deployment target from ADR-013 (docs/ARCHITECTURE_DECISION_RECORDS.md),
+	// not yet a real "production". When that split happens, the production
+	// environment's own wrangler.jsonc block MUST override this to
+	// "production" — see routes/invites.ts's use of it as a fail-safe against
+	// ever emailing an applicant a localhost invitation link.
+	"vars": { "ENVIRONMENT": "development" }
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

@@ -25,6 +25,7 @@ This is an adversarial review of my own prior recommendations. Where the origina
 | 012 | API versioning (`/v1`) + typed client via Hono RPC (not tRPC) | **APPROVE** | Now — cheap today, expensive after mobile ships to app stores |
 | 013 | Real dev/staging/production environment separation | **APPROVE** | Now — cheap today, expensive after real data exists |
 | 014 | Stand up CI/CD | **APPROVE** | Immediately — independent of everything else |
+| 015 | Invite-only applicant registration, mandatory email verification, no anonymous onboarding | **DECIDED — implemented in M2** | Done, prior to M2 commit |
 
 ---
 
@@ -224,6 +225,8 @@ This is an adversarial review of my own prior recommendations. Where the origina
 
 ## 11. ADR-011 — `onboarding_sessions` / `exam_submissions` as the authoritative resumable-session store
 
+> **Superseded in part — see [ADR-015](#18-adr-015--product-correction-invite-only-registration-mandatory-email-verification-no-anonymous-onboarding), 2026-09-11.** Gap 1 below proposed a nullable `user_id` plus a login-time "claim" step for sessions started anonymously. That product shape changed before M2 was committed: onboarding no longer has an anonymous starting state at all, so there is nothing to claim. The `revision`-based optimistic-concurrency design in Gap 2 is unaffected and stands as implemented.
+
 This was specifically called out for deeper scrutiny, so it gets a full analysis rather than a compressed table.
 
 **Current state (verified):** `onboarding_sessions` (session_id, packet_id/version, applicant identity fields, `step_states_json`, `form_data_json`, lifecycle `status`, optional `application_id` link) and `exam_submissions` (scored attempts, attempt-limit tracking) are fully migrated (`worker/migrations/0002_phase1.sql`) and have complete query modules (`worker/src/db/queries/onboardingSessions.ts`, `examSubmissions.ts`) — but zero routes reference them. The only live onboarding path is a single atomic `POST /api/submit-onboarding` at the very end of the flow; all in-progress state lives in browser `localStorage` only (assessment §1.9).
@@ -402,3 +405,24 @@ Everything after M7 (AI/analytics, notifications center, broader production hard
 ---
 
 **Nothing above has been implemented.** This document is the decision surface — waiting for your approval (per-ADR, or as a set) before any code, migration, or repository change is made.
+
+---
+
+## 18. ADR-015 — Product correction: invite-only registration, mandatory email verification, no anonymous onboarding
+
+**Status:** Decided and implemented, prior to M2 being committed. **Date:** 2026-09-11.
+
+**Context:** ADR-008 (§8) and ADR-011 (§11, Gap 1) both assumed an applicant could begin onboarding anonymously — starting a session before any account existed — and would "claim" that session by attaching a `user_id` at first login/signup. Before M2 was committed, that product shape was explicitly rejected in favor of an invite-only flow: an admin sends an applicant invitation, the applicant creates an account against that invitation, verifies their email, signs in, and only then creates or resumes an onboarding session. This is a product decision, not an engineering-driven one — recorded here because it changes the auth/session architecture from what ADR-008/ADR-011 originally described.
+
+**Decision:**
+1. **Registration is invitation-only.** There is no public applicant sign-up route. `POST /api/auth/applicant/register` requires `{inviteToken, password}`; the applicant's email is derived server-side from the invitation record, never trusted from client input. An `onboarding_invites` table (token stored only as a salted hash, never raw; expiring; one-time-use; explicitly revocable) is the sole path to obtaining a registerable identity. Admins manage invitations via `POST/GET /api/admin/invites`, `POST /:id/resend` (rotates the token), and `POST /:id/revoke`.
+2. **Email verification is mandatory before onboarding access.** Registration creates the account in an unverified state and sends a 6-digit code (hashed at rest, short-lived, attempt-limited, single active code per user); login for an unverified applicant fails with a machine-readable `EMAIL_NOT_VERIFIED` error rather than granting access.
+3. **Anonymous onboarding persistence is not supported.** Every route under `/api/sessions` requires an authenticated applicant; `user_id` is derived from the verified access token, never from the request body. There is no "claim" endpoint or capability-secret concept for sessions — both are removed from the codebase entirely, not just deprecated.
+4. **A session belongs to exactly one user from the moment it is created,** and stays that way for its entire lifetime. The optimistic-concurrency model from ADR-011 §Gap 2 (client-supplied `revision`, atomic conditioned `UPDATE`, explicit `409` on conflict, no last-write-wins) is unchanged and still governs concurrent edits across devices for the same authenticated applicant.
+5. **The existing web onboarding wizard (`localStorage`-based, unauthenticated) is intentionally left as-is for now.** It is not wired to this authenticated model in this pass. The forward-looking integration contract, for when that work is scheduled, is: sign in as a verified applicant → `GET /api/sessions/mine` → create a session if none exists → the server becomes the authoritative source of truth → `localStorage` becomes, at most, a local cache/draft/recovery aid, not the system of record. There is no anonymous-to-authenticated migration path for pre-existing local drafts; this was a deliberate simplification given no anonymous sessions have ever been persisted server-side.
+
+**Why:** invitation-gating means only applicants a staffing coordinator has actually engaged with can create accounts at all, which matters for a healthcare staffing pipeline handling SSNs, I-9/W-4 data, and licensure information — it removes an entire class of unauthenticated-write and account-enumeration surface that the original anonymous-session design would otherwise have carried into the mobile/API layer.
+
+**What this does not change:** the underlying access/refresh token architecture (ADR-008 §8.1 — short-lived JWT access tokens, opaque hashed refresh tokens, rotation-with-reuse-detection, per-device revocation) is unchanged; the password-hashing primitive (PBKDF2-HMAC-SHA256, 100k iterations) is unchanged; the `onboarding_sessions`/`exam_submissions` schema and optimistic-concurrency mechanics from ADR-011 are unchanged other than `user_id` being mandatory-at-the-application-layer from creation rather than attached later via a claim step.
+
+**Timing:** Already implemented as part of M2, before that milestone's commit.
