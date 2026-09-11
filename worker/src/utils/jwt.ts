@@ -31,10 +31,18 @@ function b64url(buf: ArrayBuffer | Uint8Array): string {
     .replace(/=+$/, '');
 }
 
-function b64urlDecode(s: string): Uint8Array {
+function b64urlDecode(s: string): Uint8Array<ArrayBuffer> {
   const padded = s.replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(padded);
-  return Uint8Array.from(bin, c => c.charCodeAt(0));
+  // Allocated via `new Uint8Array(length)` rather than `Uint8Array.from(...)`
+  // specifically so the result is typed as backed by a plain ArrayBuffer
+  // (not the wider ArrayBufferLike, which also covers SharedArrayBuffer) —
+  // TypeScript 5.7+'s generic Uint8Array typing means `.from()`'s result
+  // isn't assignable to `BufferSource` (used by crypto.subtle.verify below)
+  // without this. Behaviorally identical either way.
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
 async function importKey(secret: string): Promise<CryptoKey> {

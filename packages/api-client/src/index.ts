@@ -23,10 +23,19 @@
 // platform-specific code — safe for browser, Node, and React Native alike.
 
 import { hc } from 'hono/client';
+import type { ClientRequestOptions } from 'hono/client';
 import type { AppType } from 'worker';
 
 export type { AppType };
+export type { ClientRequestOptions };
 
-export function createApiClient(baseUrl: string): ReturnType<typeof hc<AppType>> {
-  return hc<AppType>(baseUrl);
+// `options` is optional and defaults to hc's own default fetch — existing
+// callers are unaffected. Added for the mobile app (worker/src/routes and
+// docs/ARCHITECTURE_DECISION_RECORDS.md ADR-017), which needs to supply its
+// own `fetch` implementation per client instance: one plain pass-through for
+// unauthenticated endpoints (register/login/verify-email), and one that
+// attaches an Authorization header and retries once through a refresh-token
+// interceptor for authenticated endpoints — see mobile/src/services/apiClient.ts.
+export function createApiClient(baseUrl: string, options?: ClientRequestOptions): ReturnType<typeof hc<AppType>> {
+  return hc<AppType>(baseUrl, options);
 }

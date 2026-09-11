@@ -46,3 +46,15 @@ jobs:
 
       - name: Worker dry-run build
         run: pnpm --filter worker exec wrangler deploy --dry-run
+
+      - name: Mobile tests
+        run: pnpm --filter mobile run test
+
+      - name: Mobile Expo config validation
+        # Resolves app.config.ts (env-driven — see mobile/app.config.ts and
+        # mobile/README.md "Environments") without requiring EAS credentials
+        # or a real device/simulator. Deliberately not `expo-doctor` or an
+        # actual `expo export`/build — those need network calls to Expo's
+        # services or native toolchains this runner doesn't have; this step
+        # is the "safe non-credentialed build validation" M3 asked for.
+        run: pnpm --filter mobile run config:check

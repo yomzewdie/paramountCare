@@ -1,0 +1,128 @@
+import type { ExpoConfig, ConfigContext } from 'expo/config';
+
+// Dynamic config (not a static app.json) so the same source can produce three
+// distinct app identities — development / uat / production — driven entirely
+// by environment variables, never by hardcoded values baked into this file.
+// See README.md "Environments" for the full strategy and which values are
+// safe to expose client-side vs. must stay server-only secrets (there are no
+// secrets in this file — everything here ends up readable inside the
+// installed app bundle, by design; Cloudflare Worker secrets like
+// ADMIN_JWT_SECRET / EMAIL_VERIFICATION_SECRET never appear on this client).
+
+type AppEnv = 'development' | 'uat' | 'production';
+
+function resolveAppEnv(): AppEnv {
+  const raw = process.env.APP_ENV;
+  if (raw === 'uat' || raw === 'production') return raw;
+  return 'development';
+}
+
+// No production API/invite URL is invented here — an unset value in a
+// non-development environment is a build-time misconfiguration, not
+// something to silently default past (mirrors the same fail-safe reasoning
+// as the Worker's APPLICANT_INVITE_BASE_URL / ENVIRONMENT handling — see
+// worker/src/routes/invites.ts and docs/ARCHITECTURE_DECISION_RECORDS.md
+// ADR-015 §11 / the M2 security-hardening pass).
+// Takes the already-read value (not the env var name) — dynamic
+// `process.env[name]` access defeats Expo/Metro's static env-var analysis
+// (eslint: expo/no-dynamic-env-var) and is unnecessary here anyway since
+// there are only ever two call sites.
+function requireUrlUnlessDev(name: string, value: string | undefined, appEnv: AppEnv, devDefault: string): string {
+  if (value) return value;
+  if (appEnv === 'development') return devDefault;
+  throw new Error(
+    `[app.config.ts] ${name} must be set when APP_ENV=${appEnv} — refusing to fall back to a development default in a non-development build.`,
+  );
+}
+
+const APP_ENV = resolveAppEnv();
+
+// Bundle identifier / package name vary per environment so dev, UAT, and
+// production builds can be installed side-by-side on the same device for
+// testing, rather than one overwriting another.
+const IDENTIFIER_SUFFIX: Record<AppEnv, string> = {
+  development: '.dev',
+  uat: '.uat',
+  production: '',
+};
+
+const DISPLAY_NAME: Record<AppEnv, string> = {
+  development: 'Paramount Care (Dev)',
+  uat: 'Paramount Care (UAT)',
+  production: 'Paramount Care',
+};
+
+// Custom URL scheme for deep-linking in development/Expo Go/dev-client, where
+// no universal/associated domain can be verified yet. Suffixed per
+// environment for the same side-by-side-install reason as the bundle id.
+const SCHEME = `paramountcare${IDENTIFIER_SUFFIX[APP_ENV] || ''}`;
+
+// Universal Links (iOS) / App Links (Android) require a real, DNS-verified
+// production domain (an apple-app-site-association / assetlinks.json file
+// served from it) — that domain has not been decided yet (see PRE-FLIGHT
+// instruction: "Do not invent the final production domain"). Left unset
+// until one exists; the app still works via the custom scheme above and via
+// Expo's own dev-client deep-link handling in the meantime.
+const ASSOCIATED_DOMAIN = process.env.APPLICANT_LINK_DOMAIN; // e.g. "apply.paramountcareexample.com" — intentionally not set anywhere yet
+
+export default ({ config }: ConfigContext): ExpoConfig => ({
+  ...config,
+  name: DISPLAY_NAME[APP_ENV],
+  slug: 'paramount-care-mobile',
+  scheme: SCHEME,
+  owner: process.env.EAS_OWNER, // Expo/EAS account or org slug — set via EAS secrets, not committed
+  version: '0.1.0',
+  orientation: 'portrait',
+  userInterfaceStyle: 'automatic', // structural dark-mode support — see src/theme
+  // No icon/splash asset configured yet — no brand assets have been supplied
+  // for this milestone; Expo's own placeholder is used until real ones
+  // exist. Splash screen behavior itself is controlled at runtime via
+  // expo-splash-screen in app/_layout.tsx regardless of this file.
+  ios: {
+    bundleIdentifier: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV]}`,
+    supportsTablet: false,
+    associatedDomains: ASSOCIATED_DOMAIN ? [`applinks:${ASSOCIATED_DOMAIN}`] : [],
+  },
+  android: {
+    package: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV].replace(/\./g, '_')}`,
+    adaptiveIcon: undefined,
+    intentFilters: ASSOCIATED_DOMAIN
+      ? [
+          {
+            action: 'VIEW',
+            autoVerify: true,
+            data: [{ scheme: 'https', host: ASSOCIATED_DOMAIN, pathPrefix: '/register' }],
+            category: ['BROWSABLE', 'DEFAULT'],
+          },
+        ]
+      : [],
+  },
+  plugins: ['expo-router', 'expo-secure-store'],
+  experiments: {
+    typedRoutes: true,
+  },
+  extra: {
+    appEnv: APP_ENV,
+    // Client-safe: where to send API requests. Not a secret — the invite
+    // link itself is the credential, this is just an endpoint address.
+    apiBaseUrl: requireUrlUnlessDev('API_BASE_URL', process.env.API_BASE_URL, APP_ENV, 'http://localhost:8787'),
+    // Client-safe: mirrors the Worker's APPLICANT_INVITE_BASE_URL, used only
+    // to recognize/construct invite links for deep-link matching, never to
+    // authorize anything by itself.
+    inviteBaseUrl: requireUrlUnlessDev('INVITE_BASE_URL', process.env.INVITE_BASE_URL, APP_ENV, 'http://localhost:3000/register'),
+    eas: {
+      projectId: process.env.EAS_PROJECT_ID, // set once `eas init` has been run — not invented here
+    },
+  },
+  // runtimeVersion policy — see README.md "OTA update strategy" for the full
+  // rationale: tied to appVersion so a native-module change always forces a
+  // new binary build rather than risking an OTA update landing on a binary
+  // that can't support it.
+  runtimeVersion: { policy: 'appVersion' },
+  updates: {
+    // Left disabled (no `url`) until an EAS project exists — see
+    // README.md "OTA update strategy". Never auto-configured with a guessed
+    // project URL.
+    enabled: false,
+  },
+});
