@@ -1,0 +1,45 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Onboarding session uniqueness — database-enforced, not application-assumed
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Product/security correction (ADR-018 §2): an authenticated applicant may
+-- have at most one onboarding_sessions row. Before this migration, nothing
+-- below the application layer prevented two concurrent
+-- POST /api/sessions calls — from two different devices, which cannot
+-- coordinate with each other — from both inserting a row for the same
+-- user_id. The mobile client's single-flight guard (ensureSession.ts)
+-- already prevents this WITHIN one running app instance, but has no way to
+-- know about a second device's in-flight request; only the database can
+-- arbitrate between two genuinely concurrent, independent processes.
+--
+-- Preflight performed before writing this migration (see
+-- docs/ARCHITECTURE_DECISION_RECORDS.md ADR-018 §2 for the full record):
+-- queried the only database that currently exists (the local dev D1 used for
+-- schema validation; nothing has been deployed to any shared/production
+-- environment from this branch) for onboarding_sessions rows with duplicate
+-- non-NULL user_id values. Result: zero rows in the table at all, hence zero
+-- duplicates — this migration is unconditionally safe to apply here. This is
+-- not a substitute for re-running the same check against any real deployed
+-- database before applying this migration there, once one exists.
+--
+-- A plain `UNIQUE` column constraint cannot express "unique only when
+-- non-NULL with a WHERE clause" the way the existing UNIQUE columns
+-- elsewhere in this schema do (SQLite's column-level UNIQUE already treats
+-- multiple NULLs as distinct, which would be sufficient on its own — but a
+-- partial index is used regardless so the "only when NOT NULL" scoping is
+-- explicit and self-documenting, not an incidental side effect of NULL
+-- handling). onboarding_sessions.user_id remains NULLABLE at the database
+-- level (see migrations/0003_mobile_auth_and_sessions.sql's own comment on
+-- why) — this migration does not change that, and does not touch any
+-- previously applied migration.
+--
+-- Scope note: this makes user_id unique across ALL statuses (active,
+-- submitted, abandoned), not just 'active' sessions — matching today's
+-- actual application behavior (nothing ever creates a second row for one
+-- user_id today, regardless of status). A future rehire design that needs a
+-- returning applicant to get a genuinely new onboarding session after a
+-- prior one was submitted is a deliberate, separate schema decision to make
+-- at that time (see docs/ARCHITECTURE_DECISION_RECORDS.md ADR-016 §6/§9) —
+-- not something this migration should anticipate or work around now.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_user_id_unique
+  ON onboarding_sessions(user_id)
+  WHERE user_id IS NOT NULL;

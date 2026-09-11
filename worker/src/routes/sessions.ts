@@ -13,7 +13,7 @@ import {
   type OnboardingFormData,
 } from '@pcs/shared';
 import {
-  insertSession,
+  insertSessionOrGetExisting,
   findSessionById,
   findActiveSessionForUser,
   updateSessionWithRevision,
@@ -129,14 +129,22 @@ sessions.post('/', async (c) => {
   // user_id always comes from the verified token — the request body has no
   // userId field at all (see schemas/sessions.ts), so there is nothing here
   // to accidentally trust from client input.
-  const row = await insertSession(c.env.DB, {
+  //
+  // Race-safe across devices (ADR-018 §2): insertSessionOrGetExisting relies
+  // on the database's idx_sessions_user_id_unique partial unique index
+  // (migrations/0005), not a GET-first-then-INSERT check here — two
+  // concurrent calls for the same applicant can never both create a row.
+  // The call that loses the race gets the winning row back with 200, not an
+  // error; the call that wins gets 201. Either way the caller ends up with a
+  // valid, usable, authoritative session.
+  const insertResult = await insertSessionOrGetExisting(c.env.DB, {
     sessionId: generateSessionId(),
     packetId: packet.id,
     packetVersion: packet.version,
     userId: payload.uid,
   });
 
-  return c.json(serializeSession(row), 201);
+  return c.json(serializeSession(insertResult.session), insertResult.created ? 201 : 200);
 });
 
 // ── GET /api/sessions/mine — resume entry point after logging in ────────────

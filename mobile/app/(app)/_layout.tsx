@@ -1,5 +1,6 @@
 import { Redirect, Stack } from 'expo-router';
 import { useAuth } from '../../src/features/auth/AuthContext';
+import { SessionProvider } from '../../src/features/onboarding/SessionContext';
 
 export default function AppLayout() {
   const { status } = useAuth();
@@ -12,5 +13,14 @@ export default function AppLayout() {
     return <Redirect href="/(auth)/welcome" />;
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  // Mounted only once the applicant is authenticated — SessionProvider
+  // begins its GET-mine/create-if-missing flow (see SessionContext.tsx)
+  // immediately, which is correct: an authenticated applicant with no
+  // session yet is exactly the "create one" case, not something to defer
+  // until a screen asks for it.
+  return (
+    <SessionProvider>
+      <Stack screenOptions={{ headerShown: false }} />
+    </SessionProvider>
+  );
 }

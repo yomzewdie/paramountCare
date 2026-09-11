@@ -31,21 +31,59 @@ export interface InsertSessionParams {
   userId: number;
 }
 
-export async function insertSession(
+function isUniqueConstraintViolation(err: unknown): boolean {
+  // D1's actual error shape for this, confirmed empirically against the
+  // idx_sessions_user_id_unique partial index (migrations/0005):
+  // `D1_ERROR: UNIQUE constraint failed: onboarding_sessions.user_id: SQLITE_CONSTRAINT`.
+  return err instanceof Error && err.message.includes('UNIQUE constraint failed');
+}
+
+export type InsertSessionResult =
+  | { created: true; session: OnboardingSessionRow }
+  | { created: false; session: OnboardingSessionRow };
+
+/**
+ * Race-safe get-or-create (ADR-018 §2): two devices calling this
+ * concurrently for the same user_id cannot both succeed — the database's
+ * `idx_sessions_user_id_unique` partial unique index (migrations/0005) is
+ * the actual authority, not a read-then-write check here. Whichever INSERT
+ * the database lets through wins (`created: true`); the other's INSERT
+ * throws a UNIQUE constraint violation, which is caught and turned into a
+ * lookup of the row that just won — that applicant's real, valid,
+ * authoritative session — rather than an error surfaced to the caller.
+ * Never a 500, never a duplicate row, never a caller left without a usable
+ * session.
+ */
+export async function insertSessionOrGetExisting(
   db: D1Database,
   p: InsertSessionParams,
-): Promise<OnboardingSessionRow> {
-  const result = await db
-    .prepare(
-      `INSERT INTO onboarding_sessions (session_id, packet_id, packet_version, user_id)
-       VALUES (?, ?, ?, ?)
-       RETURNING *`,
-    )
-    .bind(p.sessionId, p.packetId, p.packetVersion, p.userId)
-    .first<OnboardingSessionRow>();
+): Promise<InsertSessionResult> {
+  try {
+    const result = await db
+      .prepare(
+        `INSERT INTO onboarding_sessions (session_id, packet_id, packet_version, user_id)
+         VALUES (?, ?, ?, ?)
+         RETURNING *`,
+      )
+      .bind(p.sessionId, p.packetId, p.packetVersion, p.userId)
+      .first<OnboardingSessionRow>();
 
-  if (!result) throw new Error('insertSession: RETURNING clause produced no row');
-  return result;
+    if (!result) throw new Error('insertSessionOrGetExisting: RETURNING clause produced no row');
+    return { created: true, session: result };
+  } catch (err) {
+    if (!isUniqueConstraintViolation(err)) throw err;
+
+    // Look up by user_id alone (not scoped to status) — the constraint
+    // itself isn't scoped to 'active' sessions either (see migrations/0005's
+    // own comment on why), so this is what's actually guaranteed to find
+    // the row that won the race.
+    const existing = await findSessionByUserId(db, p.userId);
+    // Should be unreachable — the constraint violation itself proves a row
+    // exists — but never mask the original DB error with a misleading
+    // "session not found" if this ever somehow doesn't find one.
+    if (!existing) throw err;
+    return { created: false, session: existing };
+  }
 }
 
 export async function findSessionById(
@@ -55,6 +93,19 @@ export async function findSessionById(
   return db
     .prepare('SELECT * FROM onboarding_sessions WHERE session_id = ? LIMIT 1')
     .bind(sessionId)
+    .first<OnboardingSessionRow>();
+}
+
+/** Any session belonging to this user, regardless of status — used only to
+ * recover the winning row after a UNIQUE constraint violation above; the
+ * ordinary "resume" read path is findActiveSessionForUser below. */
+export async function findSessionByUserId(
+  db: D1Database,
+  userId: number,
+): Promise<OnboardingSessionRow | null> {
+  return db
+    .prepare('SELECT * FROM onboarding_sessions WHERE user_id = ? LIMIT 1')
+    .bind(userId)
     .first<OnboardingSessionRow>();
 }
 

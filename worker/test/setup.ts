@@ -159,6 +159,11 @@ beforeAll(async () => {
   await db.prepare(
     `CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON onboarding_sessions(user_id)`,
   ).run();
+  // Mirrors migrations/0005_onboarding_session_uniqueness.sql (ADR-018 §2) —
+  // at most one row per non-null user_id, enforced by the database itself.
+  await db.prepare(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_user_id_unique ON onboarding_sessions(user_id) WHERE user_id IS NOT NULL`,
+  ).run();
 
   // ── Invite-only registration + email verification ─────────────────────────
   // Mirrors migrations/0004_invites_and_email_verification.sql.

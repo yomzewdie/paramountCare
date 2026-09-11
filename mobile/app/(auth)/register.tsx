@@ -14,7 +14,8 @@ import { appError, type AppError } from '../../src/utils/errors';
 // matching this screen's path — see README.md "Invitation / deep-link
 // handling"), or typed in manually here for the case of testing without a
 // live link. Either way it is held only in this screen's local state for as
-// long as it takes to submit the request, never persisted, never logged.
+// long as it takes to submit the request, never persisted, never logged,
+// never sent to analytics or error reporting.
 export default function Register() {
   const theme = useTheme();
   const router = useRouter();
@@ -42,6 +43,13 @@ export default function Register() {
       setError(appError('invite_invalid'));
       return;
     }
+    // Matches the Worker's actual rule exactly (registerSchema: min 8
+    // characters, no other complexity requirement) — not a stricter
+    // client-invented policy.
+    if (password.length < 8) {
+      setError({ code: 'validation', message: 'Password must be at least 8 characters', fieldIssues: [{ field: 'password', message: 'Must be at least 8 characters' }] });
+      return;
+    }
     if (password !== confirmPassword) {
       setError({ code: 'validation', message: 'Passwords do not match', fieldIssues: [{ field: 'confirmPassword', message: 'Passwords do not match' }] });
       return;
@@ -59,13 +67,35 @@ export default function Register() {
     router.replace({ pathname: '/(auth)/verify-email', params: { email: result.data.email } });
   }
 
+  // A confirmed-dead invitation (invalid, expired, revoked, or already used
+  // — the Worker deliberately returns one generic signal for all four, to
+  // avoid revealing which reason applies to an unauthenticated caller) is a
+  // dead end for this screen, not a field to fix and resubmit. Replacing the
+  // form with a clear, actionable blocking state is more honest than
+  // leaving password fields visible above an error banner.
+  if (error?.code === 'invite_invalid' && effectiveToken) {
+    return (
+      <Screen>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <ErrorState message={error.message} />
+          <View style={{ marginTop: theme.spacing.lg }}>
+            <Button label="Back to Sign In" variant="secondary" onPress={() => router.replace('/(auth)/sign-in')} />
+          </View>
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen>
+      <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '700', marginBottom: theme.spacing.xs }]}>
+        PARAMOUNT CARE
+      </Text>
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>Create your account</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
         {tokenFromLink
-          ? 'Your invitation has been recognized. Set a password to continue.'
-          : "Enter the invitation code from your email, and set a password."}
+          ? 'Paramount Care Staffing has invited you to complete your onboarding. Set a password to create your account and get started.'
+          : 'Enter the invitation code from your email, and set a password to create your account.'}
       </Text>
 
       {!tokenFromLink && (
@@ -88,6 +118,9 @@ export default function Register() {
         autoCapitalize="none"
         error={fieldError('password')}
       />
+      <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: -theme.spacing.sm, marginBottom: theme.spacing.md }]}>
+        At least 8 characters.
+      </Text>
       <TextField
         label="Confirm password"
         value={confirmPassword}

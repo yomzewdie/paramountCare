@@ -1,4 +1,4 @@
-import { SELF } from 'cloudflare:test';
+import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin } from './helpers';
 
@@ -113,6 +113,109 @@ describe('POST /api/sessions', () => {
       body: JSON.stringify({ packetId: 'not-a-real-packet' }),
     });
     expect(res.status).toBe(422);
+  });
+
+  // ── ADR-018 §2: database-enforced uniqueness, not a client-side pre-check ──
+
+  it('a second create call for the same applicant returns the existing session (200), not a new one', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('reuse-existing'));
+    const first = await createSession(accessToken);
+    expect(first.res.status).toBe(201);
+
+    const second = await createSession(accessToken);
+    expect(second.res.status).toBe(200); // reused, not created
+    expect(second.body.sessionId).toBe(first.body.sessionId);
+    expect(second.body.revision).toBe(first.body.revision);
+  });
+
+  it('two different applicants each get their own independent session', async () => {
+    const a = await registerVerifyAndLoginApplicant(uniqueEmail('owner-a'));
+    const b = await registerVerifyAndLoginApplicant(uniqueEmail('owner-b'));
+
+    const sessionA = await createSession(a.accessToken);
+    const sessionB = await createSession(b.accessToken);
+
+    expect(sessionA.res.status).toBe(201);
+    expect(sessionB.res.status).toBe(201);
+    expect(sessionA.body.sessionId).not.toBe(sessionB.body.sessionId);
+  });
+
+  it('two concurrent create calls for the same applicant cannot both create a session — one wins (201), one reuses (200), and both get the SAME session', async () => {
+    const email = uniqueEmail('concurrent-create');
+    const { accessToken } = await registerVerifyAndLoginApplicant(email);
+
+    // Two genuinely concurrent requests through the real HTTP route — not a
+    // GET-first-then-POST client simulation, and not a mocked race. Whether
+    // the underlying D1/Miniflare connection actually interleaves these at
+    // the statement level or serializes them, the assertion that matters is
+    // the OUTCOME: never two rows, never an error surfaced to either caller.
+    const [r1, r2] = await Promise.all([createSession(accessToken), createSession(accessToken)]);
+
+    const statuses = [r1.res.status, r2.res.status].sort();
+    expect(statuses).toEqual([200, 201]); // exactly one create, one reuse — never [500,*], [409,*], or [201,201]
+    expect(r1.body.sessionId).toBe(r2.body.sessionId); // both callers end up with the SAME authoritative session
+
+    // And directly confirm at most one row actually exists for this user in
+    // the database — the real proof, not an inference from the HTTP
+    // responses alone.
+    const rowCount = await env.DB
+      .prepare('SELECT COUNT(*) AS c FROM onboarding_sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)')
+      .bind(email)
+      .first<{ c: number }>();
+    expect(rowCount?.c).toBe(1);
+  });
+});
+
+// ── Database-level uniqueness (ADR-018 §2) ──────────────────────────────────
+//
+// The route-level tests above prove the *behavior* (both callers end up with
+// one shared session, never an error). These prove the *mechanism*: the
+// idx_sessions_user_id_unique partial index (migrations/0005) is what
+// actually makes that behavior possible, independent of any application code
+// — a raw second INSERT for the same user_id is rejected by SQLite/D1
+// itself, and a NULL user_id (the legacy/pre-applicant-accounts compatibility
+// case documented in migrations/0003) is explicitly still unconstrained.
+
+describe('idx_sessions_user_id_unique (database-level)', () => {
+  it('rejects a second row with the same non-null user_id at the database level', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('db-level-uniq'));
+    const { body } = await createSession(accessToken);
+    const owner = await env.DB
+      .prepare('SELECT user_id FROM onboarding_sessions WHERE session_id = ?')
+      .bind(body.sessionId)
+      .first<{ user_id: number }>();
+
+    // A raw second INSERT, bypassing the route/application layer entirely —
+    // this is what proves the database itself is the authority, not merely
+    // that the route happens to behave correctly today.
+    await expect(
+      env.DB
+        .prepare(
+          `INSERT INTO onboarding_sessions (session_id, packet_id, packet_version, user_id) VALUES (?, 'general_rn', 5, ?)`,
+        )
+        .bind('some-other-session-id', owner!.user_id)
+        .run(),
+    ).rejects.toThrow(/UNIQUE constraint failed/);
+  });
+
+  it('permits multiple rows with a NULL user_id — the legacy/pre-applicant-accounts compatibility case is unaffected', async () => {
+    // onboarding_sessions.user_id is deliberately nullable at the database
+    // level (migrations/0003) for pre-existing rows created before applicant
+    // accounts existed; this migration must not turn that into a second
+    // constraint violation for NULL specifically.
+    await env.DB
+      .prepare(`INSERT INTO onboarding_sessions (session_id, packet_id, packet_version, user_id) VALUES (?, 'general_rn', 5, NULL)`)
+      .bind('legacy-session-a')
+      .run();
+    await env.DB
+      .prepare(`INSERT INTO onboarding_sessions (session_id, packet_id, packet_version, user_id) VALUES (?, 'general_rn', 5, NULL)`)
+      .bind('legacy-session-b')
+      .run();
+
+    const rows = await env.DB
+      .prepare(`SELECT session_id FROM onboarding_sessions WHERE session_id IN ('legacy-session-a', 'legacy-session-b')`)
+      .all();
+    expect(rows.results).toHaveLength(2);
   });
 });
 

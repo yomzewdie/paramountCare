@@ -1,8 +1,8 @@
-# Paramount Care — Mobile (M3 foundation)
+# Paramount Care — Mobile (M4: first real product slice)
 
-Expo + React Native + TypeScript + Expo Router. This is the M3 milestone: architecture, navigation, auth plumbing, environment handling, and build readiness — **not** the full onboarding wizard (that starts the milestone after this one, per `docs/PRODUCT_ROADMAP.md` item #3).
+Expo + React Native + TypeScript + Expo Router. M3 built the architecture/navigation/auth foundation; **M4 wires the first complete, real applicant journey against the real backend**: invitation → create account → verify email → sign in → My Onboarding dashboard → create-or-resume a real onboarding session. Still explicitly not the full onboarding wizard — no step forms exist yet (see "Onboarding navigation foundation" below).
 
-See `docs/ARCHITECTURE_DECISION_RECORDS.md` ADR-017 for the durable record of the decisions summarized here.
+See `docs/ARCHITECTURE_DECISION_RECORDS.md` ADR-017 (M3) and ADR-018 (M4) for the durable record of the decisions summarized here. See `mobile/QA_WALKTHROUGH.md` for the manual test script.
 
 ## Structure
 
@@ -17,7 +17,12 @@ mobile/
       verify-email.tsx
       sign-in.tsx
     (app)/                  Authenticated group + its own guard (redirects to (auth) if signed out)
-      home.tsx             Placeholder — NOT the "My Onboarding" dashboard (roadmap item #3, later)
+                            Wraps its Stack in SessionProvider (mounted only once signed in)
+      home.tsx             My Onboarding — the real dashboard (M4)
+      onboarding/
+        _layout.tsx        Native-header Stack (a real drill-down, unlike the auth flow)
+        index.tsx          Full, tappable step list
+        [stepId].tsx       "Not yet available" placeholder — no forms migrated yet
     +not-found.tsx
   src/                    Everything else — routing-independent, unit-testable
     config/env.ts         Typed accessor over app.config.ts's `extra`
@@ -25,14 +30,14 @@ mobile/
     features/
       auth/                AuthContext, useAuth, refreshCoordinator
       invitations/          Deep-link token parsing
-      onboarding/           Placeholder only — no screens yet
-    components/            Design-system primitives (Button, TextField, Card, CodeInput, status states)
+      onboarding/           sessionApi, ensureSession (get-or-create), SessionContext, steps (progress derivation)
+    components/            Design-system primitives (Button, TextField, Card, CodeInput, ProgressBar, StepRow, status states)
     theme/                  Tokens + ThemeProvider (light/dark)
     hooks/useNetworkStatus.ts
     utils/errors.ts        Machine-readable error model
 ```
 
-Why `app/` stays thin: Expo Router files are React Navigation route definitions — putting fetch calls, token logic, or business rules in them makes both harder to test and couples navigation structure to domain logic. Every screen in `app/` imports from `src/` and renders; it doesn't decide what a "verification code" or "refresh token" is.
+Why `app/` stays thin: Expo Router files are React Navigation route definitions — putting fetch calls, token logic, or business rules in them makes both harder to test and couples navigation structure to domain logic. Every screen in `app/` imports from `src/` and renders; it doesn't decide what a "verification code," "refresh token," or "onboarding session" is.
 
 ## Dependency compatibility
 
@@ -124,9 +129,41 @@ This matters concretely for this app because **an invitation token is a real, re
 
 `app/(auth)/verify-email.tsx` covers: registration success → code entry → resend (client-side 60s cooldown display, mirroring but not replacing the Worker's own authoritative cooldown) → invalid/expired/too-many-attempts (all surfaced through the same generic `verification_invalid` error code, matching the Worker's deliberately generic response) → success → redirect to sign-in (the Worker's `verify-email` issues no tokens, so there is nothing to sign the user in with directly).
 
+## My Onboarding dashboard
+
+`app/(app)/home.tsx` replaces the M3 placeholder with the real dashboard: Paramount Care wordmark, greeting, `ProgressBar` (server-computed `completionPercent`, read as-is — never recomputed client-side, see "Completion/progress" below), a "Next step" callout, condensed Completed/Remaining step lists, and a single Continue/Start Onboarding CTA. Every label and status comes from the authoritative session via `useSession()` — nothing here is hardcoded.
+
+Loading/error/offline are distinguished explicitly rather than collapsed into one "something went wrong" state: `status === 'loading'` shows `LoadingState`; `status === 'error'` checks `useNetworkStatus()` first (a different message for "you're offline" vs. a genuine server error) and always offers a retry that calls `refresh()`.
+
+## Session data layer & idempotency
+
+`src/features/onboarding/`:
+- **`sessionApi.ts`** — hand-typed `getMySession()` / `createSession(packetId)`, verified directly against `worker/src/routes/sessions.ts`'s actual response shape (same "not `hc<AppType>()`, see ADR-017 §6" reasoning as `authApi.ts` — tracked as technical debt, not re-litigated per-feature). A 404 from `GET /api/sessions/mine` resolves to `{ok: true, data: null}`, not an error — it's the expected "no session yet" signal, not a failure.
+- **`ensureSession.ts`** — a single-flight "get-or-create": call `GET /mine`; if a session exists, use it; if not, `POST /api/sessions`. Concurrent callers share the same in-flight promise (same pattern as `refreshCoordinator.ts`), which is what makes session creation idempotent from **this app instance's** perspective — a React Strict Mode double-invoked effect, two components mounting at once, or a retry racing the original attempt can never each independently see "no session" and both create one.
+- **`SessionContext.tsx`** — owns `status`/`session`/`progress`/`error`/`refresh()`. Creates its **own** `ensureSession` instance per Provider mount (not a module-level singleton) specifically so a sign-out → sign-back-in-as-someone-else within the same app process can never have a stale in-flight call from the first identity resolve into the second's state — verified by a dedicated test (`SessionContext.test.tsx`, "creates a fresh ensurer on every mount").
+- **`steps.ts`** — derives the dashboard's step list from `@pcs/shared`'s `getPacket()`/`resolveCurrentStep()` plus the session's `stepStates` — no duplicated packet data, no second completion algorithm.
+
+**Cross-device races are now closed at the database, not just this app instance.** `worker/migrations/0005_onboarding_session_uniqueness.sql` adds a partial unique index on `onboarding_sessions(user_id) WHERE user_id IS NOT NULL` — the Worker's `POST /api/sessions` always attempts the insert directly (never a GET-first pre-check as the actual safety mechanism) and, if a concurrent request from a *different* device already won, catches the resulting constraint violation and returns that applicant's real existing session with `200` instead of erroring. See ADR-018 §2 for the full mechanism and why both layers exist: this mobile-side single-flight guard avoids a wasted round-trip for the common case (this app's own re-renders/Strict Mode), while the database index is what actually guarantees correctness for two independent devices/processes neither guard can see. **No mobile code change was required** for this — `createSession()` already treats any 2xx response (`res.ok`) as success, so a `200` "reused" response and a `201` "created" response are both handled identically today.
+
+## Completion / progress
+
+`session.completionPercent` is computed server-side by `@pcs/shared`'s `computeOverallCompletion()` (the exact same function `worker/src/routes/sessions.ts` already calls) and read as-is — the mobile app does not run a second copy of that algorithm, so there is no way for a client-computed percentage to ever disagree with the server's. Per-step completed/remaining status and "next step" come from `steps.ts` reading the session's own `stepStates` against the shared packet definition (`resolveCurrentStep()`), not a separate calculation either.
+
+## Onboarding navigation foundation
+
+`app/(app)/onboarding/` is a real (not placeholder) navigation architecture, deliberately separate from the dashboard's condensed summary:
+- **`index.tsx`** — the full, ordered step list from the session's packet, each row tappable.
+- **`[stepId].tsx`** — every step currently routes here, which shows "This step will be available in an upcoming mobile release" rather than pretending a form exists (M4 instructions §14/§27 — no step forms are migrated in this milestone). Future milestones replace this file's content per step without restructuring how a step is reached.
+
+This sub-stack uses a native header (title + back button) — a deliberate exception to the auth flow's headerless screens, appropriate here because this is a genuine drill-down rather than a linear flow with its own in-content navigation.
+
 ## Design-system foundation
 
-`src/theme/tokens.ts` (spacing, radii, typography, a `minTouchTarget` constant, light/dark color pairs chosen for WCAG AA contrast) + `src/theme/ThemeProvider.tsx` (reads `useColorScheme()` — dark mode is structural from day one, `userInterfaceStyle: 'automatic'` in `app.config.ts`, even though the first visual pass targets light-mode polish). Components: `Button`, `TextField`, `Card`, `CodeInput`, `Screen`, and four status states (`LoadingState`/`ErrorState`/`SuccessState`/`EmptyState`) plus `OfflineBanner`. Not a copy of the web wizard's UI — built native-first (Pressable/TextInput primitives, platform-appropriate keyboard avoidance, `SafeAreaView`).
+`src/theme/tokens.ts` (spacing, radii, typography, a `minTouchTarget` constant, light/dark color pairs chosen for WCAG AA contrast) + `src/theme/ThemeProvider.tsx` (reads `useColorScheme()` — dark mode is structural from day one, `userInterfaceStyle: 'automatic'` in `app.config.ts`, even though the first visual pass targets light-mode polish). Components: `Button`, `TextField`, `Card`, `CodeInput`, `ProgressBar`, `StepRow`, `Screen`, and four status states (`LoadingState`/`ErrorState`/`SuccessState`/`EmptyState`) plus `OfflineBanner`. Not a copy of the web wizard's UI — built native-first (Pressable/TextInput primitives, platform-appropriate keyboard avoidance, `SafeAreaView`).
+
+## Branding
+
+No Paramount Care logo, official color palette, or brand style guide exists anywhere in the repository — confirmed by direct inspection before building anything here (the existing web app itself uses inconsistent ad hoc colors: red on public pages, blue on the admin portal, no unified identity; `frontend/public/` has only default Next.js/Vercel placeholder assets). Per the instruction to use a clean, neutral implementation rather than invent one: the dashboard and register screen use a small text-based "PARAMOUNT CARE" wordmark in the app's existing primary color token — no invented logo, no assets pulled from the internet. **Outstanding need, not part of this milestone:** a real logo file and an official brand color palette from Paramount Care, at which point `src/theme/tokens.ts`'s placeholder colors are the one place to update.
 
 ## Accessibility
 
@@ -168,6 +205,8 @@ The `appVersion` runtime-version policy exists specifically so a native-module c
 
 `src/utils/errors.ts` — one `AppError` shape (`code` + generic `message` + optional `fieldIssues` for 422s) covering: `network`, `timeout`, `validation`, `auth_expired`, `invalid_credentials`, `email_not_verified`, `invite_invalid`, `account_exists`, `verification_invalid`, `conflict`, `server_error`, `unknown`. The Worker's raw response body is **never** shown to a user directly — several of its own error messages are deliberately generic already (account-enumeration hardening) and showing raw text elsewhere would be inconsistent with that. `fieldIssues` is the one exception: 422 validation issues name real form fields and are meant to render inline.
 
+**No `INVITE_EXPIRED`/`INVITE_REVOKED`/`INVITE_USED` codes exist, by design — checked against the real backend, not assumed.** `worker/src/routes/auth.ts`'s registration handler returns exactly one generic `invalidInvite()` response (`{error: 'Invalid or expired invitation'}`, 401) for every reason a token might be dead — not found, expired, revoked, or already used — specifically so an unauthenticated caller can't learn which reason applies (see ADR-015). `invite_invalid` already models this correctly as a single code; adding granular sub-codes the backend doesn't actually distinguish would be inventing a contract that doesn't exist. No new codes were added for M4 beyond what M3 already modeled — `session` errors reuse the existing `conflict` (409, revision mismatch) and `auth_expired` (401) codes, since the Worker's session routes don't introduce any error shape those don't already cover.
+
 ## Loading / request state
 
 Every submit screen tracks its own `isSubmitting` boolean and passes it to `Button`'s `loading` prop, which both disables the button and swaps its label for a spinner. `Button` additionally guards against a tap landing in the narrow window between press and the next render actually applying `disabled` (a ref-based guard, not just the prop) — duplicate registration/login submissions from repeated taps are not possible.
@@ -178,7 +217,9 @@ React Context + hooks (`AuthContext`), no Redux/Zustand/MobX. Justification: the
 
 ## Offline foundation
 
-`src/hooks/useNetworkStatus.ts` (`@react-native-community/netinfo`) + `OfflineBanner` component: a foundation-level "you're offline" signal, shown globally. Deliberately **not** implemented: queuing sensitive writes (a signed form, a document upload) for silent later replay while offline — that's a product/legal decision about what it means to "submit" something before connectivity is confirmed, not an engineering default to make unilaterally. Future direction: once the onboarding-session milestone exists, evaluate per-mutation whether a queued-retry pattern is appropriate (likely yes for step-progress saves, likely no for anything requiring an explicit legal acknowledgement at the moment of submission).
+`src/hooks/useNetworkStatus.ts` (`@react-native-community/netinfo`) + `OfflineBanner` component: a foundation-level "you're offline" signal, shown globally. Deliberately **not** implemented: queuing sensitive writes (a signed form, a document upload) for silent later replay while offline — that's a product/legal decision about what it means to "submit" something before connectivity is confirmed, not an engineering default to make unilaterally.
+
+**M4's dashboard distinguishes offline from a generic error explicitly**, not just via the global banner: `home.tsx` and `onboarding/index.tsx` both check `useNetworkStatus()` when `status === 'error'` and show "You're offline" copy instead of a generic failure message, with the same retry action either way (`refresh()`). Registration/verification/login already surface a plain `network` `AppError` when offline (M3) — M4 doesn't change that, it just adds the same offline-awareness to the new session-loading states. Future direction unchanged from M3: evaluate a queued-retry pattern per-mutation once actual step-editing exists (likely yes for step-progress saves, likely no for anything requiring an explicit legal acknowledgement at submission).
 
 ## Security review
 
@@ -195,9 +236,16 @@ React Context + hooks (`AuthContext`), no Redux/Zustand/MobX. Justification: the
 | API error leakage | `toAppError` maps every backend response to a fixed set of internal codes/generic messages; raw backend text is never rendered except 422 `fieldIssues`, which name real form fields by design. |
 | Insecure local persistence | No AsyncStorage usage anywhere in this app; the only persisted value at all is the refresh token, and only via SecureStore. |
 | Expo config secret exposure | `app.config.ts`'s `extra` block contains only the values in the "Environments" table above — audited to confirm no `worker/.dev.vars` value or equivalent appears anywhere in this file or its git history. |
+| Session ownership | Every session route requires the authenticated applicant's own token server-side (unchanged from M2/ADR-015) — mobile never sends or trusts a client-supplied user/session identifier; `GET/POST /api/sessions*` calls go through `authenticatedFetch` exactly like every other authenticated call. |
+| Session-creation idempotency | Single-flight per app instance (`ensureSession.ts`) prevents duplicate sessions from rerenders/Strict Mode/concurrent mounts/retries; a fresh ensurer per sign-in (not a module-level singleton) prevents cross-identity state leakage on sign-out→sign-back-in. Cross-device races closed at the database (`idx_sessions_user_id_unique`, ADR-018 §2) — see "Session data layer & idempotency." |
+| Invite token in error reporting/analytics | No error-reporting or analytics SDK is integrated in this milestone (none exists in the app at all) — there is nothing to leak the token to yet; when one is added, `register.tsx`'s local-only token handling must not change. |
 
 Biometrics are explicitly not implemented (see "Secure storage" above for the prepared seam).
 
 ## Testing
 
-`jest-expo` + `@testing-library/react-native`. Covers: `refreshCoordinator` (single-flight, no stampede, no stuck state after a failure), `apiClient`'s `authenticatedFetch` (401→refresh→retry-once, no stored token → no retry, refresh failure → clear + notify with no infinite loop, concurrent 401s coalesce into one refresh call), `AuthContext` (loading→restore→signedOut/signedIn, sign-in success/failure, a background auth-expired event moving a signed-in user back to signedOut, sign-out proceeding even if server revocation fails), `secureStore`'s wrapper (correct key, correct calls — mocked, no real Keychain/Keystore access in tests), `inviteLink` parsing (custom scheme, https, missing token, malformed URL, repeated param), and `errors.ts`'s context-sensitive status-code mapping. No screen-rendering snapshot tests — deliberately, per the instruction to avoid brittle snapshot-heavy tests; screen logic that's worth testing in isolation (validation, submit-guarding) is small enough to reason about directly and will get targeted tests as it grows past what a placeholder screen needs.
+`jest-expo` + `@testing-library/react-native`. M3 coverage (unchanged): `refreshCoordinator` (single-flight, no stampede, no stuck state after a failure), `apiClient`'s `authenticatedFetch` (401→refresh→retry-once, no stored token → no retry, refresh failure → clear + notify with no infinite loop, concurrent 401s coalesce into one refresh call), `AuthContext` (loading→restore→signedOut/signedIn, sign-in success/failure, a background auth-expired event moving a signed-in user back to signedOut, sign-out proceeding even if server revocation fails), `secureStore`'s wrapper, `inviteLink` parsing, `errors.ts`'s context-sensitive status-code mapping.
+
+**M4 adds:** `sessionApi` (404→`{ok:true, data:null}` treated as a signal not an error, 200/422/500/network mapping, correct request body), `ensureSession` (returns existing session without creating one, creates when none exists, propagates GET/CREATE failures distinctly, **coalesces concurrent `ensure()` calls into exactly one GET and one CREATE** — the core idempotency guarantee, directly tested — and starts fresh after a prior call fully resolves), `SessionContext` (loading→ready/error, preserves the exact server `revision` without modification, `refresh()` recovers from a prior error, and **creates a fresh ensurer on every mount so a sign-out→sign-back-in-as-someone-else never inherits stale in-flight state** — directly tested, not just asserted), `steps` (unknown packetId returns null rather than throwing, empty/partial/fully-completed `stepStates` all compute the right completed/remaining/next-step split, non-`'completed'` statuses are correctly treated as incomplete).
+
+No screen-rendering snapshot tests — deliberately, per the instruction to avoid brittle snapshot-heavy tests, and consistent with the M3 precedent. `home.tsx`/`onboarding/*` screens are thin renderers over `useSession()`/`useAuth()`, both independently tested; the wiring between `(app)/_layout.tsx`'s auth guard and `SessionProvider`'s mount timing is verified by direct code inspection and the manual QA walkthrough (`QA_WALKTHROUGH.md`), not an automated full-navigator render test — the same boundary M3 drew around not test-rendering complete navigation trees.
