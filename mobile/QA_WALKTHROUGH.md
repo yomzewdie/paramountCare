@@ -1,4 +1,4 @@
-# M4/M5/M6/M7 manual QA walkthrough
+# M4/M5/M6/M7/M8 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -137,6 +137,48 @@ Continue from a signed-in state (steps 1–7 of the base walkthrough above, or c
 17. **Signature/attestation:** not applicable to this step. Employment Application does not capture a signature anywhere in the real system (confirmed during M7 pre-flight — see `mobile/README.md`) — the actual attestation is the separate, not-yet-migrated Applicant Statement step. No signature behavior to test here.
 
 18. **Open Employment Reference #1 in its real packet position and verify M6 still works.** From the step list (now showing Employment Application before it, per step 3), tap Employment Reference #1. Expected: the real form still opens, previously-saved/completed values still load and display correctly, and it's unaffected by Employment Application being added ahead of it in the list.
+
+## M8 — Application Statement (first real signature/attestation)
+
+Continue from a signed-in state.
+
+1. **Sign in as a test applicant.**
+
+2. **Open My Onboarding.**
+
+3. **Confirm the real packet order.** Tap through to the full step list. Expected order: Personal Information, Employment Application, Application Statement, Employment Reference #1, Employment Reference #2, ...
+
+4. **Complete/inspect Personal Information.** Open it — expected: real form, previously-saved values load, still works.
+
+5. **Complete/inspect Employment Application.** Open it — expected: real form, previously-saved values load, still works.
+
+6. **Open Application Statement.** Expected: the real form appears (not the placeholder) with the full legal statement text in a scrollable box, an acknowledgement checkbox, and an "Electronic Signature" text field with a disclosure sentence beneath it.
+
+7. **Read the statement.** Confirm the text scrolls if it overflows the box and is not truncated or paraphrased.
+
+8. **Attempt completion without signing.** Leave the checkbox unchecked and the signature blank. Tap **Continue**. Expected: a clear error under both the checkbox ("You must acknowledge this item before continuing") and the signature field ("Your typed signature is required"); nothing is saved; the step is not marked complete.
+
+9. **Verify validation clears correctly.** Check the box only (leave signature blank) and tap Continue again — expected: only the signature error remains. Type a signature and tap Continue again — expected: no errors.
+
+10. **Complete the required signature/attestation.** Check the acknowledgement box, type a test name (e.g. "Test Applicant" — never a real legal name) into the Electronic Signature field. Expected: a "Signed as: Test Applicant · <date/time>" confirmation appears beneath the field.
+
+11. **Save/complete.** Tap **Continue**. Expected: no errors, a brief loading state, then you're returned to the previous screen.
+
+12. **Return to the dashboard.** Confirm the completion percentage increased.
+
+13. **Verify Application Statement shows completed** in the step list.
+
+14. **Verify next action becomes Employment Reference #1** — the dashboard's "Next step" callout should name Employment Reference #1, not Application Statement.
+
+15. **Close/reopen the app** (kill the process, relaunch, sign back in if prompted). Reopen Application Statement.
+
+16. **Confirm the signed/completed state restores correctly** — the checkbox should show checked, the typed signature and "Signed as: ... · <date>" line should show your step-10 values, round-tripped through the real server.
+
+17. **Test network failure.** Turn off connectivity, change the signature text, tap Continue. Expected: a clear "can't reach Paramount Care" message, your typed value still there, no false "saved" confirmation. Turn network back on and retry — expected: it now succeeds.
+
+18. **Test stale-revision conflict.** Using two sessions of the same account, save a change to Application Statement from "device B" first, then attempt a different change from "device A" using its stale revision. Expected on device A: a clear notice that newer data was found, device A's unsaved edit still visible, "Keep my changes and retry" succeeds afterward, "Discard my changes and show the latest" replaces the form with device B's values.
+
+19. **Verify prior M5–M7 forms still work.** Re-open Personal Information, Employment Application, and Employment Reference #1 in turn — expected: all three still open their real forms (not placeholders), previously-saved/completed values still load correctly, and none is affected by Application Statement being added.
 
 ## What "safe" documentation means here
 

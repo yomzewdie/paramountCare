@@ -2,6 +2,7 @@ import { REAL_STEP_SCREENS } from '../[stepId]';
 import { getPacket } from '@pcs/shared';
 import PersonalInfoScreen from '../../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../../src/features/onboarding/EmploymentApplicationScreen';
+import ApplicationStatementScreen from '../../../../src/features/onboarding/ApplicationStatementScreen';
 import EmploymentReferenceScreen from '../../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
@@ -18,12 +19,16 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.employment_application).toBe(EmploymentApplicationScreen);
   });
 
+  it('maps application_statement to the real Application Statement screen', () => {
+    expect(REAL_STEP_SCREENS.application_statement).toBe(ApplicationStatementScreen);
+  });
+
   it('maps employment_ref_1 to the real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
   });
 
   it('leaves other reference instances and unmigrated steps as honest placeholders', () => {
-    expect(REAL_STEP_SCREENS.application_statement).toBeUndefined();
+    expect(REAL_STEP_SCREENS.background_auth).toBeUndefined();
     expect(REAL_STEP_SCREENS.employment_ref_2).toBeUndefined();
     expect(REAL_STEP_SCREENS.employment_ref_3).toBeUndefined();
     expect(REAL_STEP_SCREENS.w4).toBeUndefined();

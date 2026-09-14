@@ -7,6 +7,7 @@ import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
+import ApplicationStatementScreen from '../../../src/features/onboarding/ApplicationStatementScreen';
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
@@ -30,6 +31,7 @@ import EmploymentReferenceScreen from '../../../src/features/onboarding/Employme
 export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   personal_info: PersonalInfoScreen,
   employment_application: EmploymentApplicationScreen,
+  application_statement: ApplicationStatementScreen,
   employment_ref_1: EmploymentReferenceScreen,
 };
 
