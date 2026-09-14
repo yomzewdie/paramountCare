@@ -29,6 +29,7 @@ This is an adversarial review of my own prior recommendations. Where the origina
 | 016 | Structural guardrails for the smart-onboarding roadmap (`PRODUCT_ROADMAP.md`) | **DECIDED — documentation only** | Now; each item activates when its roadmap phase is scheduled |
 | 017 | M3: Expo/React Native mobile foundation | **DECIDED — implemented in M3** | Done, prior to M3 commit |
 | 018 | M4: First real mobile product slice (My Onboarding dashboard, session create/resume, database-enforced session uniqueness) | **DECIDED — fully implemented in M4** | Done, prior to M4 commit |
+| 019 | M5: First real onboarding form (Personal Information) — merge-safe PATCH pattern, reusable step-form split | **DECIDED — implemented in M5** | Done, prior to M5 commit |
 
 ---
 
@@ -519,3 +520,21 @@ Everything after M7 (AI/analytics, notifications center, broader production hard
 **What this ADR does not do:** it does not migrate any onboarding step form (Personal Information, Employment Application, I-9, W-4, document upload, signatures, acknowledgements); it does not change `onboarding_sessions.user_id`'s nullability or touch any previously applied migration; it does not implement credential tracking, reminders, rehire logic, a rules engine, an AI assistant, push notifications, biometrics, or admin portal changes.
 
 **Timing:** Implemented as M4, prior to that milestone's commit, including §2's backend correction (approved and built in a same-day follow-up pass after initial M4 review).
+
+---
+
+## 22. ADR-019 — M5: First real onboarding form (Personal Information)
+
+**Status:** Implemented. **Date:** 2026-09-14.
+
+**Context:** M5 migrates the first real onboarding step form into mobile — Personal Information — and establishes the pattern later step forms will follow. Full detail lives in `mobile/README.md`; this entry records the two decisions durable enough to matter beyond this one form's implementation.
+
+**Decisions:**
+
+1. **`PATCH /api/sessions/:id`'s `formData` and `stepStates` fields are full replacements, not deep merges — a real backend-contract detail worth recording, not a defect requiring a fix.** Reading `worker/src/routes/sessions.ts` directly (not assuming) showed both fields are written straight to their columns as given (`formDataJson: p.formData ? JSON.stringify(p.formData) : undefined`, same for `stepStates`). A client that PATCHes only its own step's fragment would silently erase every other step's previously-saved data. This is not being changed server-side: the existing revision check already makes a "read the full current session, override just this step's key, send the whole thing back" client pattern completely safe against lost updates across devices — a stale spread can never succeed, since its revision would be rejected with 409 first. `mobile/src/features/onboarding/stepPatch.ts`'s `buildStepPatch()` is the single place this spread happens; every future step form reuses it rather than re-deriving the same discipline (and the same footgun) independently.
+2. **Reusable step-form architecture, deliberately split at the boundary that's actually generalizable today, not further.** `stepPatch.ts`, `SessionContext.saveStep()` (send patch → update context with server response → distinguish saved/conflict/error), and new design-system primitives (`FormSection`, `SelectField`, `StepActionBar`, `TextField`'s `required`/`hint`, `Screen`'s ref-forwarding) are shared, used by every future step. Field state, dirty/touched tracking, and validation-timing logic (`usePersonalInfoForm.ts`) are **not** generalized into a `useStepForm<T>()` from this one example — I-9 (signatures, conditional fields), W-4, and employment references (multiple instances, file uploads) are different enough shapes that guessing the common form-state interface from a single plain-field form would likely be wrong. Revisit once a second or third step form makes the real common shape observable rather than assumed.
+3. **Conflict resolution stays an explicit applicant choice, never an automatic field-level merge.** On a 409, `SessionContext.saveStep()` already updates its held session to the fresh server state (the 409 response body already includes it — no extra `GET` needed), but the screen's own unsaved edits are left untouched for the applicant to decide about: keep editing and retry (now against the correct revision, automatically, since `saveStep` always reads the latest session at call time) or discard and reload the server's values. Merging two people's concurrent free-text edits to the same fields has no provably-safe automatic resolution, so the client doesn't attempt one.
+
+**What this ADR does not do:** it does not migrate any other onboarding step (Employment Application, I-9, W-4, document upload, signatures, employment references); it does not change the Worker's session PATCH contract in any way; it does not build a generic multi-step form engine.
+
+**Timing:** Implemented as M5, prior to that milestone's commit.

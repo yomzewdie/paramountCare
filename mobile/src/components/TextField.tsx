@@ -5,20 +5,29 @@ import { useTheme } from '../theme/ThemeProvider';
 interface TextFieldProps extends TextInputProps {
   label: string;
   error?: string;
+  /** Shows a required indicator next to the label — presentation only, does
+   * not itself enforce anything (the actual rule comes from @pcs/shared's
+   * validation). */
+  required?: boolean;
+  /** Helper text shown below the field when there's no error — e.g. "Optional". */
+  hint?: string;
 }
 
 export const TextField = forwardRef<TextInput, TextFieldProps>(function TextField(
-  { label, error, style, ...rest },
+  { label, error, required, hint, style, ...rest },
   ref,
 ) {
   const theme = useTheme();
 
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
-      <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{label}</Text>
+      <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>
+        {label}
+        {required ? <Text style={{ color: theme.colors.danger }}> *</Text> : null}
+      </Text>
       <TextInput
         ref={ref}
-        accessibilityLabel={label}
+        accessibilityLabel={required ? `${label}, required` : label}
         placeholderTextColor={theme.colors.textMuted}
         style={[
           styles.input,
@@ -41,6 +50,8 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
         <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: theme.spacing.xs }]}>
           {error}
         </Text>
+      ) : hint ? (
+        <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.xs }]}>{hint}</Text>
       ) : null}
     </View>
   );

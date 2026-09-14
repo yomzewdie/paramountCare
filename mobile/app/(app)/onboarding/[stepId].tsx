@@ -5,16 +5,24 @@ import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/StatusStates';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
+import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
 
-// Deliberately a placeholder for every step — no onboarding forms are
-// migrated in M4 (instructions §27). This route exists so the navigation
-// architecture is real and future milestones can replace this file's
-// content per step without restructuring how a step is reached.
+// A real form for a migrated step, an honest placeholder for everything
+// else — one small registry, so slotting in the next migrated step (M6+)
+// means adding one entry here, not restructuring how a step is reached
+// (M5 instructions §11, §14/M4's own note about this route's purpose).
+const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
+  personal_info: PersonalInfoScreen,
+};
+
 export default function OnboardingStep() {
   const theme = useTheme();
   const router = useRouter();
   const { progress } = useSession();
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
+
+  const RealScreen = stepId ? REAL_STEP_SCREENS[stepId] : undefined;
+  if (RealScreen) return <RealScreen />;
 
   const step = progress?.steps.find((s) => s.id === stepId);
 

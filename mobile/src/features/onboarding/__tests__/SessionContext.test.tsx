@@ -1,6 +1,7 @@
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { SessionProvider, useSession } from '../SessionContext';
 import { createSessionEnsurer } from '../ensureSession';
+import * as sessionApi from '../sessionApi';
 import { appError } from '../../../utils/errors';
 import type { SessionResponse } from '../sessionApi';
 
@@ -10,8 +11,13 @@ import type { SessionResponse } from '../sessionApi';
 jest.mock('../ensureSession', () => ({
   createSessionEnsurer: jest.fn(() => ({ ensure: mockEnsure })),
 }));
+jest.mock('../sessionApi', () => ({
+  ...jest.requireActual('../sessionApi'),
+  updateSession: jest.fn(),
+}));
 
 const mockEnsure = jest.fn();
+const mockedUpdateSession = sessionApi.updateSession as jest.Mock;
 
 function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
@@ -102,5 +108,71 @@ describe('SessionContext', () => {
     // One call per mount — proves SessionContext doesn't reuse a single
     // module-level ensurer across a sign-out/sign-back-in cycle.
     expect(createSessionEnsurer).toHaveBeenCalledTimes(2);
+  });
+
+  describe('saveStep', () => {
+    it('sends the merge-safe patch and replaces the context session with the server response on success', async () => {
+      const initial = fakeSession({ revision: 3, formData: { employmentApplication: { positionApplied: 'RN' } }, stepStates: { employment_application: 'in_progress' } });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const updated = fakeSession({ revision: 4, formData: { employmentApplication: { positionApplied: 'RN' }, personalInfo: { firstName: 'Jane' } }, stepStates: { employment_application: 'in_progress', personal_info: 'completed' } });
+      mockedUpdateSession.mockResolvedValue({ ok: true, data: updated });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.saveStep>> | undefined;
+      await act(async () => {
+        outcome = await result.current.saveStep({ formDataKey: 'personalInfo', stepData: { firstName: 'Jane' }, stepId: 'personal_info', status: 'completed' });
+      });
+
+      expect(outcome).toEqual({ status: 'saved', session: updated });
+      expect(result.current.session).toEqual(updated); // context now reflects the new revision/data
+
+      const [, payload] = mockedUpdateSession.mock.calls[0];
+      expect(payload).toEqual({
+        revision: 3, // the revision that was current BEFORE this save
+        formData: { employmentApplication: { positionApplied: 'RN' }, personalInfo: { firstName: 'Jane' } }, // full merge, other step preserved
+        stepStates: { employment_application: 'in_progress', personal_info: 'completed' }, // full merge, other step preserved
+      });
+    });
+
+    it('on a 409 conflict, updates the context session to the fresh server state and reports the conflict distinctly', async () => {
+      const initial = fakeSession({ revision: 3 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const fresh = fakeSession({ revision: 9, formData: { personalInfo: { firstName: 'SomeoneElseEdited' } } });
+      mockedUpdateSession.mockResolvedValue({ ok: false, conflict: true, current: fresh });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.saveStep>> | undefined;
+      await act(async () => {
+        outcome = await result.current.saveStep({ formDataKey: 'personalInfo', stepData: { firstName: 'Mine' }, stepId: 'personal_info' });
+      });
+
+      expect(outcome).toEqual({ status: 'conflict', latestSession: fresh });
+      // The context reflects the fresh session so a subsequent retry uses
+      // the correct revision automatically — but this happens WITHOUT the
+      // caller's own local (unsaved) form values being touched by
+      // SessionContext itself; only the caller decides what to do with those.
+      expect(result.current.session).toEqual(fresh);
+    });
+
+    it('on a generic error, leaves the context session untouched', async () => {
+      const initial = fakeSession({ revision: 3 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedUpdateSession.mockResolvedValue({ ok: false, conflict: false, error: appError('server_error') });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.saveStep>> | undefined;
+      await act(async () => {
+        outcome = await result.current.saveStep({ formDataKey: 'personalInfo', stepData: {}, stepId: 'personal_info' });
+      });
+
+      expect(outcome).toEqual({ status: 'error', error: appError('server_error') });
+      expect(result.current.session).toEqual(initial); // unchanged
+    });
   });
 });

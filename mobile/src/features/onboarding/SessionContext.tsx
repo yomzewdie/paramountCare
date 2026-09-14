@@ -2,10 +2,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { DEFAULT_PACKET_ID } from '@pcs/shared';
 import { createSessionEnsurer, type SessionEnsurer } from './ensureSession';
 import { deriveProgress, type OnboardingProgress } from './steps';
-import type { SessionResponse } from './sessionApi';
-import type { AppError } from '../../utils/errors';
+import { buildStepPatch, type StepPatchInput } from './stepPatch';
+import { updateSession, type SessionResponse } from './sessionApi';
+import { appError, type AppError } from '../../utils/errors';
 
 export type SessionStatus = 'loading' | 'ready' | 'error';
+
+export type SaveStepResult =
+  | { status: 'saved'; session: SessionResponse }
+  | { status: 'conflict'; latestSession: SessionResponse }
+  | { status: 'error'; error: AppError };
 
 interface SessionContextValue {
   status: SessionStatus;
@@ -20,6 +26,15 @@ interface SessionContextValue {
   progress: OnboardingProgress | null;
   error: AppError | null;
   refresh: () => Promise<void>;
+  /**
+   * The one place any screen saves step data — builds a merge-safe PATCH
+   * (stepPatch.ts), sends it, and updates this context with whatever the
+   * server returns. On success OR conflict, `session` here is always the
+   * latest authoritative state; on conflict, the caller's own unsaved local
+   * form values are untouched (this function never reaches into a screen's
+   * local state) — the caller decides how to reconcile (M5 instructions §7).
+   */
+  saveStep: (input: Omit<StepPatchInput, 'session'>) => Promise<SaveStepResult>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -75,14 +90,53 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     load();
   }, [load]);
 
+  // Reads `session` via a ref, not the closed-over state variable, so this
+  // callback's identity can stay stable (empty dep array) while always
+  // seeing the CURRENT session at call time — saveStep is invoked from
+  // event handlers (button presses), never from a stale render. The ref is
+  // updated in an effect (after render/commit), not directly in the
+  // component body — react-hooks' refs rule flags a ref write reachable
+  // from render itself, even though this exact "mirror the latest prop/state
+  // into a ref for callbacks to read" pattern is otherwise standard.
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const saveStep = useCallback(async (input: Omit<StepPatchInput, 'session'>): Promise<SaveStepResult> => {
+    const current = sessionRef.current;
+    if (!current) {
+      // Should not happen — screens that can call saveStep only render once
+      // status === 'ready', which guarantees a session exists — but fail
+      // honestly rather than silently no-op if it ever does.
+      return { status: 'error', error: appError('unknown') };
+    }
+
+    const payload = buildStepPatch({ ...input, session: current });
+    const result = await updateSession(current.sessionId, payload);
+
+    if (result.ok) {
+      setSession(result.data);
+      return { status: 'saved', session: result.data };
+    }
+    if (result.conflict) {
+      // The context always reflects the latest authoritative session, even
+      // on conflict — but the caller's own unsaved local edits are never
+      // touched here; only the caller can safely decide what to do with them.
+      setSession(result.current);
+      return { status: 'conflict', latestSession: result.current };
+    }
+    return { status: 'error', error: result.error };
+  }, []);
+
   const progress = useMemo<OnboardingProgress | null>(
     () => (session ? deriveProgress(session.packetId, session.stepStates) : null),
     [session],
   );
 
   const value = useMemo<SessionContextValue>(
-    () => ({ status, session, progress, error, refresh: load }),
-    [status, session, progress, error, load],
+    () => ({ status, session, progress, error, refresh: load, saveStep }),
+    [status, session, progress, error, load, saveStep],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

@@ -33,6 +33,25 @@ export interface SessionResponse {
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: AppError };
 
+// Hand-typed against worker/src/schemas/sessions.ts's updateSessionSchema —
+// inspected directly. `formData`/`stepStates`, when present, REPLACE the
+// stored blob entirely (see stepPatch.ts's doc comment) — callers must
+// always send the full merged object, never a bare fragment.
+export interface UpdateSessionPayload {
+  revision: number;
+  formData?: Record<string, unknown>;
+  stepStates?: Record<string, string>;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+}
+
+export type UpdateSessionResult =
+  | { ok: true; data: SessionResponse }
+  | { ok: false; conflict: true; current: SessionResponse }
+  | { ok: false; conflict: false; error: AppError };
+
 async function authedRequest(path: string, init?: RequestInit): Promise<Response> {
   return authenticatedFetch(`${env.apiBaseUrl}${path}`, init);
 }
@@ -72,5 +91,34 @@ export async function createSession(packetId: string): Promise<ApiResult<Session
     return { ok: true, data: (await res.json()) as SessionResponse };
   } catch (err) {
     return { ok: false, error: networkFailureToAppError(err) };
+  }
+}
+
+/**
+ * `PATCH /api/sessions/:sessionId`. A 409 is a distinct, expected outcome —
+ * not folded into the generic `AppError` path — because its body already
+ * carries the fresh authoritative session (`current`), which callers need
+ * to update SessionContext and offer the applicant a real retry/review path
+ * (M5 instructions §7), not just a "something went wrong" message.
+ */
+export async function updateSession(sessionId: string, payload: UpdateSessionPayload): Promise<UpdateSessionResult> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 409) {
+      const body = (await res.json()) as { current: SessionResponse };
+      return { ok: false, conflict: true, current: body.current };
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, conflict: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: (await res.json()) as SessionResponse };
+  } catch (err) {
+    return { ok: false, conflict: false, error: networkFailureToAppError(err) };
   }
 }
