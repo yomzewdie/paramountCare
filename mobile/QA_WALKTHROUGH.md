@@ -1,4 +1,4 @@
-# M4/M5/M6/M7/M8 manual QA walkthrough
+# M4/M5/M6/M7/M8/M9 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -179,6 +179,34 @@ Continue from a signed-in state.
 18. **Test stale-revision conflict.** Using two sessions of the same account, save a change to Application Statement from "device B" first, then attempt a different change from "device A" using its stale revision. Expected on device A: a clear notice that newer data was found, device A's unsaved edit still visible, "Keep my changes and retry" succeeds afterward, "Discard my changes and show the latest" replaces the form with device B's values.
 
 19. **Verify prior M5–M7 forms still work.** Re-open Personal Information, Employment Application, and Employment Reference #1 in turn — expected: all three still open their real forms (not placeholders), previously-saved/completed values still load correctly, and none is affected by Application Statement being added.
+
+## M9 — Employment Reference #2 (packet matrix correction)
+
+**A note before testing:** the plan going into M9 assumed General RN/LVN skip straight from Reference #1 to Background Authorization while only ICU/ER/Travel require a second reference. Re-reading `packets.ts` during pre-flight disproved this — every packet requires Employment Reference #2. There is only one path to test, applicable to whichever packet your test applicant happens to be on; testing on two different packet types (below) is about confirming the step **count** correctly differs, not that the flow itself differs.
+
+Continue from a signed-in state.
+
+1. **Sign in as a test applicant** (any packet — General RN/LVN or ICU/ER/Travel both work identically for this step).
+
+2. **Open My Onboarding**, tap through to the full step list. Confirm the order: Personal Information, Employment Application, Application Statement, Employment Reference #1, **Employment Reference #2**, Background Authorization, ...
+
+3. **Complete Personal Information, Employment Application, Application Statement, and Employment Reference #1** if not already done (test data only).
+
+4. **Open Employment Reference #2.** Expected: the real form appears (not the placeholder), labeled "Employment Reference #2" in its heading — confirm it is visually clear you are NOT editing Reference #1.
+
+5. **Enter partial data** into Reference #2 — different values from whatever you used for Reference #1 (e.g. a different employer name) — and **save progress**. Expected: no validation errors block this; success returns you to the previous screen.
+
+6. **Reopen Employment Reference #1** and confirm its values are unchanged — proving Reference #1 and #2 remain fully independent (no accidental cross-contamination).
+
+7. **Leave and reopen Reference #2**, then **restart the app entirely**. Expected: Reference #2's own values restore correctly each time, still independent from Reference #1's.
+
+8. **Test validation errors, network failure/retry, and stale-revision conflict for Reference #2** — same expected behavior as documented for Reference #1 in the M6 section above (identical hook, identical UX).
+
+9. **Complete Employment Reference #2** with valid test data. Expected: dashboard progress increases, Reference #2 shows completed in the step list, and **"Next step" becomes Background Authorization** (not yet implemented — still an honest placeholder if you tap it).
+
+10. **Confirm the packet-specific step count.** If you have access to test applicants on two different packet types (e.g. one General RN, one ICU RN), compare their full step lists — the ICU RN applicant's list should be visibly shorter (it omits Health Information Authorization, Patient Bill of Rights, the three vaccine declinations, JCAHO Review, and the Safety Exam step that General RN/LVN include) even though both reach Employment Reference #2 in the same relative position.
+
+11. **Verify prior M5–M8 forms still work.** Re-open Personal Information, Employment Application, Application Statement, and Employment Reference #1 in turn — expected: all four still open their real forms, previously-saved/completed values still load correctly, none is affected by Employment Reference #2 being added.
 
 ## What "safe" documentation means here
 

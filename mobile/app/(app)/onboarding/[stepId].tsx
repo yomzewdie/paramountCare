@@ -20,11 +20,15 @@ import EmploymentReferenceScreen from '../../../src/features/onboarding/Employme
 // history, so employment_ref_1 (built in M6) correctly stays in its real
 // packet position even though its real predecessor, employment_application,
 // wasn't migrated until M7.
-// Only employment_ref_1 is wired for its step type, even though
-// EmploymentReferenceScreen itself is written generically (it derives its
-// heading/step id from the route param) — employment_ref_2/_3 stay honest
-// placeholders until a future milestone explicitly migrates them too, per
-// the "no fake forms" instruction.
+// employment_ref_1 and employment_ref_2 share the exact same screen —
+// EmploymentReferenceScreen was written stepId-generic in M6 specifically
+// so a second (or third) reference instance needs no new component, only
+// a registry entry (M9 confirmed this by re-reading packets.ts: EVERY
+// packet — general_rn, lvn, icu_rn, er_rn, travel_rn — requires
+// employment_ref_2, not just some; there is no packet branch here).
+// employment_ref_3 (travel_rn only, optional) stays an honest placeholder
+// until a future milestone explicitly migrates it too, per the "no fake
+// forms" instruction.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -33,6 +37,7 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   employment_application: EmploymentApplicationScreen,
   application_statement: ApplicationStatementScreen,
   employment_ref_1: EmploymentReferenceScreen,
+  employment_ref_2: EmploymentReferenceScreen,
 };
 
 export default function OnboardingStep() {

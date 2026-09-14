@@ -23,13 +23,13 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.application_statement).toBe(ApplicationStatementScreen);
   });
 
-  it('maps employment_ref_1 to the real Employment Reference screen', () => {
+  it('maps employment_ref_1 AND employment_ref_2 to the same real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
+    expect(REAL_STEP_SCREENS.employment_ref_2).toBe(EmploymentReferenceScreen);
   });
 
-  it('leaves other reference instances and unmigrated steps as honest placeholders', () => {
+  it('leaves the optional third reference instance and unmigrated steps as honest placeholders', () => {
     expect(REAL_STEP_SCREENS.background_auth).toBeUndefined();
-    expect(REAL_STEP_SCREENS.employment_ref_2).toBeUndefined();
     expect(REAL_STEP_SCREENS.employment_ref_3).toBeUndefined();
     expect(REAL_STEP_SCREENS.w4).toBeUndefined();
     expect(REAL_STEP_SCREENS.i9).toBeUndefined();
@@ -42,5 +42,19 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(ids.indexOf('personal_info')).toBeLessThan(ids.indexOf('employment_application'));
     expect(ids.indexOf('employment_application')).toBeLessThan(ids.indexOf('application_statement'));
     expect(ids.indexOf('application_statement')).toBeLessThan(ids.indexOf('employment_ref_1'));
+  });
+
+  it('confirms employment_ref_2 is required (not a packet branch) in every packet type — the actual source, not an assumed matrix', () => {
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId);
+      const ref2 = packet!.steps.find((s) => s.id === 'employment_ref_2');
+      expect(ref2).toBeDefined();
+      expect(ref2!.required).toBe(true);
+      // Reference #2 always comes before Background Authorization, and Reference #1
+      // always comes before Reference #2, in every packet — no branch exists here.
+      const ids = packet!.steps.map((s) => s.id);
+      expect(ids.indexOf('employment_ref_1')).toBeLessThan(ids.indexOf('employment_ref_2'));
+      expect(ids.indexOf('employment_ref_2')).toBeLessThan(ids.indexOf('background_auth'));
+    }
   });
 });

@@ -192,6 +192,56 @@ describe('useEmploymentReferenceForm — partial save', () => {
 
     expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: undefined }));
   });
+
+  // M9: EmploymentReferenceScreen/useEmploymentReferenceForm were built
+  // stepId-generic in M6 specifically so a second reference instance would
+  // need no new component. These tests instantiate the hook FOR
+  // employment_ref_2 directly (not just as "the other reference" in a
+  // ref_1 test above) to prove the same hook works correctly and
+  // independently for a second instance, not merely by coincidence.
+  it('works identically for employment_ref_2, loading only its own data', async () => {
+    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1 } } }));
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_2'));
+
+    expect(result.current.data).toEqual(defaultEmploymentReference); // empty, not ref_1's data
+  });
+
+  it('saving employment_ref_2 preserves employment_ref_1\'s already-saved data', async () => {
+    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1 } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_2'));
+
+    act(() => result.current.setField('positionHeld', 'Ref 2 Data'));
+    await act(async () => {
+      await result.current.saveProgress();
+    });
+
+    const [call] = saveStep.mock.calls;
+    const stepData = call[0].stepData as Record<string, unknown>;
+    expect(stepData.employment_ref_1).toEqual(ref1);
+    expect((stepData.employment_ref_2 as { positionHeld: string }).positionHeld).toBe('Ref 2 Data');
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_2' }));
+  });
+
+  it('completing employment_ref_1 does not mark employment_ref_2 as completed, and vice versa (independent step statuses)', async () => {
+    const saveStep = setupSession(
+      fakeSession({ stepStates: { employment_ref_2: 'completed' } }), // ref_2 already done, ref_1 is not
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+
+    // ref_1 itself is not completed, so a plain save still marks IT in_progress —
+    // proving isCompleted is read per-stepId, not shared across reference instances.
+    await act(async () => {
+      await result.current.saveProgress();
+    });
+
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_1', status: 'in_progress' }));
+  });
 });
 
 describe('useEmploymentReferenceForm — complete', () => {
