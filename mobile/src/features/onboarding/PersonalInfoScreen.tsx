@@ -12,18 +12,8 @@ import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
+import { US_STATE_OPTIONS } from '../../constants/usStates';
 import { usePersonalInfoForm } from './usePersonalInfoForm';
-
-// Mirrors the existing web PersonalInfoSection.tsx's exact list — not a
-// domain/business concern (packages/shared doesn't define it either), a
-// static UI reference list local to whichever client renders a state
-// picker, same as the web app already treats it.
-const US_STATES = [
-  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA',
-  'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT',
-  'VA', 'WA', 'WV', 'WI', 'WY', 'DC',
-].map((code) => ({ label: code, value: code }));
 
 // Visual field order — used only to decide which invalid field to scroll to
 // on a failed Complete attempt. Deliberately separate from whatever key
@@ -126,7 +116,7 @@ export default function PersonalInfoScreen() {
         <TextField label="Street Address" required autoComplete="street-address" textContentType="streetAddressLine1" returnKeyType="next" onSubmitEditing={() => focusNext('address')} {...field('address')} />
         <TextField label="Apt. / Unit Number" hint="Optional" returnKeyType="next" onSubmitEditing={() => focusNext('aptNumber')} {...field('aptNumber')} />
         <TextField label="City or Town" required autoComplete="address-line2" textContentType="addressCity" returnKeyType="next" onSubmitEditing={() => focusNext('city')} {...field('city')} />
-        <SelectField label="State" required options={US_STATES} value={form.data.state} onValueChange={(v) => form.setField('state', v)} error={form.errors.state} />
+        <SelectField label="State" required options={US_STATE_OPTIONS} value={form.data.state} onValueChange={(v) => form.setField('state', v)} error={form.errors.state} />
         <TextField label="ZIP Code" required keyboardType="number-pad" maxLength={10} autoComplete="postal-code" textContentType="postalCode" returnKeyType="done" onSubmitEditing={() => {}} {...field('zip')} />
       </FormSection>
 

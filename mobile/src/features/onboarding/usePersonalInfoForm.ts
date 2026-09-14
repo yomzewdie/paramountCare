@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { defaultFormData, validatePersonalInfo, type PersonalInfo, type FieldErrors } from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
+import { visibleErrors as revealTouched, touchAll } from './formTouch';
 
 const STEP_ID = 'personal_info';
 const FORM_DATA_KEY = 'personalInfo';
@@ -48,13 +49,7 @@ export function usePersonalInfoForm() {
   // Lightweight-when-useful, not irritating-by-default (M5 instructions §6):
   // a field's error is only shown once the applicant has actually left it,
   // never pre-emptively on load or mid-typing in an untouched field.
-  const visibleErrors = useMemo<FieldErrors>(() => {
-    const out: FieldErrors = {};
-    for (const key of Object.keys(errors)) {
-      if (touched[key as keyof PersonalInfo]) out[key] = errors[key];
-    }
-    return out;
-  }, [errors, touched]);
+  const shownErrors = useMemo<FieldErrors>(() => revealTouched(errors, touched), [errors, touched]);
 
   function setField(field: keyof PersonalInfo, value: string): void {
     setData((d) => ({ ...d, [field]: value }));
@@ -99,7 +94,7 @@ export function usePersonalInfoForm() {
    * save entirely if anything is invalid — a step is never marked complete
    * merely because the applicant opened it or typed something. */
   async function complete(): Promise<SubmitOutcome> {
-    setTouched(Object.fromEntries(Object.keys(defaultFormData.personalInfo).map((k) => [k, true])) as Partial<Record<keyof PersonalInfo, boolean>>);
+    setTouched(touchAll(defaultFormData.personalInfo));
     if (Object.keys(errors).length > 0) return { kind: 'invalid' };
 
     setIsCompleting(true);
@@ -131,7 +126,7 @@ export function usePersonalInfoForm() {
     data,
     setField,
     blurField,
-    errors: visibleErrors,
+    errors: shownErrors,
     isDirty,
     isSaving,
     isCompleting,

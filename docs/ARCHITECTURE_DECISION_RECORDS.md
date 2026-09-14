@@ -30,6 +30,7 @@ This is an adversarial review of my own prior recommendations. Where the origina
 | 017 | M3: Expo/React Native mobile foundation | **DECIDED — implemented in M3** | Done, prior to M3 commit |
 | 018 | M4: First real mobile product slice (My Onboarding dashboard, session create/resume, database-enforced session uniqueness) | **DECIDED — fully implemented in M4** | Done, prior to M4 commit |
 | 019 | M5: First real onboarding form (Personal Information) — merge-safe PATCH pattern, reusable step-form split | **DECIDED — implemented in M5** | Done, prior to M5 commit |
+| 020 | M6: Second real onboarding form (Employment Reference) — confirmed M5's reusable layer, deliberately still no generic `useStepForm<T>()`, narrow `formTouch.ts` extraction | **DECIDED — implemented in M6** | Done, prior to M6 commit |
 
 ---
 
@@ -538,3 +539,22 @@ Everything after M7 (AI/analytics, notifications center, broader production hard
 **What this ADR does not do:** it does not migrate any other onboarding step (Employment Application, I-9, W-4, document upload, signatures, employment references); it does not change the Worker's session PATCH contract in any way; it does not build a generic multi-step form engine.
 
 **Timing:** Implemented as M5, prior to that milestone's commit.
+
+---
+
+## 23. ADR-020 — M6: Second real onboarding form (Employment Reference) — form pattern held, not generalized
+
+**Status:** Implemented. **Date:** 2026-09-14.
+
+**Context:** M6's stated purpose was as much a question as a feature: does the M5 form architecture (`stepPatch.ts`, `SessionContext.saveStep()`, the reusable design-system primitives, and `usePersonalInfoForm.ts`'s specific structure) actually generalize to a second real form, or was it accidentally shaped around Personal Information's own particulars? The preferred candidate, Employment Application, was rejected during pre-flight — its packet config declares `requiresSignature: true`, and its data includes felony-conviction disclosure, license discipline/revocation history, and a state-issued license number, which the milestone's own sensitivity rules call for stopping on rather than silently implementing. Employment Reference (`employment_ref_1`) was chosen instead: no signature dispatch, no SSN/tax/banking/medical/government-ID data, standard reference-contact fields.
+
+**Decisions:**
+
+1. **The reusable layer from M5 needed zero changes.** `stepPatch.ts`, `SessionContext.saveStep()`, `sessionApi.updateSession()`, and `FormSection`/`SelectField`/`StepActionBar`/`TextField`/`Screen` all work for Employment Reference exactly as built for Personal Information. This is a real (not assumed) confirmation that the M5 split was drawn in the right place: what's reusable is the *save/conflict mechanics and generic field chrome*, not anything about a specific form's fields.
+2. **`buildStepPatch`'s `formDataKey`/`stepId` split already handles a data shape M5 never needed: a step whose data lives one level deeper in a shared record.** Employment Reference's data lives at `formData.employmentReferences[stepId]`, not `formData.employmentReference` directly — because up to 3 reference steps (`employment_ref_1/2/3`) share one top-level key. `buildStepPatch` was written with `formDataKey` (the top-level key it replaces) and `stepId` (the `stepStates` key) as already-separate parameters, so `useEmploymentReferenceForm.ts` only needed to build its own inner merge (`{ ...existingReferences, [stepId]: next }`) before calling `saveStep` — no change to `stepPatch.ts` itself. The global, whole-session `revision` check protects this nested merge exactly the same way it protects a top-level one: a concurrent write to a *different* reference step still bumps the same counter, so a stale inner merge is caught by the same 409 path, not a new failure mode.
+3. **Still no `useStepForm<T>()` — and now for a sharper reason than "too early to tell."** `usePersonalInfoForm.ts` and `useEmploymentReferenceForm.ts` are structurally similar (data/touched/isDirty/isSaving/isCompleting/saveError/conflict, save/complete/keepMyChanges/discardAndReloadLatest) but differ in ways a generic hook would have to parameterize awkwardly: where a step's data lives in `formData` (a fixed key vs. a keyed sub-record), field typing (all-string vs. a mix of string/boolean fields with a conditionally-required field), and what the merge step before saving needs to do. Two real examples now exist and the differences are still substantive, not superficial — confirming, rather than merely asserting, that generalizing after only one example would have guessed wrong. Revisit once a third form (ideally one with a genuinely different shape again, e.g. a conditional-fields or multi-file-upload step) either confirms a clean common interface or rules one out for good.
+4. **One piece *was* extracted, narrowly: touched-gated error visibility.** `mobile/src/features/onboarding/formTouch.ts`'s `visibleErrors()`/`touchAll()` are byte-for-byte what both hooks were independently duplicating — filtering a step's already-computed errors down to touched fields, and marking every field touched on a failed Complete attempt. This is a pure, generic, two-function utility with its own direct unit tests, not a step towards a form engine — it doesn't touch save/conflict/dirty logic at all, only the one sub-problem that turned out to be identical rather than merely similar.
+
+**What this ADR does not do:** it does not migrate Employment Application, I-9, W-4, document uploads, signatures, or any other reference instance beyond `employment_ref_1`; it does not introduce a generic step-form hook; it does not change the Worker's session PATCH contract or the revision-check mechanism.
+
+**Timing:** Implemented as M6, prior to that milestone's commit.

@@ -6,13 +6,22 @@ import { EmptyState } from '../../../src/components/StatusStates';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
+import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step (M6+)
 // means adding one entry here, not restructuring how a step is reached
 // (M5 instructions §11, §14/M4's own note about this route's purpose).
-const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
+// Only employment_ref_1 is wired for M6, even though EmploymentReferenceScreen
+// itself is written generically (it derives its heading/step id from the
+// route param) — employment_ref_2/_3 stay honest placeholders until a future
+// milestone explicitly migrates them too, per the "no fake forms" instruction.
+// Exported (not just used locally) so the registry mapping itself is
+// directly unit-testable without a full screen render — see
+// __tests__/stepId.test.ts.
+export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   personal_info: PersonalInfoScreen,
+  employment_ref_1: EmploymentReferenceScreen,
 };
 
 export default function OnboardingStep() {

@@ -1,4 +1,4 @@
-# M4/M5 manual QA walkthrough
+# M4/M5/M6 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -67,6 +67,36 @@ Continue from step 8 above (signed in, My Onboarding visible, session active).
 12. **Test network failure/retry.** Turn off the device/simulator's network connection, edit a field, and tap Save Progress or Continue. Expected: a clear "can't reach Paramount Care" style message, your typed value is still there (nothing reverts), and the button never shows a false "saved" confirmation. Turn network back on and tap the same button again — expected: it now succeeds, with the exact same data you already typed (no need to retype anything).
 
 13. **Test stale-revision conflict behavior.** This requires two sessions of the same account (e.g., signed in on two devices/simulators, or one device plus a direct `PATCH` via curl/Postman using an old `revision` value) — save a change from "device B" first, then attempt to save a *different* change from "device A" using its now-stale revision. Expected on device A: a clear notice that newer data was found (not a raw error, not a silent overwrite); device A's own unsaved edit is still visible in the form; choosing "Keep my changes and retry" and tapping Save/Continue again succeeds (now using the correct revision); alternatively, choosing "Discard my changes and show the latest" replaces the form with device B's saved values.
+
+## M6 — Employment Reference form
+
+Continue from the end of the M5 section above (Personal Information already completed, back on the full step list or My Onboarding).
+
+1. **Sign in as a test applicant** (or continue an already-signed-in session from the M5 walkthrough).
+
+2. **Open My Onboarding**, tap through to the full step list, then tap **Employment Reference #1**. Expected: the real form appears (not the placeholder) — Employment Details, Leaving & Rehire Eligibility, and a permission consent statement. Note that **Employment Reference #2**, if visible in the list, still shows the "available in an upcoming mobile release" placeholder — only reference #1 is migrated in M6.
+
+3. **Enter partial data** — e.g. just Position Held and Employer Name — leaving required fields like Supervisor's Phone and the permission checkbox blank/unchecked. Use test data only (e.g. "St. Test Medical Center"), never a real employer or supervisor's real information.
+
+4. **Save progress.** Tap "Save Progress." Expected: no validation errors block this; a brief loading state on that button only; success returns you to the previous screen.
+
+5. **Leave and return.** Reopen Employment Reference #1. Expected: your step-3 values are still there; the step still shows as **not completed** in the step list.
+
+6. **Restart the app entirely** (kill the process, relaunch, sign back in if prompted). Reopen Employment Reference #1. Expected: your values are still there, round-tripped through the real server, not a local cache.
+
+7. **Trigger validation errors.** Tap "Were you eligible for rehire?" → **No**. Expected: a "Please explain" text field appears immediately; leaving it blank and attempting to Continue shows a clear error under it. Also try leaving the permission checkbox unchecked and tapping Continue — expected: a clear error under it ("You must grant permission before continuing"), the screen scrolls to show whichever invalid field is first, and the step is NOT marked complete.
+
+8. **Complete the required fields** (Position Held, Employment From/To, Employer Name/City/State, Supervisor's Name/Phone, Reason for Leaving, the rehire-eligibility question and — if you answered No — its explanation, and the permission checkbox). Tap **Continue**. Expected: no errors, a brief loading state, then you're returned to the previous screen.
+
+9. **Confirm dashboard progress changed.** Return to My Onboarding. Expected: the completion percentage increased again (now two steps' worth), and Employment Reference #1 shows as completed in the step list.
+
+10. **Confirm next action changed.** The dashboard's "Next step" callout now names whichever step follows Employment Reference #1 in the packet, not Employment Reference #1 itself.
+
+11. **Test network failure/retry.** Turn off connectivity, edit a field, tap Save Progress or Continue. Expected: a clear "can't reach Paramount Care" message, your typed value is still there, no false "saved" confirmation. Turn network back on and tap the same button again — expected: it now succeeds with the same data, no retyping needed.
+
+12. **Test stale-revision conflict behavior.** Using two sessions of the same account (two devices/simulators, or a direct `PATCH` with an old `revision`), save a change to Employment Reference #1 from "device B" first, then attempt a *different* change from "device A" using its now-stale revision. Expected on device A: a clear notice that newer data was found; device A's own unsaved edit is still visible; "Keep my changes and retry" succeeds on the next attempt; "Discard my changes and show the latest" replaces the form with device B's saved values.
+
+13. **Re-open Personal Information and confirm M5 still works** (regression check). From the step list, tap Personal Information. Expected: it still opens the real form (not a placeholder), your previously-completed values still load correctly, editing and re-saving still works, and it still shows as completed in the step list and on the dashboard — unaffected by Employment Reference being added.
 
 ## What "safe" documentation means here
 
