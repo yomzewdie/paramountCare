@@ -1,4 +1,4 @@
-# M4/M5/M6 manual QA walkthrough
+# M4/M5/M6/M7 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -97,6 +97,46 @@ Continue from the end of the M5 section above (Personal Information already comp
 12. **Test stale-revision conflict behavior.** Using two sessions of the same account (two devices/simulators, or a direct `PATCH` with an old `revision`), save a change to Employment Reference #1 from "device B" first, then attempt a *different* change from "device A" using its now-stale revision. Expected on device A: a clear notice that newer data was found; device A's own unsaved edit is still visible; "Keep my changes and retry" succeeds on the next attempt; "Discard my changes and show the latest" replaces the form with device B's saved values.
 
 13. **Re-open Personal Information and confirm M5 still works** (regression check). From the step list, tap Personal Information. Expected: it still opens the real form (not a placeholder), your previously-completed values still load correctly, editing and re-saving still works, and it still shows as completed in the step list and on the dashboard — unaffected by Employment Reference being added.
+
+## M7 — Employment Application, in real applicant order
+
+Continue from a signed-in state (steps 1–7 of the base walkthrough above, or continuing directly from the M5/M6 sections).
+
+1. **Sign in as a test applicant** (or continue an already-signed-in session).
+
+2. **Open My Onboarding.**
+
+3. **Confirm the packet order shown matches the real sequence.** Tap through to the full step list. Expected order: Personal Information, Employment Application, Applicant Statement, Employment Reference #1, Employment Reference #2, ... — Employment Application must appear **before** Employment Reference #1 in this list, even though Employment Reference #1 was built first (M6) and Employment Application was built later (M7). If Employment Reference #1 appeared before Employment Application in the list, that would indicate an ordering bug — it should not.
+
+4. **Open Personal Information** from the step list.
+
+5. **Confirm M5 still works.** Expected: the real form opens (not a placeholder), previously-saved values (if any) load correctly, editing and re-saving still works, and it still shows as completed (if it was) on both the step list and the dashboard.
+
+6. **Open Employment Application** — the newly implemented step. Expected: the real form appears (not the placeholder) with five sections — Position Applied For, Professional License & CPR, Clinical Experience, Eligibility & Background, Emergency Contact.
+
+7. **Enter partial data** — e.g. just Position Applied For, License Type, and License Number — leaving most required fields blank. Use test data only (e.g. "RN123456" for the license number), never a real license number or real background information.
+
+8. **Save progress.** Tap "Save Progress." Expected: no validation errors block this; success returns you to the previous screen.
+
+9. **Leave and return.** Reopen Employment Application. Expected: your step-7 values are still there; the step still shows as not completed.
+
+10. **Restart the app entirely** (kill the process, relaunch, sign back in if prompted). Reopen Employment Application. Expected: your values are still there, round-tripped through the real server.
+
+11. **Verify server-backed restoration was confirmed in step 10** (not a local cache) — if you have DB/log access, you can additionally confirm the session's `formData.employmentApplication` on the server matches what you typed.
+
+12. **Test conditional validation.** Answer "Yes" to "Have you ever been convicted of a felony...?" — expected: an "explain" text field appears immediately and is required to Continue. Now answer "No" instead — expected: the explanation field disappears and is no longer required. Repeat for the license-discipline and license-revocation questions. Also try leaving "Are you legally authorized to work in the United States?" unanswered, or answered "No," and attempt Continue — expected: a clear error, and (if answered "No") the additional explanatory copy about work authorization appears.
+
+13. **Complete the form.** Fill in every required field (see the field list in `mobile/README.md`'s M7 section) with test data, answering "No" to all background questions to avoid needing to type placeholder legal explanations. Tap **Continue**. Expected: no errors, then you're returned to the previous screen.
+
+14. **Verify dashboard progress/next action.** Return to My Onboarding. Expected: the completion percentage increased, Employment Application shows as completed in the step list, and "Next step" now names Applicant Statement (or whatever the next incomplete step actually is) — not Employment Application.
+
+15. **Test network failure.** Turn off connectivity, edit a field, tap Save Progress or Continue. Expected: a clear "can't reach Paramount Care" message, your typed value is still there, no false "saved" confirmation. Turn network back on and retry — expected: it now succeeds with the same data.
+
+16. **Test 409 conflict.** Using two sessions of the same account, save a change to Employment Application from "device B," then attempt a different change from "device A" using its now-stale revision. Expected on device A: a clear notice that newer data was found, device A's unsaved edit still visible, "Keep my changes and retry" succeeds afterward, "Discard my changes and show the latest" replaces the form with device B's values.
+
+17. **Signature/attestation:** not applicable to this step. Employment Application does not capture a signature anywhere in the real system (confirmed during M7 pre-flight — see `mobile/README.md`) — the actual attestation is the separate, not-yet-migrated Applicant Statement step. No signature behavior to test here.
+
+18. **Open Employment Reference #1 in its real packet position and verify M6 still works.** From the step list (now showing Employment Application before it, per step 3), tap Employment Reference #1. Expected: the real form still opens, previously-saved/completed values still load and display correctly, and it's unaffected by Employment Application being added ahead of it in the list.
 
 ## What "safe" documentation means here
 

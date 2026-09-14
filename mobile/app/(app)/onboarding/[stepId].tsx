@@ -6,21 +6,30 @@ import { EmptyState } from '../../../src/components/StatusStates';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
+import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
-// else — one small registry, so slotting in the next migrated step (M6+)
-// means adding one entry here, not restructuring how a step is reached
-// (M5 instructions §11, §14/M4's own note about this route's purpose).
-// Only employment_ref_1 is wired for M6, even though EmploymentReferenceScreen
-// itself is written generically (it derives its heading/step id from the
-// route param) — employment_ref_2/_3 stay honest placeholders until a future
-// milestone explicitly migrates them too, per the "no fake forms" instruction.
+// else — one small registry, so slotting in the next migrated step means
+// adding one entry here, not restructuring how a step is reached (M5
+// instructions §11, §14/M4's own note about this route's purpose). This
+// registry is keyed by step id only — the applicant-facing ORDER a step
+// appears in is entirely derived from packet.steps (see steps.ts /
+// onboarding/index.tsx), never from this map or from implementation
+// history, so employment_ref_1 (built in M6) correctly stays in its real
+// packet position even though its real predecessor, employment_application,
+// wasn't migrated until M7.
+// Only employment_ref_1 is wired for its step type, even though
+// EmploymentReferenceScreen itself is written generically (it derives its
+// heading/step id from the route param) — employment_ref_2/_3 stay honest
+// placeholders until a future milestone explicitly migrates them too, per
+// the "no fake forms" instruction.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
 export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   personal_info: PersonalInfoScreen,
+  employment_application: EmploymentApplicationScreen,
   employment_ref_1: EmploymentReferenceScreen,
 };
 
