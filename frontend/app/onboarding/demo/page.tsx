@@ -375,7 +375,7 @@ export default function OnboardingDemoPage() {
   // ── Derived ──────────────────────────────────────────────────────────────
 
   const stepCompletions  = useMemo(() => computeStepCompletion(formData), [formData]);
-  const overallPercent   = useMemo(() => computeOverallCompletion(formData), [formData]);
+  const overallPercent   = useMemo(() => computeOverallCompletion(PACKET, formData), [formData]);
   const currentCompletion = stepCompletions[currentStep];
   const currentStepLabel  = PACKET.steps[currentIndex]?.label ?? '';
 

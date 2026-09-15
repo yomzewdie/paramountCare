@@ -4,6 +4,7 @@ import PersonalInfoScreen from '../../../../src/features/onboarding/PersonalInfo
 import EmploymentApplicationScreen from '../../../../src/features/onboarding/EmploymentApplicationScreen';
 import AcknowledgementScreen from '../../../../src/features/onboarding/AcknowledgementScreen';
 import EmploymentReferenceScreen from '../../../../src/features/onboarding/EmploymentReferenceScreen';
+import W4Screen from '../../../../src/features/onboarding/W4Screen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -19,9 +20,14 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.employment_application).toBe(EmploymentApplicationScreen);
   });
 
-  it('maps application_statement AND background_auth to the same real AcknowledgementScreen', () => {
+  it('maps application_statement, background_auth, AND health_info_auth to the same real AcknowledgementScreen', () => {
     expect(REAL_STEP_SCREENS.application_statement).toBe(AcknowledgementScreen);
     expect(REAL_STEP_SCREENS.background_auth).toBe(AcknowledgementScreen);
+    expect(REAL_STEP_SCREENS.health_info_auth).toBe(AcknowledgementScreen);
+  });
+
+  it('maps w4 to the real W4Screen', () => {
+    expect(REAL_STEP_SCREENS.w4).toBe(W4Screen);
   });
 
   it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
@@ -31,9 +37,10 @@ describe('onboarding [stepId] real-screen registry', () => {
   });
 
   it('leaves genuinely unmigrated steps as honest placeholders', () => {
-    expect(REAL_STEP_SCREENS.health_info_auth).toBeUndefined();
-    expect(REAL_STEP_SCREENS.w4).toBeUndefined();
+    expect(REAL_STEP_SCREENS.patient_bill_of_rights).toBeUndefined();
+    expect(REAL_STEP_SCREENS.hep_b_declination).toBeUndefined();
     expect(REAL_STEP_SCREENS.i9).toBeUndefined();
+    expect(REAL_STEP_SCREENS.direct_deposit).toBeUndefined();
     expect(REAL_STEP_SCREENS.documents).toBeUndefined();
   });
 
@@ -63,6 +70,23 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(getPacket('travel_rn')!.steps.find((s) => s.id === 'employment_ref_3')?.required).toBe(false);
     for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn']) {
       expect(getPacket(packetId)!.steps.find((s) => s.id === 'employment_ref_3')).toBeUndefined();
+    }
+  });
+
+  it('confirms the real M11 branch: health_info_auth exists ONLY for general_rn/lvn, w4 is icu/er/travel\'s immediate next step after background_auth', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const ids = getPacket(packetId)!.steps.map((s) => s.id);
+      expect(ids).toContain('health_info_auth');
+      expect(ids.indexOf('background_auth')).toBeLessThan(ids.indexOf('health_info_auth'));
+    }
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      expect(packet.steps.find((s) => s.id === 'health_info_auth')).toBeUndefined();
+      const backgroundIdx = packet.steps.findIndex((s) => s.id === 'background_auth');
+      const w4Idx = packet.steps.findIndex((s) => s.id === 'w4');
+      // w4 is the very next step after background_auth for these packets —
+      // no other required step sits between them.
+      expect(w4Idx).toBe(backgroundIdx + 1);
     }
   });
 });

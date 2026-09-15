@@ -1,4 +1,5 @@
 import type { OnboardingFormData, AcknowledgementEntry } from './onboarding';
+import type { OnboardingPacket } from './packets';
 
 export interface StepCompletion {
   step: string;   // packet step ID
@@ -176,27 +177,34 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
   };
 }
 
-export function computeOverallCompletion(data: OnboardingFormData): number {
+/**
+ * Overall completion percentage, driven entirely by the applicant's ACTUAL
+ * packet — never a hardcoded step-id list (M10 added two steps to such a
+ * list by hand; M11 replaces the list itself, since a fixed array can
+ * never correctly represent packets that only partially overlap, like
+ * General RN/LVN's `health_info_auth` vs. ICU/ER/Travel's `w4` branch).
+ *
+ * A step counts toward the denominator when it is:
+ *  1. actually present in this packet (`packet.steps`) — a step absent
+ *     from the applicant's packet can never count, positively or
+ *     negatively;
+ *  2. `required` — an optional step (e.g. Travel RN's `employment_ref_3`)
+ *     never lowers the percentage by being incomplete, and completing it
+ *     is never necessary to reach 100%;
+ *  3. not `type: 'review'` — a review/submit gate isn't itself
+ *     "content" the applicant fills in, so it doesn't participate;
+ *  4. present in `computeStepCompletion()`'s output — a step type with no
+ *     defined completion calculation (today: `exam`, e.g. the optional
+ *     `safety_exam`) is excluded by construction rather than guessed at,
+ *     since counting it either way without a real algorithm would be
+ *     inventing a rule the shared domain model doesn't actually define.
+ */
+export function computeOverallCompletion(packet: OnboardingPacket, data: OnboardingFormData): number {
   const completions = computeStepCompletion(data);
-  // Every step here is both universal (present in every packet type) and
-  // required — matching the existing pattern this list already followed
-  // for personal_info/employment_application/w4/i9/employment_ref_1/2/
-  // safety_acknowledgements/documents. application_statement and
-  // background_auth are also universal+required (packets.ts) but were
-  // previously missing from this list, so completing either real,
-  // required, signed step moved this percentage not at all — a stale-list
-  // oversight, not an intentional exclusion (M10). Packet-SPECIFIC required
-  // steps (health_info_auth, patient_bill_of_rights, the vaccine
-  // declinations, direct_deposit, jcaho_review — general_rn/lvn only) and
-  // optional steps (employment_ref_3) are deliberately still excluded:
-  // making this genuinely packet-aware is a larger redesign than this
-  // targeted fix, out of scope here.
-  const contentSteps = [
-    'personal_info', 'employment_application', 'application_statement', 'w4', 'i9',
-    'employment_ref_1', 'employment_ref_2', 'background_auth',
-    'safety_acknowledgements', 'documents',
-  ];
-  const total     = contentSteps.reduce((sum, s) => sum + (completions[s]?.total     ?? 0), 0);
-  const completed = contentSteps.reduce((sum, s) => sum + (completions[s]?.completed ?? 0), 0);
+  const contentSteps = packet.steps.filter(
+    (s) => s.required && s.type !== 'review' && completions[s.id] !== undefined,
+  );
+  const total     = contentSteps.reduce((sum, s) => sum + completions[s.id].total, 0);
+  const completed = contentSteps.reduce((sum, s) => sum + completions[s.id].completed, 0);
   return pct(completed, total);
 }

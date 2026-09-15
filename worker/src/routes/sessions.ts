@@ -49,7 +49,7 @@ function serializeSession(row: OnboardingSessionRow) {
   try { formData = JSON.parse(row.form_data_json || '{}'); } catch { /* leave {} */ }
 
   const packet = getPacket(row.packet_id);
-  const completionPercent = packet ? computeOverallCompletion(withDefaults(formData)) : null;
+  const completionPercent = packet ? computeOverallCompletion(packet, withDefaults(formData)) : null;
 
   return {
     sessionId: row.session_id,

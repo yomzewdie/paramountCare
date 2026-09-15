@@ -1,4 +1,4 @@
-# M4/M5/M6/M7/M8/M9/M10 manual QA walkthrough
+# M4/M5/M6/M7/M8/M9/M10/M11 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -259,6 +259,68 @@ Continue from a signed-in state.
 9. **Confirm overall packet completion is reachable without ever completing Reference #3** — once every required step (through Background Authorization and beyond, as steps become available) is done, the dashboard should show 100%/complete despite Reference #3 remaining open. (If later required steps aren't implemented yet, confirm at minimum that Reference #3 being incomplete never blocks Background Authorization's own completion or the step list's overall behavior.)
 
 10. **Optionally, go back and complete Reference #3** — confirm it can still be completed normally at any time, it just was never presented as mandatory.
+
+## M11 — First true packet branch (Health Info Auth vs. W-4)
+
+### Path A — General RN / LVN (Health Information Authorization)
+
+1. **Sign in as a test applicant on a General RN or LVN packet.**
+
+2. **Complete through Background Authorization** (see M10 section above), then return to My Onboarding.
+
+3. **Confirm "Next step" now names Health Information Authorization.**
+
+4. **Open Health Information Authorization.** Expected: the real form appears with the full HIPAA-related authorization text in a scrollable box, an acknowledgement checkbox, and an Electronic Signature field — visually identical in structure to Application Statement/Background Authorization (same screen).
+
+5. **Attempt completion without signing** — expected: clear errors on both the checkbox and signature field.
+
+6. **Check the box and type a test signature** (e.g. "Test Applicant") — expected: a "Signed as: ..." confirmation appears.
+
+7. **Save progress**, leave, reopen — expected: values restore correctly.
+
+8. **Restart the app entirely.** Reopen the step — expected: signed/checked state restores correctly, server-backed.
+
+9. **Complete the step.** Expected: no errors, returns to the previous screen.
+
+10. **Confirm dashboard progress increased** and the step shows completed.
+
+11. **Confirm "Next step" now names whatever follows** in the General RN/LVN sequence (Patient Bill of Rights).
+
+12. **Test network failure/retry and stale-revision conflict** — same expected behavior as prior acknowledgement steps.
+
+### Path B — ICU RN / ER RN / Travel RN (IRS Form W-4)
+
+1. **Sign in as a test applicant on an ICU RN, ER RN, or Travel RN packet.**
+
+2. **Complete through Background Authorization**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names Tax Forms / W-4** (not Health Information Authorization — that step doesn't exist for this packet type).
+
+4. **Open the W-4 form.** Expected: Step 1 (Personal Information) shows your name/address **already prefilled** from Personal Information — confirm the values match what you entered there. Do not enter a real SSN or real tax information — use test data only (e.g. "000-00-0000" is fine for a UI test, never a real number).
+
+5. **Confirm SSN masking.** After typing a test SSN and moving to another field, confirm the field displays as `***-**-XXXX` (last 4 digits only) with a "Show" toggle; tapping "Show" reveals the full value, tapping again (or "Hide") re-masks it.
+
+6. **Test Step 3's auto-calculation.** Enter "2" in a way that produces $4,000 in the qualifying-children field and $500 in other dependents — confirm the "Add the amounts above" field automatically shows $4,500 without you typing it directly.
+
+7. **Attempt completion without required fields** (clear the signature, leave filing status unselected) — expected: clear errors on SSN, filing status, and signature; nothing saved.
+
+8. **Select a filing status, then type a test signature** — expected: the Date field automatically fills in with today's date; a legal disclosure sentence about electronic signatures appears beneath it.
+
+9. **Save progress**, leave, reopen — expected: all entered values restore correctly, SSN still shown masked by default.
+
+10. **Restart the app entirely.** Reopen the W-4 — expected: values restore correctly, server-backed (not a local cache).
+
+11. **Complete the W-4.** Expected: no errors, returns to the previous screen.
+
+12. **Confirm dashboard progress increased** and the step shows completed.
+
+13. **Confirm "Next step" now names Form I-9** (the step after W-4 for this packet type).
+
+14. **Test network failure/retry.** Turn off connectivity, edit a field, attempt to save — expected: a clear error message, your typed value (including the SSN) is preserved in memory, no false "saved" confirmation.
+
+15. **Test stale-revision conflict.** Same conservative Keep/Discard flow as every other step — confirm the SSN/tax values are never silently auto-merged.
+
+No real SSN, real tax information, or real health information anywhere in this testing — use obviously-fake, synthetic placeholder values throughout (e.g. "000-00-0000", "Test Applicant"). **This applies to UAT as well as local testing: use synthetic SSNs only until Paramount's production sensitive-data/security review (field-level encryption, key management, access, and audit requirements — see ADR-023 §4) is complete.**
 
 ## What "safe" documentation means here
 

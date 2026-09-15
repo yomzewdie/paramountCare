@@ -9,6 +9,7 @@ import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScr
 import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
 import AcknowledgementScreen from '../../../src/features/onboarding/AcknowledgementScreen';
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
+import W4Screen from '../../../src/features/onboarding/W4Screen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -28,10 +29,21 @@ import EmploymentReferenceScreen from '../../../src/features/onboarding/Employme
 // applicant's primary "next required action" (see steps.ts's
 // resolveNextRequiredStep(), M10 / ADR-022); it just means the applicant
 // can open and complete it if they choose to.
-// application_statement AND background_auth share AcknowledgementScreen —
-// generalized in M10 from M8's step-specific ApplicationStatementScreen
-// once a second real example (Background Authorization) proved they were
-// genuinely identical except stepId/heading/legal text. See ADR-022.
+// application_statement, background_auth, AND health_info_auth share
+// AcknowledgementScreen — generalized in M10 from M8's step-specific
+// ApplicationStatementScreen once a second real example (Background
+// Authorization) proved they were genuinely identical except
+// stepId/heading/legal text; health_info_auth (M11) was independently
+// re-confirmed against source to share the exact same model before being
+// added here (ADR-022's own instruction: every new acknowledgement step
+// needs its own confirmation, not an assumption from the name). See
+// ADR-023 for M11's findings.
+// w4 (M11) is General RN/LVN's and ICU/ER/Travel's first genuinely
+// branch-diverging next step — health_info_auth exists only in
+// general_rn/lvn, w4 is reached directly after background_auth for
+// icu_rn/er_rn/travel_rn. Both entries below are correct simultaneously;
+// which one an applicant actually reaches is entirely determined by their
+// own packet (packets.ts), never by a mobile-side role check.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -43,6 +55,8 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   employment_ref_2: EmploymentReferenceScreen,
   employment_ref_3: EmploymentReferenceScreen,
   background_auth: AcknowledgementScreen,
+  health_info_auth: AcknowledgementScreen,
+  w4: W4Screen,
 };
 
 export default function OnboardingStep() {
