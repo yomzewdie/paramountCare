@@ -97,7 +97,33 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         ]
       : [],
   },
-  plugins: ['expo-router', 'expo-secure-store'],
+  plugins: [
+    'expo-router',
+    'expo-secure-store',
+    [
+      'expo-image-picker',
+      {
+        // M13: fallback "choose an existing photo" path for document
+        // attachments (voided check today; nursing license / CPR card /
+        // other onboarding documents later) — the primary capture path is
+        // the native document scanner below.
+        photosPermission: 'Paramount Care needs access to your photos so you can attach a document from your library.',
+        cameraPermission: 'Paramount Care needs access to your camera so you can scan a document.',
+      },
+    ],
+    [
+      // M13 hardening: the primary document-capture path. Wraps Apple
+      // VisionKit (iOS) / Google ML Kit Document Scanner (Android) —
+      // first-party, on-device scanning UIs with their own live edge
+      // detection, auto-capture, crop, and perspective correction, rather
+      // than a hand-built camera-overlay/CV pipeline (see ADR-026). Not
+      // available in Expo Go — requires a custom dev client / EAS build,
+      // matching the posture react-native-signature-canvas (M12) already
+      // established for this app.
+      'react-native-document-scanner-plugin',
+      { cameraPermission: 'Paramount Care needs access to your camera so you can scan a document.' },
+    ],
+  ],
   experiments: {
     typedRoutes: true,
   },

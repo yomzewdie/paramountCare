@@ -224,6 +224,63 @@ export const defaultW4Data: W4Data = {
   signedDate: '',
 };
 
+// ── Direct Deposit Authorization ────────────────────────────────────────────
+// Source: Paramount Care Staffing "Business Payroll Services — Direct
+// Deposit Authorization" form (Wells Fargo BPS-OP-CDDA-041709 template),
+// page 17 of the Paramount onboarding/DocuSign packet. Every field below
+// exists on that form; the routing-number format is the ONLY validation
+// rule the source states (9 digits, must begin with 0, 1, 2, or 3 — no ABA
+// checksum). A second bank account ("4. Additional Bank Information") is
+// explicitly supported by the source form as an optional split deposit.
+export type BankAccountType = 'checking' | 'savings' | '';
+export type DepositAllocationType = 'percentage' | 'dollar' | '';
+
+export interface DirectDepositBankAccount {
+  bankName: string;
+  accountType: BankAccountType;
+  routingNumber: string;         // 9 digits, must begin with 0/1/2/3
+  accountNumber: string;
+  depositType: DepositAllocationType;
+  depositAmount: string;         // percentage (e.g. "100") or dollar amount, depending on depositType
+}
+
+export const defaultDirectDepositBankAccount: DirectDepositBankAccount = {
+  bankName: '',
+  accountType: '',
+  routingNumber: '',
+  accountNumber: '',
+  depositType: '',
+  depositAmount: '',
+};
+
+export interface DirectDepositData {
+  // "2. Employee Information" — prefillable from Personal Info
+  lastName: string;
+  firstName: string;
+  middleInitial: string;
+  employeeId: string;            // Employee Identification Number — employer/HR-assigned, optional
+
+  // "3. Bank Information" — primary account, required
+  primaryAccount: DirectDepositBankAccount;
+  // "4. Additional Bank Information" — second account, optional split deposit
+  additionalAccount: DirectDepositBankAccount;
+
+  // "5. Authorization Agreement For Direct Deposit"
+  typedSignature: string;
+  signedDate: string;
+}
+
+export const defaultDirectDepositData: DirectDepositData = {
+  lastName: '',
+  firstName: '',
+  middleInitial: '',
+  employeeId: '',
+  primaryAccount: { ...defaultDirectDepositBankAccount },
+  additionalAccount: { ...defaultDirectDepositBankAccount },
+  typedSignature: '',
+  signedDate: '',
+};
+
 // ── Signature ─────────────────────────────────────────────────────────────────
 export interface SignatureData {
   signatureDataUrl: string | null;
@@ -255,6 +312,9 @@ export interface OnboardingFormData {
   acknowledgements: Record<string, AcknowledgementEntry>;
   /** Vaccination proof uploads — keyed by vaccine step ID (e.g. 'hep_b_declination'). */
   vaccineProofDocuments: Record<string, UploadedFile | null>;
+  directDepositData: DirectDepositData;
+  /** Voided-check proof required by the Direct Deposit Authorization source form. */
+  directDepositProofDocument: UploadedFile | null;
 }
 
 // ── Step identifier ───────────────────────────────────────────────────────────
@@ -363,4 +423,6 @@ export const defaultFormData: OnboardingFormData = {
   },
   acknowledgements: {},
   vaccineProofDocuments: {},
+  directDepositData: defaultDirectDepositData,
+  directDepositProofDocument: null,
 };

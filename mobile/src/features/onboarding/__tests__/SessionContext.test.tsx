@@ -14,10 +14,14 @@ jest.mock('../ensureSession', () => ({
 jest.mock('../sessionApi', () => ({
   ...jest.requireActual('../sessionApi'),
   updateSession: jest.fn(),
+  associateDocument: jest.fn(),
+  removeDocument: jest.fn(),
 }));
 
 const mockEnsure = jest.fn();
 const mockedUpdateSession = sessionApi.updateSession as jest.Mock;
+const mockedAssociateDocument = sessionApi.associateDocument as jest.Mock;
+const mockedRemoveDocument = sessionApi.removeDocument as jest.Mock;
 
 function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
@@ -173,6 +177,101 @@ describe('SessionContext', () => {
 
       expect(outcome).toEqual({ status: 'error', error: appError('server_error') });
       expect(result.current.session).toEqual(initial); // unchanged
+    });
+  });
+
+  describe('associateDocument (M13 hardening)', () => {
+    it('sends the current revision to the ownership-verified document endpoint and updates context on success', async () => {
+      const initial = fakeSession({ revision: 3, formData: {} });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const updated = fakeSession({ revision: 4, formData: { directDepositProofDocument: { name: 'check.jpg', size: 100, type: 'image/jpeg', objectKey: 'uploads/1/x.jpg', uploadedAt: '2026-01-01T00:00:00.000Z' } } });
+      mockedAssociateDocument.mockResolvedValue({ ok: true, data: updated });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.associateDocument>> | undefined;
+      await act(async () => {
+        outcome = await result.current.associateDocument('direct_deposit_voided_check', 'uploads/1/x.jpg');
+      });
+
+      expect(outcome).toEqual({ status: 'saved', session: updated });
+      expect(result.current.session).toEqual(updated);
+      expect(mockedAssociateDocument).toHaveBeenCalledWith('sess-1', 'direct_deposit_voided_check', { objectKey: 'uploads/1/x.jpg', revision: 3 });
+    });
+
+    it('on a 409 conflict, updates the context session and reports the conflict distinctly', async () => {
+      const initial = fakeSession({ revision: 3 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const fresh = fakeSession({ revision: 9 });
+      mockedAssociateDocument.mockResolvedValue({ ok: false, conflict: true, current: fresh });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.associateDocument>> | undefined;
+      await act(async () => {
+        outcome = await result.current.associateDocument('direct_deposit_voided_check', 'uploads/1/x.jpg');
+      });
+
+      expect(outcome).toEqual({ status: 'conflict', latestSession: fresh });
+      expect(result.current.session).toEqual(fresh);
+    });
+
+    it('on a generic error, leaves the context session untouched', async () => {
+      const initial = fakeSession({ revision: 3 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedAssociateDocument.mockResolvedValue({ ok: false, conflict: false, error: appError('server_error') });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.associateDocument>> | undefined;
+      await act(async () => {
+        outcome = await result.current.associateDocument('direct_deposit_voided_check', 'uploads/1/x.jpg');
+      });
+
+      expect(outcome).toEqual({ status: 'error', error: appError('server_error') });
+      expect(result.current.session).toEqual(initial);
+    });
+  });
+
+  describe('removeDocument (M13 hardening)', () => {
+    it('sends the current revision and updates context on success', async () => {
+      const initial = fakeSession({ revision: 5, formData: { directDepositProofDocument: { name: 'check.jpg', size: 1, type: 'image/jpeg' } } });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const updated = fakeSession({ revision: 6, formData: { directDepositProofDocument: null } });
+      mockedRemoveDocument.mockResolvedValue({ ok: true, data: updated });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.removeDocument>> | undefined;
+      await act(async () => {
+        outcome = await result.current.removeDocument('direct_deposit_voided_check');
+      });
+
+      expect(outcome).toEqual({ status: 'saved', session: updated });
+      expect(result.current.session).toEqual(updated);
+      expect(mockedRemoveDocument).toHaveBeenCalledWith('sess-1', 'direct_deposit_voided_check', { revision: 5 });
+    });
+
+    it('on a 409 conflict, updates the context session and reports the conflict distinctly', async () => {
+      const initial = fakeSession({ revision: 5 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const fresh = fakeSession({ revision: 11 });
+      mockedRemoveDocument.mockResolvedValue({ ok: false, conflict: true, current: fresh });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.removeDocument>> | undefined;
+      await act(async () => {
+        outcome = await result.current.removeDocument('direct_deposit_voided_check');
+      });
+
+      expect(outcome).toEqual({ status: 'conflict', latestSession: fresh });
+      expect(result.current.session).toEqual(fresh);
     });
   });
 });

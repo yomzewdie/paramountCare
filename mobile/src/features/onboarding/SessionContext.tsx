@@ -3,7 +3,7 @@ import { DEFAULT_PACKET_ID } from '@pcs/shared';
 import { createSessionEnsurer, type SessionEnsurer } from './ensureSession';
 import { deriveProgress, type OnboardingProgress } from './steps';
 import { buildStepPatch, type StepPatchInput } from './stepPatch';
-import { updateSession, type SessionResponse } from './sessionApi';
+import { updateSession, associateDocument, removeDocument, type SessionResponse } from './sessionApi';
 import { appError, type AppError } from '../../utils/errors';
 
 export type SessionStatus = 'loading' | 'ready' | 'error';
@@ -35,6 +35,19 @@ interface SessionContextValue {
    * local state) — the caller decides how to reconcile (M5 instructions §7).
    */
   saveStep: (input: Omit<StepPatchInput, 'session'>) => Promise<SaveStepResult>;
+  /**
+   * M13 hardening: associates an already-uploaded, server-owned object with
+   * a named document slot on the current session (e.g. Direct Deposit's
+   * voided check) — goes through the ownership-verified
+   * `POST /api/sessions/:id/documents/:docType` route rather than the
+   * generic PATCH `saveStep` uses, since the Worker needs to check the
+   * objectKey was actually uploaded by this applicant before writing
+   * anything. Same revision-protected/conflict contract as saveStep.
+   */
+  associateDocument: (docType: string, objectKey: string) => Promise<SaveStepResult>;
+  /** The counterpart to associateDocument — clears a document slot and
+   * deletes the underlying R2 object server-side. */
+  removeDocument: (docType: string) => Promise<SaveStepResult>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -103,18 +116,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sessionRef.current = session;
   }, [session]);
 
-  const saveStep = useCallback(async (input: Omit<StepPatchInput, 'session'>): Promise<SaveStepResult> => {
-    const current = sessionRef.current;
-    if (!current) {
-      // Should not happen — screens that can call saveStep only render once
-      // status === 'ready', which guarantees a session exists — but fail
-      // honestly rather than silently no-op if it ever does.
-      return { status: 'error', error: appError('unknown') };
-    }
-
-    const payload = buildStepPatch({ ...input, session: current });
-    const result = await updateSession(current.sessionId, payload);
-
+  // Shared by saveStep/associateDocument/removeDocument below — all three
+  // hit a revision-protected Worker endpoint with the exact same
+  // ok/conflict/error response shape, so there is exactly one place that
+  // decides how to fold that into context state and this hook's own
+  // SaveStepResult union.
+  function applyUpdateResult(result: Awaited<ReturnType<typeof updateSession>>): SaveStepResult {
     if (result.ok) {
       setSession(result.data);
       return { status: 'saved', session: result.data };
@@ -127,6 +134,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return { status: 'conflict', latestSession: result.current };
     }
     return { status: 'error', error: result.error };
+  }
+
+  const saveStep = useCallback(async (input: Omit<StepPatchInput, 'session'>): Promise<SaveStepResult> => {
+    const current = sessionRef.current;
+    if (!current) {
+      // Should not happen — screens that can call saveStep only render once
+      // status === 'ready', which guarantees a session exists — but fail
+      // honestly rather than silently no-op if it ever does.
+      return { status: 'error', error: appError('unknown') };
+    }
+
+    const payload = buildStepPatch({ ...input, session: current });
+    const result = await updateSession(current.sessionId, payload);
+    return applyUpdateResult(result);
+  }, []);
+
+  const associateDocumentFn = useCallback(async (docType: string, objectKey: string): Promise<SaveStepResult> => {
+    const current = sessionRef.current;
+    if (!current) return { status: 'error', error: appError('unknown') };
+    const result = await associateDocument(current.sessionId, docType, { objectKey, revision: current.revision });
+    return applyUpdateResult(result);
+  }, []);
+
+  const removeDocumentFn = useCallback(async (docType: string): Promise<SaveStepResult> => {
+    const current = sessionRef.current;
+    if (!current) return { status: 'error', error: appError('unknown') };
+    const result = await removeDocument(current.sessionId, docType, { revision: current.revision });
+    return applyUpdateResult(result);
   }, []);
 
   const progress = useMemo<OnboardingProgress | null>(
@@ -135,8 +170,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<SessionContextValue>(
-    () => ({ status, session, progress, error, refresh: load, saveStep }),
-    [status, session, progress, error, load, saveStep],
+    () => ({ status, session, progress, error, refresh: load, saveStep, associateDocument: associateDocumentFn, removeDocument: removeDocumentFn }),
+    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

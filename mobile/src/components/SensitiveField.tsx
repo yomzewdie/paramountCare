@@ -12,7 +12,16 @@ import { useTheme } from '../theme/ThemeProvider';
  * one invented for mobile. No icon library exists anywhere else in this
  * app (every status glyph is plain text — see StepRow), so the reveal
  * toggle is a plain "Show"/"Hide" text button, not a new icon dependency.
+ *
+ * M13: generalized with a `variant` prop so Direct Deposit's routing/
+ * account numbers reuse this same masking component rather than a second
+ * one being built — 'ssn' (the default) is byte-for-byte the original
+ * W-4/I-9 behavior, unchanged; 'numeric' drops the dash grouping (routing
+ * and account numbers aren't dash-formatted) and masks every digit but the
+ * last 4 with plain bullets, capped at `maxLength` digits.
  */
+
+type SensitiveFieldVariant = 'ssn' | 'numeric';
 
 function formatSSN(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 9);
@@ -27,6 +36,17 @@ function maskSSN(formatted: string): string {
   return `***-**-${digits.slice(-4)}`;
 }
 
+function formatNumeric(raw: string, maxLength: number): string {
+  return raw.replace(/\D/g, '').slice(0, maxLength);
+}
+
+function maskNumeric(digits: string): string {
+  if (digits.length <= 4) return '•'.repeat(digits.length);
+  return `${'•'.repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
+const DEFAULT_NUMERIC_MAX_LENGTH = 17; // generous upper bound for a US bank account number
+
 interface SensitiveFieldProps {
   label: string;
   value: string;
@@ -34,15 +54,26 @@ interface SensitiveFieldProps {
   required?: boolean;
   error?: string;
   hint?: string;
+  variant?: SensitiveFieldVariant;
+  /** 'numeric' variant only — 'ssn' is always capped at 9 digits. */
+  maxLength?: number;
+  placeholder?: string;
 }
 
-export function SensitiveField({ label, value, onChangeText, required, error, hint }: SensitiveFieldProps) {
+export function SensitiveField({
+  label, value, onChangeText, required, error, hint,
+  variant = 'ssn', maxLength, placeholder,
+}: SensitiveFieldProps) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
+  const format = (raw: string) =>
+    variant === 'ssn' ? formatSSN(raw) : formatNumeric(raw, maxLength ?? DEFAULT_NUMERIC_MAX_LENGTH);
+  const mask = (formatted: string) => (variant === 'ssn' ? maskSSN(formatted) : maskNumeric(formatted.replace(/\D/g, '')));
+
   const showRaw = focused || revealed;
-  const displayValue = showRaw ? value : (value ? maskSSN(value) : '');
+  const displayValue = showRaw ? value : (value ? mask(value) : '');
 
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
@@ -53,13 +84,13 @@ export function SensitiveField({ label, value, onChangeText, required, error, hi
       <View style={{ position: 'relative', justifyContent: 'center' }}>
         <TextInput
           value={displayValue}
-          onChangeText={(t) => onChangeText(formatSSN(t))}
+          onChangeText={(t) => onChangeText(format(t))}
           onFocus={() => { setFocused(true); setRevealed(false); }}
           onBlur={() => setFocused(false)}
           keyboardType="number-pad"
           autoComplete="off"
           textContentType="none"
-          placeholder="XXX-XX-XXXX"
+          placeholder={placeholder ?? (variant === 'ssn' ? 'XXX-XX-XXXX' : undefined)}
           placeholderTextColor={theme.colors.textMuted}
           accessibilityLabel={required ? `${label}, required` : label}
           style={[

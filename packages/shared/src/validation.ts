@@ -8,9 +8,12 @@ import type {
   EmploymentReference,
   SafetyEducationData,
   UploadedDocuments,
+  UploadedFile,
   SignatureData,
   AcknowledgementEntry,
   OnboardingFormData,
+  DirectDepositData,
+  DirectDepositBankAccount,
 } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
 
@@ -236,6 +239,87 @@ export function validateW4(data: W4Data): FieldErrors {
   return errors;
 }
 
+// ── Direct Deposit ────────────────────────────────────────────────────────────
+//
+// Source: Paramount "Business Payroll Services — Direct Deposit
+// Authorization" form (see onboarding.ts's DirectDepositData doc comment).
+// The routing-number regex is the ONLY explicit validation rule the source
+// states (9 digits, must begin with 0/1/2/3) — no ABA checksum is invented.
+// The primary account and a signed authorization are required; the second
+// ("Additional Bank Information") account is optional, but if the applicant
+// has started filling it in, it must be completed like the primary one
+// rather than left half-entered. The voided-check proof is required by the
+// source form's own text ("Attach a voided check with this agreement").
+
+const routingNumberRegex = /^[0-3]\d{8}$/;
+
+function isBankAccountStarted(account: DirectDepositBankAccount): boolean {
+  return !!(
+    account.bankName.trim() ||
+    account.accountType ||
+    account.routingNumber.trim() ||
+    account.accountNumber.trim() ||
+    account.depositType ||
+    account.depositAmount.trim()
+  );
+}
+
+function validateBankAccount(account: DirectDepositBankAccount, prefix: 'primary' | 'additional'): FieldErrors {
+  const errors: FieldErrors = {};
+  if (!account.bankName.trim()) errors[`${prefix}BankName`] = 'Bank name is required';
+  if (!account.accountType) errors[`${prefix}AccountType`] = 'Please select an account type';
+
+  if (!account.routingNumber.trim()) {
+    errors[`${prefix}RoutingNumber`] = 'Routing/transit number is required';
+  } else if (!routingNumberRegex.test(account.routingNumber.trim())) {
+    errors[`${prefix}RoutingNumber`] = 'Routing number must be 9 digits and begin with 0, 1, 2, or 3';
+  }
+
+  if (!account.accountNumber.trim()) errors[`${prefix}AccountNumber`] = 'Account number is required';
+
+  if (!account.depositType) {
+    errors[`${prefix}DepositType`] = 'Please select percentage or dollar amount';
+  } else if (!account.depositAmount.trim()) {
+    errors[`${prefix}DepositAmount`] = account.depositType === 'percentage'
+      ? 'Please specify a percentage'
+      : 'Please specify a dollar amount';
+  } else {
+    const value = Number(account.depositAmount);
+    if (Number.isNaN(value) || value <= 0) {
+      errors[`${prefix}DepositAmount`] = 'Enter a valid amount greater than zero';
+    } else if (account.depositType === 'percentage' && value > 100) {
+      errors[`${prefix}DepositAmount`] = 'Percentage cannot exceed 100';
+    }
+  }
+
+  return errors;
+}
+
+export function validateDirectDeposit(
+  data: DirectDepositData,
+  proofDocument: UploadedFile | null,
+): FieldErrors {
+  const errors: FieldErrors = {};
+
+  if (!data.lastName.trim()) errors.lastName = 'Last name is required';
+  if (!data.firstName.trim()) errors.firstName = 'First name is required';
+
+  Object.assign(errors, validateBankAccount(data.primaryAccount, 'primary'));
+
+  if (isBankAccountStarted(data.additionalAccount)) {
+    Object.assign(errors, validateBankAccount(data.additionalAccount, 'additional'));
+  }
+
+  if (!data.typedSignature.trim()) errors.typedSignature = 'Your signature is required to authorize direct deposit';
+  if (!data.signedDate.trim()) errors.signedDate = 'Date is required';
+
+  if (!proofDocument) {
+    errors.directDepositProofDocument = 'A voided check must be attached to complete direct deposit authorization';
+  }
+
+  return errors;
+}
+
 // ── Vaccine Declination ───────────────────────────────────────────────────────
 
 export function validateVaccineDeclination(
@@ -306,6 +390,9 @@ export function validateStep(
       case 'internal_form':
         if (step.subtype === 'employment_application') {
           return validateEmploymentApplication(data.employmentApplication);
+        }
+        if (step.subtype === 'direct_deposit') {
+          return validateDirectDeposit(data.directDepositData, data.directDepositProofDocument);
         }
         return validateAcknowledgement(
           data.acknowledgements[step.id],

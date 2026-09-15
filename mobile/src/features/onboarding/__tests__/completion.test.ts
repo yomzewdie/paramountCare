@@ -51,12 +51,25 @@ const FULLY_COMPLETE_FORM_DATA: OnboardingFormData = {
     background_auth: SIGNED_ACK,
     health_info_auth: SIGNED_ACK,
     patient_bill_of_rights: SIGNED_ACK,
-    direct_deposit: SIGNED_ACK,
     jcaho_review: SIGNED_ACK,
     hep_b_declination: { checked: false, typedSignature: '', signedAt: '', decision: 'providing_proof' },
     tdap_declination: { checked: false, typedSignature: '', signedAt: '', decision: 'providing_proof' },
     flu_declination: { checked: false, typedSignature: '', signedAt: '', decision: 'providing_proof' },
   },
+  // M13: direct_deposit has its own dedicated completion model (a bank
+  // account + signature + voided-check proof) — no longer a generic
+  // acknowledgement entry. See packages/shared/src/completion.ts.
+  directDepositData: {
+    ...defaultFormData.directDepositData,
+    lastName: 'Doe', firstName: 'Jane',
+    primaryAccount: {
+      bankName: 'Test Bank', accountType: 'checking',
+      routingNumber: '011000015', accountNumber: '1234567890',
+      depositType: 'percentage', depositAmount: '100',
+    },
+    typedSignature: 'Jane Doe', signedDate: '01/01/2026',
+  },
+  directDepositProofDocument: VALID_UPLOAD,
 };
 
 describe('computeOverallCompletion — fully packet-aware (M11)', () => {

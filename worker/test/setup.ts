@@ -200,4 +200,29 @@ beforeAll(async () => {
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `).run();
+
+  // ── M13 hardening: uploaded-document ownership ledger ─────────────────────
+  // Mirrors migrations/0006_uploaded_documents_ownership.sql.
+
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS uploaded_documents (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      object_key   TEXT UNIQUE NOT NULL,
+      user_id      INTEGER NOT NULL REFERENCES users(id),
+      session_id   TEXT REFERENCES onboarding_sessions(session_id),
+      doc_type     TEXT,
+      file_name    TEXT NOT NULL,
+      file_size    INTEGER NOT NULL,
+      content_type TEXT NOT NULL,
+      uploaded_at  TEXT NOT NULL,
+      deleted_at   TEXT
+    )
+  `).run();
+
+  await db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_uploaded_documents_user ON uploaded_documents(user_id)`,
+  ).run();
+  await db.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_uploaded_documents_session_doctype ON uploaded_documents(session_id, doc_type)`,
+  ).run();
 });

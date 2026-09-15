@@ -11,6 +11,8 @@ import AcknowledgementScreen from '../../../src/features/onboarding/Acknowledgem
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 import W4Screen from '../../../src/features/onboarding/W4Screen';
 import I9Screen from '../../../src/features/onboarding/I9Screen';
+import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDeclinationScreen';
+import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -51,6 +53,18 @@ import I9Screen from '../../../src/features/onboarding/I9Screen';
 // Section 2 (employer/document verification) is Paramount staff's
 // responsibility and is deliberately not represented anywhere in this
 // app. See ADR-024.
+// hep_b_declination (M13) is General RN/LVN's next step after i9 — the
+// first required vaccine declination step. VaccineDeclinationScreen is
+// stepId-generic (same reasoning as EmploymentReferenceScreen/
+// AcknowledgementScreen) so tdap_declination/flu_declination need only a
+// registry entry, not new code, once their own metadata is confirmed and
+// added to VaccineDeclinationScreen's VACCINE_META. Only hep_b_declination
+// is wired in here per "earliest missing step only." See ADR-025.
+// direct_deposit (M13) is ICU/ER/Travel's next step after i9 — sourced
+// directly from Paramount's real Direct Deposit Authorization form (not
+// left as the prior "coming soon" placeholder). Its own next step
+// (`documents`) remains an honest placeholder — it has no mobile
+// implementation yet and is out of scope for this milestone. See ADR-025.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -66,6 +80,8 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   w4: W4Screen,
   patient_bill_of_rights: AcknowledgementScreen,
   i9: I9Screen,
+  hep_b_declination: VaccineDeclinationScreen,
+  direct_deposit: DirectDepositScreen,
 };
 
 export default function OnboardingStep() {

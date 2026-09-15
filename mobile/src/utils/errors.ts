@@ -18,6 +18,8 @@ export type AppErrorCode =
   | 'account_exists'
   | 'verification_invalid'
   | 'conflict'
+  | 'upload_invalid_type'
+  | 'upload_too_large'
   | 'server_error'
   | 'unknown';
 
@@ -43,6 +45,8 @@ const GENERIC_MESSAGE: Record<AppErrorCode, string> = {
   account_exists: 'An account with this email already exists. Try signing in instead.',
   verification_invalid: 'That code is incorrect or has expired.',
   conflict: 'This was updated elsewhere. Refreshing the latest version.',
+  upload_invalid_type: 'That file type isn’t supported. Please attach a PDF, JPG, or PNG.',
+  upload_too_large: 'That file is too large. Please attach a file under 10 MB.',
   server_error: 'Something went wrong on our end. Please try again shortly.',
   unknown: 'Something went wrong. Please try again.',
 };
@@ -57,7 +61,7 @@ export function networkFailureToAppError(err: unknown): AppError {
   return appError('network');
 }
 
-export type ErrorContext = 'register' | 'login' | 'verifyEmail' | 'resendVerification' | 'refresh' | 'authenticatedRequest' | 'generic';
+export type ErrorContext = 'register' | 'login' | 'verifyEmail' | 'resendVerification' | 'refresh' | 'authenticatedRequest' | 'upload' | 'generic';
 
 interface BackendErrorBody {
   error?: string;
@@ -93,6 +97,9 @@ export function toAppError(status: number, body: BackendErrorBody | undefined, c
     if (context === 'register') return appError('account_exists');
     return appError('conflict');
   }
+
+  if (context === 'upload' && status === 415) return appError('upload_invalid_type');
+  if (context === 'upload' && status === 413) return appError('upload_too_large');
 
   if (status >= 500) {
     return appError('server_error');

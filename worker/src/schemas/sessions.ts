@@ -24,3 +24,19 @@ export const updateSessionSchema = z.object({
   phone: z.string().optional(),
 });
 export type UpdateSessionPayload = z.infer<typeof updateSessionSchema>;
+
+// M13 hardening: associating/removing an uploaded document from a session
+// document slot (e.g. Direct Deposit's voided check) — a narrower sibling
+// of updateSessionSchema, not a formData field, since the objectKey itself
+// requires a server-side ownership check the generic PATCH path has no way
+// to perform (see routes/sessions.ts, services/documents.ts).
+export const associateDocumentSchema = z.object({
+  objectKey: z.string().min(1, 'objectKey is required'),
+  revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+});
+export type AssociateDocumentPayload = z.infer<typeof associateDocumentSchema>;
+
+export const removeDocumentSchema = z.object({
+  revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+});
+export type RemoveDocumentPayload = z.infer<typeof removeDocumentSchema>;

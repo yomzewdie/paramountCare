@@ -380,6 +380,90 @@ No real SSN, real tax information, or real health information anywhere in this t
 
 No real SSN, date of birth, immigration document numbers, or actual signatures anywhere in this testing — use obviously-fake synthetic values and a meaningless doodle for any drawn signature. This applies to UAT as well as local testing.
 
+## M13 — Vaccine Declination (Hepatitis B) + Direct Deposit Authorization
+
+`direct_deposit` exists in every packet, always immediately after Form I-9 — not just ICU RN/ER RN/Travel RN. Path B below is written against ICU RN/ER RN/Travel RN because their condensed flow reaches it first; General RN/LVN reach the identical screen later, after completing the three vaccine declination steps and W-4.
+
+### Path A — General RN / LVN (Hepatitis B Vaccine Declination)
+
+1. **Sign in as a test applicant on a General RN or LVN packet.**
+
+2. **Complete through Patient Bill of Rights**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names the Hepatitis B declination step.**
+
+4. **Open the step.** Expected: risk/offer context text, then "Are you declining the Hepatitis B vaccination at this time?" with two choices — declining, or providing proof.
+
+5. **Choose "No — I am providing proof of vaccination."** Expected: a proof-instructions section appears, with an italic note that document upload is optional right now and proof may be submitted directly to your onboarding coordinator — no upload control here.
+
+6. **Complete the step from this choice with nothing else entered.** Expected: it completes immediately — no error, no signature required.
+
+7. **Reopen the step and choose "Yes — I am declining" instead.** Expected: a scrollable declination-statement legal text box appears, plus an acknowledgement checkbox and an Electronic Signature field.
+
+8. **Attempt completion unchecked/unsigned** — expected: clear errors on both.
+
+9. **Check the box, sign, save progress, leave, reopen, then restart the app entirely.** Expected: the decision, checkbox, and signature all restore correctly each time, server-backed.
+
+10. **Switch back to "provide proof" after having filled in the declining path.** Expected: the checkbox/signature/timestamp are cleared (matching the existing web app's own behavior).
+
+11. **Complete the step from the declining path with a valid signature.** Expected: dashboard progress increases; "Next step" names the Tdap declination step, which is still an honest "available in an upcoming release" placeholder (not yet built — only Hepatitis B is wired in this milestone).
+
+12. **Test network failure/retry and stale-revision conflict** — same expected behavior as every prior step.
+
+### Path B — ICU RN / ER RN / Travel RN (Direct Deposit Authorization)
+
+1. **Sign in as a test applicant on an ICU RN, ER RN, or Travel RN packet.**
+
+2. **Complete through Form I-9**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names Direct Deposit Authorization.**
+
+4. **Open the step.** Expected: Employee Information (Last/First Name prefilled from Personal Information, optional Middle Initial and Employee ID); a Bank Information section (Bank Name, Account Type, masked Routing/Transit Number, masked Account Number, Percentage-or-Dollar deposit amount); an optional Additional Bank Account section with the same fields; a Voided Check section with Scan Document / Take a Photo / Choose from Photos / Choose a PDF; and an Authorization Agreement section with the exact legal text, an Electronic Signature field, and an auto-filled date.
+
+5. **Confirm routing/account number masking** works the same way as the SSN field elsewhere (masked at rest except the last 4 digits, "Show"/"Hide" toggle) — but without SSN's dash formatting.
+
+6. **Enter a routing number that doesn't start with 0, 1, 2, or 3** (e.g. `999999999`). Expected: a clear "must begin with 0, 1, 2, or 3" error. Correct it to a valid 9-digit routing number (e.g. `011000015`, a real ABA prefix used only for testing) — expected: the error clears.
+
+7. **Start filling in the Additional Bank Account section** (e.g. just the bank name), then attempt completion. Expected: the rest of that section's fields are now required too — a half-entered second account is not accepted. Clear it back out entirely — expected: it becomes fully optional again.
+
+8. **Attempt completion with no voided check attached.** Expected: a clear "a voided check must be attached" error, even if every other field is valid.
+
+9. **Attach a voided check using each of the four options in turn** (on a device/simulator where each is available): Scan Document (the native full-frame scanner), a captured photo, a photo from the library, and a PDF. Expected for every path: a preview appears first — image or filename — with Retake and Use Document controls; nothing uploads until you tap Use Document. After confirming, expected: "Saving…" (association), then the filename and size with Replace/Remove controls. If you deny camera/photo permission first, expected: a clear permission-denied message, not a silent failure.
+
+10. **Capture or pick an image well below a normal check's resolution** (e.g. a tiny cropped screenshot). Expected: the preview shows a clear "too small to read clearly" message and Use Document is disabled — only Retake is available. Retake and provide a normal-sized image instead — expected: no issue, Use Document enabled.
+
+11. **Tap Retake after a scan or camera capture, before confirming Use Document.** Expected: you're returned to the picker options with no attachment saved anywhere — the capture is discarded (its temp file is cleaned up on-device).
+
+12. **Turn off connectivity, then confirm Use Document on a valid capture.** Expected: a failed state with a "Try again" control; retry after reconnecting — expected: the same captured file associates successfully without re-capturing it.
+
+13. **Restart the app entirely immediately after a successful capture is confirmed, before tapping Save Progress.** Reopen the step — expected: the voided check attachment is still there (it's saved to the session the moment it's confirmed, independent of Save Progress).
+
+14. **Replace an existing attachment with a new one**, then confirm — expected: the new file is what's shown afterward; the old one is gone (not left as a second, orphaned attachment).
+
+15. **Remove the attachment**, confirm it returns to the empty state, then attach a new one — expected: Replace/Remove behave correctly with no leftover state from the removed file.
+
+16. **Fill in every required field and attach a voided check, then complete the step.** Expected: no errors; dashboard progress increases; "Next step" names whatever follows Direct Deposit for this packet (License & Credential Uploads — still an honest placeholder, out of scope for this milestone).
+
+17. **Test network failure/retry and stale-revision conflict** for the surrounding fields (not the attachment, which is covered above) — same expected behavior as every prior step.
+
+No real bank account or routing number, and no real health/vaccination information, anywhere in this testing — use obviously-fake synthetic values (a real-format-but-fake routing number like the one above is fine; a real personal bank account number is not). This applies to UAT as well as local testing.
+
+## M13 hardening — real-device scenarios required before production sign-off
+
+Jest cannot exercise real camera/scanner hardware — `useDocumentCapture.test.ts` proves the hook's own logic against a mocked scanner, nothing more. Before this capability ships to production, run each of the following by hand on both a real iOS device and a real Android device (not just a simulator/emulator, where camera behavior is not representative):
+
+- A clear, full-frame voided check under normal lighting — expect a clean scan and no quality issue.
+- A document partially out of frame — expect the native scanner's own live guidance to prompt repositioning before capture completes.
+- A deliberately blurry capture, a low-light capture, and a capture with glare/reflection — observe how the native scanner UI responds (it is expected to guide/re-prompt on iOS/Android's own terms, not this app's).
+- A document at a severe angle — confirm the scanner's perspective correction actually squares it up in the resulting preview image.
+- A document too small in the frame — confirm the app's own minimum-resolution gate catches it if the scanner still returns it.
+- Portrait and landscape orientation, and rotating the device mid-capture if the OS allows it.
+- Camera permission denied, and photo-library permission denied — confirm each produces a clear, recoverable in-app message.
+- Retake, preview, and Use Document on each of the four capture paths (scan, photo, library, PDF).
+- Replacement and removal of an existing attachment.
+- App restart immediately after a successful capture confirmation, before Save Progress.
+- Network loss during the upload itself, and network loss after upload but before the session association completes — confirm the applicant sees an honest failed state in both cases, never a false "saved."
+
 ## What "safe" documentation means here
 
 Nowhere in this file, in test tickets, in Slack, or in commit messages should a real invitation token, verification code, access token, refresh token, or real applicant PII appear — even in a "just for this test" context. Use placeholders (`<raw token>`, `<the code from the email>`, "Test User") exactly as this document does.

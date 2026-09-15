@@ -6,6 +6,8 @@ import AcknowledgementScreen from '../../../../src/features/onboarding/Acknowled
 import EmploymentReferenceScreen from '../../../../src/features/onboarding/EmploymentReferenceScreen';
 import W4Screen from '../../../../src/features/onboarding/W4Screen';
 import I9Screen from '../../../../src/features/onboarding/I9Screen';
+import VaccineDeclinationScreen from '../../../../src/features/onboarding/VaccineDeclinationScreen';
+import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepositScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -36,6 +38,14 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.i9).toBe(I9Screen);
   });
 
+  it('maps hep_b_declination to the real VaccineDeclinationScreen', () => {
+    expect(REAL_STEP_SCREENS.hep_b_declination).toBe(VaccineDeclinationScreen);
+  });
+
+  it('maps direct_deposit to the real DirectDepositScreen', () => {
+    expect(REAL_STEP_SCREENS.direct_deposit).toBe(DirectDepositScreen);
+  });
+
   it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
     expect(REAL_STEP_SCREENS.employment_ref_2).toBe(EmploymentReferenceScreen);
@@ -43,9 +53,16 @@ describe('onboarding [stepId] real-screen registry', () => {
   });
 
   it('leaves genuinely unmigrated steps as honest placeholders', () => {
-    expect(REAL_STEP_SCREENS.hep_b_declination).toBeUndefined();
+    // tdap_declination/flu_declination reuse the exact same
+    // VaccineDeclinationScreen model as hep_b_declination once their own
+    // VACCINE_META copy is confirmed and added — "earliest missing step
+    // only" means M13 registers hep_b_declination alone. documents is the
+    // step immediately after direct_deposit in every packet and has no
+    // mobile implementation at all yet (see DirectDepositScreen's own
+    // voided-check upload, which is Direct-Deposit-specific, not this
+    // step's later credential-upload experience).
     expect(REAL_STEP_SCREENS.tdap_declination).toBeUndefined();
-    expect(REAL_STEP_SCREENS.direct_deposit).toBeUndefined();
+    expect(REAL_STEP_SCREENS.flu_declination).toBeUndefined();
     expect(REAL_STEP_SCREENS.documents).toBeUndefined();
     expect(REAL_STEP_SCREENS.jcaho_review).toBeUndefined();
   });
@@ -109,6 +126,39 @@ describe('onboarding [stepId] real-screen registry', () => {
       const w4Idx = packet.steps.findIndex((s) => s.id === 'w4');
       const i9Idx = packet.steps.findIndex((s) => s.id === 'i9');
       expect(i9Idx).toBe(w4Idx + 1);
+    }
+  });
+
+  it('confirms the real M13 branch: hep_b_declination exists ONLY for general_rn/lvn, immediately after patient_bill_of_rights — NOT after i9 as the original milestone framing assumed', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const pborIdx = packet.steps.findIndex((s) => s.id === 'patient_bill_of_rights');
+      const hepBIdx = packet.steps.findIndex((s) => s.id === 'hep_b_declination');
+      expect(hepBIdx).toBe(pborIdx + 1);
+      // tdap/flu declinations immediately follow, ahead of w4/i9 — none of
+      // the three are implemented except hep_b_declination (M13 §"earliest
+      // missing step only").
+      expect(packet.steps[hepBIdx + 1].id).toBe('tdap_declination');
+      expect(packet.steps[hepBIdx + 2].id).toBe('flu_declination');
+    }
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      expect(packet.steps.find((s) => s.id === 'hep_b_declination')).toBeUndefined();
+      expect(packet.steps.find((s) => s.id === 'tdap_declination')).toBeUndefined();
+      expect(packet.steps.find((s) => s.id === 'flu_declination')).toBeUndefined();
+    }
+  });
+
+  it('confirms the real M13 finding: direct_deposit exists in EVERY packet, always immediately after i9 — not exclusive to ICU/ER/Travel as the original milestone framing assumed', () => {
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      const i9Idx = packet.steps.findIndex((s) => s.id === 'i9');
+      const ddIdx = packet.steps.findIndex((s) => s.id === 'direct_deposit');
+      expect(i9Idx).toBeGreaterThanOrEqual(0);
+      expect(ddIdx).toBe(i9Idx + 1);
+      // `documents` (still an honest placeholder — see above) is always the
+      // very next step after direct_deposit, in every packet.
+      expect(packet.steps[ddIdx + 1].id).toBe('documents');
     }
   });
 });

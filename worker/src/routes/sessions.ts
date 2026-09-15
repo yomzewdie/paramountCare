@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
 import { requireApplicant } from '../middleware/requireApplicant';
-import { createSessionSchema, updateSessionSchema } from '../schemas/sessions';
+import { createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema } from '../schemas/sessions';
 import { generateSessionId } from '../utils/sessionId';
 import {
   getPacket,
@@ -19,6 +19,8 @@ import {
   updateSessionWithRevision,
   type OnboardingSessionRow,
 } from '../db/queries/onboardingSessions';
+import { findOwnedUpload, findCurrentSlotDocument, associateUploadToSlot } from '../db/queries/uploadedDocuments';
+import { deleteOwnedUpload } from '../services/documents';
 
 // computeOverallCompletion/isStepValid are written against a fully-shaped
 // OnboardingFormData (acknowledgements, employmentReferences, etc. always
@@ -259,4 +261,202 @@ sessions.patch('/:sessionId', async (c) => {
     },
     409,
   );
+});
+
+// ── Document slots — M13 hardening ──────────────────────────────────────────
+//
+// A tiny, explicit allow-list of (docType -> where it lives in formData),
+// not a generic "write to any formData key the client names" endpoint —
+// adding a future document type (e.g. a `documents` step credential slot)
+// is one more map entry, not a redesign. See docs/ARCHITECTURE_DECISION_RECORDS.md
+// ADR-026.
+interface DocumentFileMeta {
+  name: string;
+  size: number;
+  type: string;
+  objectKey: string;
+  uploadedAt: string;
+}
+
+const DOC_TYPE_APPLIERS: Record<
+  string,
+  (formData: Record<string, unknown>, file: DocumentFileMeta | null) => Record<string, unknown>
+> = {
+  direct_deposit_voided_check: (formData, file) => ({ ...formData, directDepositProofDocument: file }),
+};
+
+function toFileMeta(row: { file_name: string; file_size: number; content_type: string; object_key: string; uploaded_at: string }): DocumentFileMeta {
+  return { name: row.file_name, size: row.file_size, type: row.content_type, objectKey: row.object_key, uploadedAt: row.uploaded_at };
+}
+
+// ── POST /api/sessions/:sessionId/documents/:docType — associate ───────────
+//
+// Separate from the generic PATCH above on purpose: associating an uploaded
+// object requires a server-side ownership check the generic PATCH has no
+// way to perform on an arbitrary formData blob (see services/documents.ts).
+// Uses the exact same revision-protected update as PATCH underneath, so
+// normal 409 conflict handling applies unchanged.
+sessions.post('/:sessionId/documents/:docType', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const docType = c.req.param('docType');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const applier = DOC_TYPE_APPLIERS[docType];
+  if (!applier) return c.json({ error: `Unknown document type: ${docType}` }, 422);
+
+  const authResult = await loadOwnedSession(c, sessionId);
+  if (!authResult.ok) return authResult.response;
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const parsed = associateDocumentSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
+  }
+
+  // Ownership: the object must have been uploaded by THIS authenticated
+  // user via a real prior POST /api/uploads — never trust the objectKey
+  // string alone ("object-key secrecy is never treated as authorization").
+  // A 403, not 404: the session itself was already confirmed to exist and
+  // be owned above; this is refusing permission over a specific input
+  // value, which covers cross-user objects, forged/never-uploaded keys, and
+  // already-deleted objects identically (findOwnedUpload can't distinguish
+  // them, by design — there is nothing more specific to safely disclose).
+  const owned = await findOwnedUpload(c.env.DB, { objectKey: parsed.data.objectKey, userId: payload.uid });
+  if (!owned) {
+    return c.json({ error: 'This file was not found or does not belong to you. Please upload it again.' }, 403);
+  }
+
+  // Whatever currently occupies this slot, read BEFORE any writes — this is
+  // the object to clean up, and only once the new one is safely saved.
+  const previous = await findCurrentSlotDocument(c.env.DB, { sessionId, docType });
+
+  let storedFormData: Record<string, unknown>;
+  try {
+    storedFormData = JSON.parse(authResult.session.form_data_json || '{}');
+  } catch {
+    storedFormData = {};
+  }
+  const nextFormData = applier(storedFormData, toFileMeta(owned));
+
+  const updateResult = await updateSessionWithRevision(c.env.DB, {
+    sessionId,
+    expectedRevision: parsed.data.revision,
+    ownerUserId: payload.uid,
+    formDataJson: JSON.stringify(nextFormData),
+  });
+
+  if (!updateResult.ok) {
+    if (updateResult.reason === 'not_found') return c.json({ error: 'Session not found' }, 404);
+    // Nothing has been written yet at this point — the slot-bookkeeping
+    // update below only happens after this succeeds — so a stale revision
+    // here leaves the newly uploaded object simply unassociated, exactly
+    // like a failed association should (M13 hardening §7).
+    return c.json(
+      {
+        error: 'Conflict',
+        message: 'This session was updated elsewhere since you last read it.',
+        currentRevision: updateResult.current.revision,
+        current: serializeSession(updateResult.current),
+      },
+      409,
+    );
+  }
+
+  // Only now — the new object is safely, authoritatively associated with
+  // the session — record it as occupying this slot and clean up whatever
+  // used to be here. Either step failing is logged and best-effort; it
+  // never turns an already-successful association into a failure response
+  // (M13 hardening §4: never roll back a successful replace).
+  try {
+    await associateUploadToSlot(c.env.DB, { objectKey: parsed.data.objectKey, sessionId, docType });
+  } catch (e) {
+    console.error('[sessions] slot bookkeeping update failed after successful association:', e);
+  }
+
+  if (previous && previous.object_key !== parsed.data.objectKey) {
+    const cleanup = await deleteOwnedUpload(c.env, { objectKey: previous.object_key, userId: payload.uid });
+    if (!cleanup.ok) {
+      console.error(`[sessions] best-effort cleanup of replaced document ${previous.object_key} failed: ${cleanup.reason}`);
+    }
+  }
+
+  return c.json(serializeSession(updateResult.session), 200);
+});
+
+// ── DELETE /api/sessions/:sessionId/documents/:docType — remove ────────────
+//
+// Ordering prioritizes consistency over storage tidiness (M13 hardening
+// §5): the session is updated to no longer reference this slot FIRST; the
+// actual R2/D1 deletion happens only after that succeeds. A temporarily
+// orphaned R2 object is an accepted, documented risk — the session ever
+// pointing at an object that has already been deleted is not.
+sessions.delete('/:sessionId/documents/:docType', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const docType = c.req.param('docType');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const applier = DOC_TYPE_APPLIERS[docType];
+  if (!applier) return c.json({ error: `Unknown document type: ${docType}` }, 422);
+
+  const authResult = await loadOwnedSession(c, sessionId);
+  if (!authResult.ok) return authResult.response;
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const parsed = removeDocumentSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
+  }
+
+  const current = await findCurrentSlotDocument(c.env.DB, { sessionId, docType });
+
+  let storedFormData: Record<string, unknown>;
+  try {
+    storedFormData = JSON.parse(authResult.session.form_data_json || '{}');
+  } catch {
+    storedFormData = {};
+  }
+  const nextFormData = applier(storedFormData, null);
+
+  const updateResult = await updateSessionWithRevision(c.env.DB, {
+    sessionId,
+    expectedRevision: parsed.data.revision,
+    ownerUserId: payload.uid,
+    formDataJson: JSON.stringify(nextFormData),
+  });
+
+  if (!updateResult.ok) {
+    if (updateResult.reason === 'not_found') return c.json({ error: 'Session not found' }, 404);
+    return c.json(
+      {
+        error: 'Conflict',
+        message: 'This session was updated elsewhere since you last read it.',
+        currentRevision: updateResult.current.revision,
+        current: serializeSession(updateResult.current),
+      },
+      409,
+    );
+  }
+
+  if (current) {
+    const cleanup = await deleteOwnedUpload(c.env, { objectKey: current.object_key, userId: payload.uid });
+    if (!cleanup.ok) {
+      console.error(`[sessions] best-effort delete of removed document ${current.object_key} failed: ${cleanup.reason}`);
+    }
+  }
+
+  return c.json(serializeSession(updateResult.session), 200);
 });

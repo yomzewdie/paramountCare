@@ -9,6 +9,7 @@ import type {
   SafetyEducationData,
   SignatureData,
   AcknowledgementEntry,
+  DirectDepositData,
 } from '@/types/onboarding';
 import { defaultFormData } from '@/types/onboarding';
 
@@ -35,6 +36,8 @@ interface StorableFormData {
   signatureData: SignatureData;
   acknowledgements: Record<string, AcknowledgementEntry>;
   vaccineProofDocuments?: Record<string, StorableUploadedFile | null>;
+  directDepositData?: DirectDepositData;
+  directDepositProofDocument?: StorableUploadedFile | null;
   uploadedDocuments: {
     listA: StorableUploadedFile | null;
     listB: StorableUploadedFile | null;
@@ -70,6 +73,8 @@ function toStorable(data: OnboardingFormData): StorableFormData {
     vaccineProofDocuments: Object.fromEntries(
       Object.entries(data.vaccineProofDocuments ?? {}).map(([k, f]) => [k, f ? stripFile(f) : null]),
     ),
+    directDepositData:          data.directDepositData,
+    directDepositProofDocument: stripFile(data.directDepositProofDocument),
     uploadedDocuments: {
       listA:            stripFile(data.uploadedDocuments.listA),
       listB:            stripFile(data.uploadedDocuments.listB),
@@ -98,6 +103,8 @@ function fromStorable(stored: StorableFormData): OnboardingFormData {
     vaccineProofDocuments: Object.fromEntries(
       Object.entries(stored.vaccineProofDocuments ?? {}).map(([k, f]) => [k, restoreFile(f)]),
     ),
+    directDepositData:          stored.directDepositData          ?? defaultFormData.directDepositData,
+    directDepositProofDocument: restoreFile(stored.directDepositProofDocument ?? null),
     uploadedDocuments: {
       listA:            restoreFile(stored.uploadedDocuments.listA),
       listB:            restoreFile(stored.uploadedDocuments.listB),

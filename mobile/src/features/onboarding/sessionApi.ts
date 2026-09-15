@@ -122,3 +122,68 @@ export async function updateSession(sessionId: string, payload: UpdateSessionPay
     return { ok: false, conflict: false, error: networkFailureToAppError(err) };
   }
 }
+
+/**
+ * `POST /api/sessions/:sessionId/documents/:docType` (M13 hardening) —
+ * associates an already-uploaded, server-owned object with a named
+ * document slot on this session. Deliberately separate from
+ * `updateSession`: the Worker verifies the objectKey was actually uploaded
+ * by this authenticated applicant before writing anything, a check the
+ * generic PATCH path has no way to perform. Same revision-protected
+ * update and 409-conflict shape underneath, so callers handle it exactly
+ * like `updateSession`'s conflict path.
+ */
+export async function associateDocument(
+  sessionId: string,
+  docType: string,
+  payload: { objectKey: string; revision: number },
+): Promise<UpdateSessionResult> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}/documents/${docType}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 409) {
+      const body = (await res.json()) as { current: SessionResponse };
+      return { ok: false, conflict: true, current: body.current };
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, conflict: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: (await res.json()) as SessionResponse };
+  } catch (err) {
+    return { ok: false, conflict: false, error: networkFailureToAppError(err) };
+  }
+}
+
+/** `DELETE /api/sessions/:sessionId/documents/:docType` — the counterpart
+ * to associateDocument above; clears a document slot and deletes the
+ * underlying R2 object server-side. Same revision-protected/409 contract. */
+export async function removeDocument(
+  sessionId: string,
+  docType: string,
+  payload: { revision: number },
+): Promise<UpdateSessionResult> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}/documents/${docType}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 409) {
+      const body = (await res.json()) as { current: SessionResponse };
+      return { ok: false, conflict: true, current: body.current };
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, conflict: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: (await res.json()) as SessionResponse };
+  } catch (err) {
+    return { ok: false, conflict: false, error: networkFailureToAppError(err) };
+  }
+}

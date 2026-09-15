@@ -43,6 +43,16 @@ describe('toAppError', () => {
     expect(err.code).toBe('server_error');
   });
 
+  it('maps a 415 during upload to upload_invalid_type', () => {
+    const err = toAppError(415, { error: "Unsupported file type 'application/zip'" }, 'upload');
+    expect(err.code).toBe('upload_invalid_type');
+  });
+
+  it('maps a 413 during upload to upload_too_large', () => {
+    const err = toAppError(413, { error: 'File exceeds the 10 MB size limit.' }, 'upload');
+    expect(err.code).toBe('upload_too_large');
+  });
+
   it('never leaks the raw backend message into the user-facing message', () => {
     const err = toAppError(401, { error: 'some very specific internal detail' }, 'login');
     expect(err.message).not.toContain('internal detail');

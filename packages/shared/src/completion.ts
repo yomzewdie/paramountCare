@@ -106,6 +106,41 @@ function safetyCompletion(data: OnboardingFormData['safetyEducation']): StepComp
   return { step: 'safety_acknowledgements', completed, total, percent: pct(completed, total) };
 }
 
+/**
+ * Direct Deposit's own completion calculation (M13) — replaces the generic
+ * acknowledgement-style entry the `ackSteps` list used to carry for this
+ * step id, since the real business model (sourced from the Paramount
+ * Direct Deposit Authorization form, see validation.ts) has nothing to do
+ * with a checkbox/typed-signature acknowledgement: it's a name, a primary
+ * bank account, a signed authorization, and a required voided-check proof.
+ * The optional second ("Additional Bank Information") account never
+ * appears in the denominator — an applicant with only one account can
+ * still reach 100%, matching validateDirectDeposit()'s own "only validate
+ * it if the applicant started filling it in" rule.
+ */
+function directDepositCompletion(
+  data: OnboardingFormData['directDepositData'] | undefined,
+  proofDocument: OnboardingFormData['directDepositProofDocument'] | undefined,
+): StepCompletion {
+  const total = 10;
+  if (!data) {
+    const completed = proofDocument ? 1 : 0;
+    return { step: 'direct_deposit', completed, total, percent: pct(completed, total) };
+  }
+  let completed = 0;
+  if (data.lastName.trim()) completed++;
+  if (data.firstName.trim()) completed++;
+  if (data.primaryAccount.bankName.trim()) completed++;
+  if (data.primaryAccount.accountType) completed++;
+  if (data.primaryAccount.routingNumber.trim()) completed++;
+  if (data.primaryAccount.accountNumber.trim()) completed++;
+  if (data.primaryAccount.depositType && data.primaryAccount.depositAmount.trim()) completed++;
+  if (data.typedSignature.trim()) completed++;
+  if (data.signedDate.trim()) completed++;
+  if (proofDocument) completed++;
+  return { step: 'direct_deposit', completed, total, percent: pct(completed, total) };
+}
+
 function documentsCompletion(data: OnboardingFormData['uploadedDocuments']): StepCompletion {
   const creds = [data.nursingLicense, data.cprCertification].filter(Boolean).length;
   const i9 = (!!data.listA || (!!data.listB && !!data.listC)) ? 1 : 0;
@@ -153,7 +188,6 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
     { id: 'tdap_declination',       sig: true,  declination: true  },
     { id: 'flu_declination',        sig: true,  declination: true  },
     { id: 'w4',                     sig: true,  declination: false },
-    { id: 'direct_deposit',         sig: true,  declination: false },
     { id: 'jcaho_review',           sig: true,  declination: false },
   ];
 
@@ -168,6 +202,7 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
     'employment_application':  employmentApplicationCompletion(data.employmentApplication),
     'w4':                     w4Completion(data.w4Data),
     'i9':                     i9Completion(data.i9Data),
+    'direct_deposit':         directDepositCompletion(data.directDepositData, data.directDepositProofDocument),
     'employment_ref_1':       employmentCompletion(data, 'employment_ref_1'),
     'employment_ref_2':       employmentCompletion(data, 'employment_ref_2'),
     'employment_ref_3':       employmentCompletion(data, 'employment_ref_3'),

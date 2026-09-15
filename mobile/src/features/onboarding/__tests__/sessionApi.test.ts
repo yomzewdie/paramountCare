@@ -1,5 +1,5 @@
 import * as apiClient from '../../../services/apiClient';
-import { getMySession, createSession, updateSession } from '../sessionApi';
+import { getMySession, createSession, updateSession, associateDocument, removeDocument } from '../sessionApi';
 
 jest.mock('../../../services/apiClient');
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -113,5 +113,78 @@ describe('updateSession', () => {
       expect(result.conflict).toBe(false);
       if (!result.conflict) expect(result.error.code).toBe('network');
     }
+  });
+});
+
+describe('associateDocument (M13 hardening)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('POSTs to the session\'s document-slot endpoint and returns the updated session on 200', async () => {
+    const session = { sessionId: 's4', revision: 2, formData: { directDepositProofDocument: { objectKey: 'uploads/1/x.jpg' } } };
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, session));
+
+    const result = await associateDocument('s4', 'direct_deposit_voided_check', { objectKey: 'uploads/1/x.jpg', revision: 1 });
+    expect(result).toEqual({ ok: true, data: session });
+
+    const [url, init] = mockedApiClient.authenticatedFetch.mock.calls[0];
+    expect(String(url)).toContain('/api/sessions/s4/documents/direct_deposit_voided_check');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({ objectKey: 'uploads/1/x.jpg', revision: 1 });
+  });
+
+  it('returns a distinct conflict result on 409, carrying the fresh session', async () => {
+    const current = { sessionId: 's4', revision: 5 };
+    mockedApiClient.authenticatedFetch.mockResolvedValue(
+      jsonResponse(409, { error: 'Conflict', message: 'stale', currentRevision: 5, current }),
+    );
+
+    const result = await associateDocument('s4', 'direct_deposit_voided_check', { objectKey: 'uploads/1/x.jpg', revision: 1 });
+    expect(result).toEqual({ ok: false, conflict: true, current });
+  });
+
+  it('surfaces an ownership rejection (403) as a generic AppError, distinct from conflict', async () => {
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(403, { error: 'This file was not found or does not belong to you.' }));
+
+    const result = await associateDocument('s4', 'direct_deposit_voided_check', { objectKey: 'uploads/999/forged.jpg', revision: 1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.conflict).toBe(false);
+  });
+
+  it('maps a network failure to a network AppError', async () => {
+    mockedApiClient.authenticatedFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const result = await associateDocument('s4', 'direct_deposit_voided_check', { objectKey: 'uploads/1/x.jpg', revision: 1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.conflict).toBe(false);
+      if (!result.conflict) expect(result.error.code).toBe('network');
+    }
+  });
+});
+
+describe('removeDocument (M13 hardening)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('DELETEs the session\'s document-slot endpoint and returns the updated session on 200', async () => {
+    const session = { sessionId: 's5', revision: 3, formData: { directDepositProofDocument: null } };
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, session));
+
+    const result = await removeDocument('s5', 'direct_deposit_voided_check', { revision: 2 });
+    expect(result).toEqual({ ok: true, data: session });
+
+    const [url, init] = mockedApiClient.authenticatedFetch.mock.calls[0];
+    expect(String(url)).toContain('/api/sessions/s5/documents/direct_deposit_voided_check');
+    expect(init?.method).toBe('DELETE');
+    expect(JSON.parse(String(init?.body))).toEqual({ revision: 2 });
+  });
+
+  it('returns a distinct conflict result on 409, carrying the fresh session', async () => {
+    const current = { sessionId: 's5', revision: 9 };
+    mockedApiClient.authenticatedFetch.mockResolvedValue(
+      jsonResponse(409, { error: 'Conflict', message: 'stale', currentRevision: 9, current }),
+    );
+
+    const result = await removeDocument('s5', 'direct_deposit_voided_check', { revision: 2 });
+    expect(result).toEqual({ ok: false, conflict: true, current });
   });
 });
