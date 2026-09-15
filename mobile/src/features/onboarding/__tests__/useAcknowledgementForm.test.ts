@@ -46,16 +46,18 @@ beforeEach(() => jest.clearAllMocks());
  * Generalized from M8's useApplicationStatementForm.test.ts, once
  * Background Authorization (M10) proved the hook works identically for a
  * second real acknowledgement step. Health Information Authorization
- * (M11) is a THIRD independently-confirmed example — its own pre-flight
- * checked the real packet config/validateStep dispatch rather than
- * assuming compatibility from the word "auth" in its name (see ADR-023).
- * Every scenario below runs once per stepId to prove genuine reuse, not a
- * renamed single-step test.
+ * (M11) and Patient Bill of Rights (M12) are independently-confirmed
+ * further examples — each milestone's own pre-flight checked the real
+ * packet config/validateStep dispatch rather than assuming compatibility
+ * from a similar-sounding name (see ADR-023/ADR-024). Every scenario below
+ * runs once per stepId to prove genuine reuse, not a renamed single-step
+ * test.
  */
 describe.each([
   ['application_statement', 'I certify that the answers given herein are true and complete'],
   ['background_auth', 'BACKGROUND INVESTIGATION AUTHORIZATION'],
   ['health_info_auth', 'AUTHORIZATION FOR DISCLOSURE OF HEALTH INFORMATION'],
+  ['patient_bill_of_rights', 'PATIENT BILL OF RIGHTS'],
 ])('useAcknowledgementForm(%s)', (stepId, expectedTextFragment) => {
   describe('loading', () => {
     it('reads the statement text, heading, and requiresSignature flag from the current session\'s packet', () => {

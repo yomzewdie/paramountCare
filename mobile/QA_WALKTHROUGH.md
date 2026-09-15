@@ -1,4 +1,4 @@
-# M4/M5/M6/M7/M8/M9/M10/M11 manual QA walkthrough
+# M4/M5/M6/M7/M8/M9/M10/M11/M12 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -321,6 +321,64 @@ Continue from a signed-in state.
 15. **Test stale-revision conflict.** Same conservative Keep/Discard flow as every other step — confirm the SSN/tax values are never silently auto-merged.
 
 No real SSN, real tax information, or real health information anywhere in this testing — use obviously-fake, synthetic placeholder values throughout (e.g. "000-00-0000", "Test Applicant"). **This applies to UAT as well as local testing: use synthetic SSNs only until Paramount's production sensitive-data/security review (field-level encryption, key management, access, and audit requirements — see ADR-023 §4) is complete.**
+
+## M12 — Patient Bill of Rights + Form I-9 Section 1
+
+### Path A — General RN / LVN (Patient Bill of Rights)
+
+1. **Sign in as a test applicant on a General RN or LVN packet.**
+
+2. **Complete through Health Information Authorization**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names Patient Bill of Rights.**
+
+4. **Open Patient Bill of Rights.** Expected: the real form appears with the full patient-rights acknowledgment text in a scrollable box, an acknowledgement checkbox, and an Electronic Signature field — same screen as every other acknowledgement step.
+
+5. **Attempt completion without signing** — expected: clear errors on both the checkbox and signature field.
+
+6. **Check the box, type a test signature, save progress, leave, reopen** — expected: values restore correctly each time.
+
+7. **Restart the app entirely.** Reopen the step — expected: signed/checked state restores correctly, server-backed.
+
+8. **Complete the step.** Expected: dashboard progress increases, the step shows completed, "Next step" names whatever follows (a vaccine declination).
+
+9. **Test network failure/retry and stale-revision conflict** — same expected behavior as every prior acknowledgement step.
+
+### Path B — ICU RN / ER RN / Travel RN (Form I-9 Section 1)
+
+1. **Sign in as a test applicant on an ICU RN, ER RN, or Travel RN packet.**
+
+2. **Complete through W-4**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names Form I-9 (Section 1).**
+
+4. **Open the I-9 form.** Expected: an "Official Form I-9 — Section 1" legal notice at the top; Employee Information fields already prefilled from Personal Information; Identity Verification (Date of Birth, optional masked SSN); Citizenship/Immigration Status (four choices); an explicit "Section 2 — Employer Use Only" note requiring no action from you; and an Employee Signature section with Draw/Type tabs. Use test/synthetic data only — never a real SSN, real date of birth, or real immigration document numbers.
+
+5. **Confirm SSN masking** works the same way as on the W-4 form (masked at rest, "Show"/"Hide" toggle).
+
+6. **Select "A lawful permanent resident."** Expected: an "Alien Registration Number / USCIS Number" field appears. Select a different citizenship status. Expected: that field disappears and its value is cleared.
+
+7. **Select "A noncitizen authorized to work."** Expected: an expiration-date field and three verification-method choices (USCIS/A-Number, Form I-94, Foreign Passport) appear. Choose one, enter a test value, then choose a different verification method. Expected: the previous method's field disappears and its value is cleared.
+
+8. **Test the Draw signature mode.** With the "Draw" tab selected, sign with your finger/mouse in the signature box. Expected: a "Clear" control appears; tapping it erases the drawing. After drawing, a "Date" field automatically fills in with today's date.
+
+9. **Switch to the "Type" tab.** Expected: the drawn signature is discarded (switching back to Draw confirms the canvas is now empty); type a test full name instead — expected: the Date field auto-fills again.
+
+10. **Attempt completion with an empty signature** (clear it first) — expected: a clear "signature required" error; nothing saved.
+
+11. **Save progress with an intentionally partial form**, leave, reopen — expected: values restore correctly, including whichever signature mode/value you had entered.
+
+12. **Restart the app entirely.** Reopen the I-9 — expected: full restoration, server-backed (not a local cache), including the drawn signature image if that mode was used.
+
+13. **Complete the I-9** with valid test data in whichever citizenship-status branch you're testing. Expected: no errors, returns to the previous screen.
+
+14. **Confirm dashboard progress increased** and the step shows completed; "Next step" now names whatever follows I-9 for this packet (Direct Deposit Authorization).
+
+15. **Test network failure/retry.** Turn off connectivity, edit a field or re-sign, attempt to save — expected: a clear error message, your entered data (including the signature) preserved in memory, no false "saved" confirmation.
+
+16. **Test stale-revision conflict.** Same conservative Keep/Discard flow as every other step — confirm identity/immigration fields and the signature are never silently auto-merged.
+
+No real SSN, date of birth, immigration document numbers, or actual signatures anywhere in this testing — use obviously-fake synthetic values and a meaningless doodle for any drawn signature. This applies to UAT as well as local testing.
 
 ## What "safe" documentation means here
 

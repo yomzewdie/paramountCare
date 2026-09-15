@@ -10,6 +10,7 @@ import EmploymentApplicationScreen from '../../../src/features/onboarding/Employ
 import AcknowledgementScreen from '../../../src/features/onboarding/AcknowledgementScreen';
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 import W4Screen from '../../../src/features/onboarding/W4Screen';
+import I9Screen from '../../../src/features/onboarding/I9Screen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -44,6 +45,12 @@ import W4Screen from '../../../src/features/onboarding/W4Screen';
 // icu_rn/er_rn/travel_rn. Both entries below are correct simultaneously;
 // which one an applicant actually reaches is entirely determined by their
 // own packet (packets.ts), never by a mobile-side role check.
+// patient_bill_of_rights (M12) is a fifth real example reusing
+// AcknowledgementScreen — identical model, independently re-confirmed.
+// i9 (M12) is ICU/ER/Travel's next step after w4, Section 1 only —
+// Section 2 (employer/document verification) is Paramount staff's
+// responsibility and is deliberately not represented anywhere in this
+// app. See ADR-024.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -57,6 +64,8 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   background_auth: AcknowledgementScreen,
   health_info_auth: AcknowledgementScreen,
   w4: W4Screen,
+  patient_bill_of_rights: AcknowledgementScreen,
+  i9: I9Screen,
 };
 
 export default function OnboardingStep() {
