@@ -87,7 +87,7 @@ export default function Home() {
         <Card style={{ marginBottom: theme.spacing.md }}>
           <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Completed</Text>
           {progress.completedSteps.map((step) => (
-            <StepRow key={step.id} label={step.label} completed />
+            <StepRow key={step.id} label={step.label} completed required={step.required} />
           ))}
         </Card>
       ) : null}
@@ -95,7 +95,7 @@ export default function Home() {
       <Card style={{ marginBottom: theme.spacing.lg }}>
         <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Remaining</Text>
         {progress.remainingSteps.map((step) => (
-          <StepRow key={step.id} label={step.label} completed={false} />
+          <StepRow key={step.id} label={step.label} completed={false} required={step.required} />
         ))}
       </Card>
 

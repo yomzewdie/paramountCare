@@ -1,4 +1,4 @@
-# M4/M5/M6/M7/M8/M9 manual QA walkthrough
+# M4/M5/M6/M7/M8/M9/M10 manual QA walkthrough
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
@@ -207,6 +207,58 @@ Continue from a signed-in state.
 10. **Confirm the packet-specific step count.** If you have access to test applicants on two different packet types (e.g. one General RN, one ICU RN), compare their full step lists — the ICU RN applicant's list should be visibly shorter (it omits Health Information Authorization, Patient Bill of Rights, the three vaccine declinations, JCAHO Review, and the Safety Exam step that General RN/LVN include) even though both reach Employment Reference #2 in the same relative position.
 
 11. **Verify prior M5–M8 forms still work.** Re-open Personal Information, Employment Application, Application Statement, and Employment Reference #1 in turn — expected: all four still open their real forms, previously-saved/completed values still load correctly, none is affected by Employment Reference #2 being added.
+
+## M10 — Background Authorization + required-vs-optional (two paths)
+
+### Path A — General RN / LVN / ICU RN / ER RN (Background Authorization is the immediate next step after Reference #2)
+
+1. **Sign in as a test applicant** on a General RN, LVN, ICU RN, or ER RN packet.
+
+2. **Open My Onboarding**, tap through to the full step list. Confirm order: ... Employment Reference #2 → **Background Authorization** → ...
+
+3. **Complete Personal Information, Employment Application, Application Statement, Employment Reference #1, and Employment Reference #2** if not already done.
+
+4. **Open Background Authorization.** Expected: the real form appears with the full FCRA/drug-testing legal text in a scrollable box, an acknowledgement checkbox, and an "Electronic Signature" field with the same disclosure sentence as Application Statement.
+
+5. **Attempt completion without signing.** Leave both blank, tap Continue. Expected: clear errors on both the checkbox and signature field; nothing saved.
+
+6. **Check the box and type a signature**, e.g. "Test Applicant." Expected: a "Signed as: Test Applicant · <date/time>" confirmation appears.
+
+7. **Save progress**, leave, reopen. Expected: values restore correctly.
+
+8. **Restart the app entirely.** Reopen Background Authorization. Expected: signed/checked state restores correctly, server-backed.
+
+9. **Complete Background Authorization.** Tap Continue. Expected: no errors, returns to the previous screen.
+
+10. **Confirm dashboard progress increased** (a real, visible bump — unlike before M10's completion-percentage fix, this step's completion now actually moves the percentage).
+
+11. **Confirm Background Authorization shows completed**, and "Next step" now names whatever follows it in the packet.
+
+12. **Test network failure/retry and stale-revision conflict** — same expected behavior as Application Statement (M8 section above).
+
+13. **Verify prior M5–M9 forms still work** — re-open Personal Information, Employment Application, Application Statement, Employment Reference #1, and Employment Reference #2 in turn; all should still open their real forms with previously-saved values intact.
+
+### Path B — Travel RN (optional Employment Reference #3 before Background Authorization)
+
+1. **Sign in as a test applicant on a Travel RN packet.**
+
+2. **Complete through Employment Reference #2**, then return to **My Onboarding**.
+
+3. **Confirm Background Authorization is presented as the primary required next action** — the dashboard's "Next step" callout should name Background Authorization, NOT Employment Reference #3.
+
+4. **Open the full step list.** Confirm **Employment Reference #3 is visibly labeled "Optional"** (not just a different color — actual text) and is NOT marked as required anywhere in its row.
+
+5. **Open Employment Reference #3** by tapping it. Expected: the real form appears (same screen as References #1/#2), with its own independent fields.
+
+6. **Enter test data into Reference #3 and save.** Confirm afterward that Reference #1 and #2's own values are unaffected (reopen each to check).
+
+7. **Leave Reference #3 incomplete** (don't complete it) and return to My Onboarding. Expected: Background Authorization is still shown as the next required action; the dashboard does not claim the applicant needs to finish Reference #3.
+
+8. **Complete Background Authorization** (see Path A steps 4–9 for the detailed flow).
+
+9. **Confirm overall packet completion is reachable without ever completing Reference #3** — once every required step (through Background Authorization and beyond, as steps become available) is done, the dashboard should show 100%/complete despite Reference #3 remaining open. (If later required steps aren't implemented yet, confirm at minimum that Reference #3 being incomplete never blocks Background Authorization's own completion or the step list's overall behavior.)
+
+10. **Optionally, go back and complete Reference #3** — confirm it can still be completed normally at any time, it just was never presented as mandatory.
 
 ## What "safe" documentation means here
 

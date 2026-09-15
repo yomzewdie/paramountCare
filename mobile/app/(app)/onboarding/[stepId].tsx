@@ -7,7 +7,7 @@ import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
-import ApplicationStatementScreen from '../../../src/features/onboarding/ApplicationStatementScreen';
+import AcknowledgementScreen from '../../../src/features/onboarding/AcknowledgementScreen';
 import EmploymentReferenceScreen from '../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
@@ -20,24 +20,29 @@ import EmploymentReferenceScreen from '../../../src/features/onboarding/Employme
 // history, so employment_ref_1 (built in M6) correctly stays in its real
 // packet position even though its real predecessor, employment_application,
 // wasn't migrated until M7.
-// employment_ref_1 and employment_ref_2 share the exact same screen —
-// EmploymentReferenceScreen was written stepId-generic in M6 specifically
-// so a second (or third) reference instance needs no new component, only
-// a registry entry (M9 confirmed this by re-reading packets.ts: EVERY
-// packet — general_rn, lvn, icu_rn, er_rn, travel_rn — requires
-// employment_ref_2, not just some; there is no packet branch here).
-// employment_ref_3 (travel_rn only, optional) stays an honest placeholder
-// until a future milestone explicitly migrates it too, per the "no fake
-// forms" instruction.
+// employment_ref_1, employment_ref_2, AND employment_ref_3 share the exact
+// same screen — EmploymentReferenceScreen was written stepId-generic in M6
+// specifically so any reference instance needs no new component, only a
+// registry entry. employment_ref_3 exists only in travel_rn and is
+// OPTIONAL (packets.ts) — being wired in here does not make it the
+// applicant's primary "next required action" (see steps.ts's
+// resolveNextRequiredStep(), M10 / ADR-022); it just means the applicant
+// can open and complete it if they choose to.
+// application_statement AND background_auth share AcknowledgementScreen —
+// generalized in M10 from M8's step-specific ApplicationStatementScreen
+// once a second real example (Background Authorization) proved they were
+// genuinely identical except stepId/heading/legal text. See ADR-022.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
 export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   personal_info: PersonalInfoScreen,
   employment_application: EmploymentApplicationScreen,
-  application_statement: ApplicationStatementScreen,
+  application_statement: AcknowledgementScreen,
   employment_ref_1: EmploymentReferenceScreen,
   employment_ref_2: EmploymentReferenceScreen,
+  employment_ref_3: EmploymentReferenceScreen,
+  background_auth: AcknowledgementScreen,
 };
 
 export default function OnboardingStep() {

@@ -92,13 +92,39 @@ export interface OnboardingPacket {
 
 // ── Packet progression utilities ──────────────────────────────────────────────
 
-/** Returns the first step that is not yet completed, or null if the packet is done. */
+/**
+ * Returns the first step that is not yet completed, or null if every step
+ * (required AND optional) is completed. This is "first incomplete step,"
+ * not "next required action" — an incomplete OPTIONAL step (e.g. a
+ * packet's extra, non-required employment reference) is returned just the
+ * same as an incomplete required one. Kept intentionally distinct from
+ * resolveNextRequiredStep() below rather than redefined, since a shared
+ * function's meaning shouldn't change silently underneath any consumer
+ * that specifically wants "every step, regardless of required."
+ */
 export function resolveCurrentStep(
   packet: OnboardingPacket,
   stepStates: StepStates,
 ): PacketStep | null {
   return (
     packet.steps.find(s => (stepStates[s.id] ?? 'not_started') !== 'completed') ?? null
+  );
+}
+
+/**
+ * Returns the first REQUIRED step that is not yet completed, or null once
+ * every required step is done (optional steps may still be open). This is
+ * the "what does the applicant actually need to do next" answer — an
+ * incomplete optional step (e.g. a packet's non-required extra employment
+ * reference) is never returned here, so it can never look mandatory or
+ * block progress toward the real next required action.
+ */
+export function resolveNextRequiredStep(
+  packet: OnboardingPacket,
+  stepStates: StepStates,
+): PacketStep | null {
+  return (
+    packet.steps.find(s => s.required && (stepStates[s.id] ?? 'not_started') !== 'completed') ?? null
   );
 }
 

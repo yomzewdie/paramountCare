@@ -76,26 +76,67 @@ describe('deriveProgress', () => {
       expect(icuRn!.nextStep?.id).toBe('background_auth');
     });
 
-    it('deriveProgress/resolveCurrentStep does not skip an incomplete OPTIONAL step (employment_ref_3) — a pre-existing, unchanged characteristic, not something M9 introduces or changes', () => {
-      // isPacketComplete() (packets.ts) DOES filter by required and would
-      // correctly report this applicant as done; deriveProgress()'s
-      // isComplete/nextStep instead reuse resolveCurrentStep(), which finds
-      // the first NON-COMPLETED step regardless of required. Documenting
-      // this distinction directly rather than asserting a "the dashboard
-      // is required-aware" behavior that resolveCurrentStep doesn't
-      // actually implement.
+  });
+
+  // M10: the M9 test above this comment ("deriveProgress/resolveCurrentStep
+  // does not skip an incomplete OPTIONAL step") documented a real,
+  // pre-existing gap: leaving an optional step (Travel RN's
+  // employment_ref_3, or General RN's optional safety_exam) incomplete
+  // made the dashboard incorrectly show it as "next" and isComplete as
+  // false, even once every REQUIRED step was done. Fixed at the shared
+  // domain layer (packages/shared/src/packets.ts's new
+  // resolveNextRequiredStep(), plus reusing the already-correct
+  // isPacketComplete() for isComplete instead of re-deriving it) — see
+  // ADR-022. These tests prove the fix using the real shared functions,
+  // not a reimplementation of packet logic.
+  describe('required-vs-optional next action (M10)', () => {
+    it('an incomplete OPTIONAL step (Travel RN\'s employment_ref_3) is never returned as "next" once every required step is done, and isComplete becomes true', () => {
       const packet = getPacket('travel_rn')!;
       const allRequiredCompleted = Object.fromEntries(
         packet.steps.filter((s) => s.required).map((s) => [s.id, 'completed']),
       );
       const progress = deriveProgress('travel_rn', allRequiredCompleted);
-      expect(progress!.nextStep?.id).toBe('employment_ref_3');
-      expect(progress!.isComplete).toBe(false);
+      expect(progress!.nextStep).toBeNull();
+      expect(progress!.isComplete).toBe(true);
 
-      // Completing the optional step too does resolve it, confirming this
-      // is purely about required-awareness, not a broader defect.
-      const everythingCompleted = Object.fromEntries(packet.steps.map((s) => [s.id, 'completed']));
-      expect(deriveProgress('travel_rn', everythingCompleted)!.isComplete).toBe(true);
+      // The optional step itself is still listed and still discoverable —
+      // just not presented as the required next action.
+      const ref3 = progress!.steps.find((s) => s.id === 'employment_ref_3');
+      expect(ref3).toBeDefined();
+      expect(ref3!.required).toBe(false);
+      expect(ref3!.completed).toBe(false);
+    });
+
+    it('same fix confirmed on a second optional step in a different packet (General RN\'s optional safety_exam)', () => {
+      const packet = getPacket('general_rn')!;
+      const allRequiredCompleted = Object.fromEntries(
+        packet.steps.filter((s) => s.required).map((s) => [s.id, 'completed']),
+      );
+      const progress = deriveProgress('general_rn', allRequiredCompleted);
+      expect(progress!.nextStep).toBeNull();
+      expect(progress!.isComplete).toBe(true);
+      expect(progress!.steps.find((s) => s.id === 'safety_exam')?.required).toBe(false);
+    });
+
+    it('an incomplete REQUIRED step still correctly becomes "next," even when a later optional step also remains incomplete', () => {
+      const packet = getPacket('travel_rn')!;
+      const completedExceptBackgroundAuth = Object.fromEntries(
+        packet.steps
+          .filter((s) => s.required && s.id !== 'background_auth')
+          .map((s) => [s.id, 'completed']),
+      );
+      const progress = deriveProgress('travel_rn', completedExceptBackgroundAuth);
+      expect(progress!.nextStep?.id).toBe('background_auth');
+      expect(progress!.isComplete).toBe(false);
+    });
+
+    it('every StepDisplayItem carries the real required flag from the packet, not a hardcoded assumption', () => {
+      const progress = deriveProgress('travel_rn', {})!;
+      const byId = Object.fromEntries(progress.steps.map((s) => [s.id, s.required]));
+      expect(byId.employment_ref_1).toBe(true);
+      expect(byId.employment_ref_2).toBe(true);
+      expect(byId.employment_ref_3).toBe(false);
+      expect(byId.background_auth).toBe(true);
     });
   });
 });

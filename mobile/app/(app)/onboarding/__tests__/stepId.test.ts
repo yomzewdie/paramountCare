@@ -2,7 +2,7 @@ import { REAL_STEP_SCREENS } from '../[stepId]';
 import { getPacket } from '@pcs/shared';
 import PersonalInfoScreen from '../../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../../src/features/onboarding/EmploymentApplicationScreen';
-import ApplicationStatementScreen from '../../../../src/features/onboarding/ApplicationStatementScreen';
+import AcknowledgementScreen from '../../../../src/features/onboarding/AcknowledgementScreen';
 import EmploymentReferenceScreen from '../../../../src/features/onboarding/EmploymentReferenceScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
@@ -19,18 +19,19 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.employment_application).toBe(EmploymentApplicationScreen);
   });
 
-  it('maps application_statement to the real Application Statement screen', () => {
-    expect(REAL_STEP_SCREENS.application_statement).toBe(ApplicationStatementScreen);
+  it('maps application_statement AND background_auth to the same real AcknowledgementScreen', () => {
+    expect(REAL_STEP_SCREENS.application_statement).toBe(AcknowledgementScreen);
+    expect(REAL_STEP_SCREENS.background_auth).toBe(AcknowledgementScreen);
   });
 
-  it('maps employment_ref_1 AND employment_ref_2 to the same real Employment Reference screen', () => {
+  it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
     expect(REAL_STEP_SCREENS.employment_ref_2).toBe(EmploymentReferenceScreen);
+    expect(REAL_STEP_SCREENS.employment_ref_3).toBe(EmploymentReferenceScreen);
   });
 
-  it('leaves the optional third reference instance and unmigrated steps as honest placeholders', () => {
-    expect(REAL_STEP_SCREENS.background_auth).toBeUndefined();
-    expect(REAL_STEP_SCREENS.employment_ref_3).toBeUndefined();
+  it('leaves genuinely unmigrated steps as honest placeholders', () => {
+    expect(REAL_STEP_SCREENS.health_info_auth).toBeUndefined();
     expect(REAL_STEP_SCREENS.w4).toBeUndefined();
     expect(REAL_STEP_SCREENS.i9).toBeUndefined();
     expect(REAL_STEP_SCREENS.documents).toBeUndefined();
@@ -55,6 +56,13 @@ describe('onboarding [stepId] real-screen registry', () => {
       const ids = packet!.steps.map((s) => s.id);
       expect(ids.indexOf('employment_ref_1')).toBeLessThan(ids.indexOf('employment_ref_2'));
       expect(ids.indexOf('employment_ref_2')).toBeLessThan(ids.indexOf('background_auth'));
+    }
+  });
+
+  it('confirms employment_ref_3 is travel_rn-only and genuinely optional (M10)', () => {
+    expect(getPacket('travel_rn')!.steps.find((s) => s.id === 'employment_ref_3')?.required).toBe(false);
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn']) {
+      expect(getPacket(packetId)!.steps.find((s) => s.id === 'employment_ref_3')).toBeUndefined();
     }
   });
 });

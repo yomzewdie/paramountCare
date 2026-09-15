@@ -343,3 +343,60 @@ describe('useEmploymentReferenceForm — network/server error', () => {
     expect(saveStep).toHaveBeenCalledTimes(1);
   });
 });
+
+// M10: employment_ref_3 (Travel RN only, optional) reuses this exact same
+// hook/screen — confirming a THIRD reference instance stays independent
+// from #1 and #2 is what makes wiring it into the real-step registry
+// (rather than building a new component) actually safe, not just convenient.
+describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel RN)', () => {
+  it('loads only its own data, independent of Reference #1 and #2', () => {
+    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    const ref2 = { ...defaultEmploymentReference, positionHeld: 'Ref 2 Data' };
+    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1, employment_ref_2: ref2 } } }));
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_3'));
+
+    expect(result.current.data).toEqual(defaultEmploymentReference);
+  });
+
+  it('saving employment_ref_3 preserves BOTH Reference #1 and #2\'s already-saved data', async () => {
+    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    const ref2 = { ...defaultEmploymentReference, positionHeld: 'Ref 2 Data' };
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1, employment_ref_2: ref2 } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_3'));
+
+    act(() => result.current.setField('positionHeld', 'Ref 3 Data'));
+    await act(async () => {
+      await result.current.saveProgress();
+    });
+
+    const [call] = saveStep.mock.calls;
+    const stepData = call[0].stepData as Record<string, unknown>;
+    expect(stepData.employment_ref_1).toEqual(ref1);
+    expect(stepData.employment_ref_2).toEqual(ref2);
+    expect((stepData.employment_ref_3 as { positionHeld: string }).positionHeld).toBe('Ref 3 Data');
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_3' }));
+  });
+
+  it('leaving Reference #3 incomplete does not corrupt or block saving Reference #1/#2 independently', async () => {
+    // Reference #3 is optional and simply absent from formData — Reference
+    // #1's own save must still succeed and must not require #3 to exist.
+    const saveStep = setupSession(
+      fakeSession({ formData: {} }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+
+    act(() => result.current.setField('positionHeld', 'RN'));
+    await act(async () => {
+      await result.current.saveProgress();
+    });
+
+    const [call] = saveStep.mock.calls;
+    const stepData = call[0].stepData as Record<string, unknown>;
+    expect(stepData.employment_ref_3).toBeUndefined();
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_1' }));
+  });
+});

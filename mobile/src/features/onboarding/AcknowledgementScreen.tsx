@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
@@ -11,22 +11,26 @@ import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { useApplicationStatementForm } from './useApplicationStatementForm';
+import { useAcknowledgementForm } from './useAcknowledgementForm';
 
 // Splits the statement's paragraphs on a double newline — the exact same
 // approach the existing web AcknowledgementSection.tsx uses to render
 // multi-paragraph legal text. The text itself always comes from the
-// current session's packet step config (useApplicationStatementForm reads
-// it live), never hardcoded here, since it differs slightly by packet type.
+// current session's packet step config (useAcknowledgementForm reads it
+// live), never hardcoded here, since both wording AND which step this is
+// vary — this single screen now serves Application Statement, Background
+// Authorization, and any future acknowledgement step confirmed to share
+// the same { checked, typedSignature, signedAt } model (see ADR-022).
 function paragraphsOf(text: string): string[] {
   return text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
 }
 
-export default function ApplicationStatementScreen() {
+export default function AcknowledgementScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { isConnected } = useNetworkStatus();
-  const form = useApplicationStatementForm();
+  const { stepId } = useLocalSearchParams<{ stepId: string }>();
+  const form = useAcknowledgementForm(stepId ?? '');
 
   useUnsavedChangesGuard(form.isDirty);
 
@@ -60,7 +64,7 @@ export default function ApplicationStatementScreen() {
 
   return (
     <Screen ref={scrollRef}>
-      <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Applicant Statement</Text>
+      <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{form.heading}</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
         Please read the statement below carefully before acknowledging and signing.
       </Text>

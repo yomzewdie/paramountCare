@@ -178,8 +178,22 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
 
 export function computeOverallCompletion(data: OnboardingFormData): number {
   const completions = computeStepCompletion(data);
+  // Every step here is both universal (present in every packet type) and
+  // required — matching the existing pattern this list already followed
+  // for personal_info/employment_application/w4/i9/employment_ref_1/2/
+  // safety_acknowledgements/documents. application_statement and
+  // background_auth are also universal+required (packets.ts) but were
+  // previously missing from this list, so completing either real,
+  // required, signed step moved this percentage not at all — a stale-list
+  // oversight, not an intentional exclusion (M10). Packet-SPECIFIC required
+  // steps (health_info_auth, patient_bill_of_rights, the vaccine
+  // declinations, direct_deposit, jcaho_review — general_rn/lvn only) and
+  // optional steps (employment_ref_3) are deliberately still excluded:
+  // making this genuinely packet-aware is a larger redesign than this
+  // targeted fix, out of scope here.
   const contentSteps = [
-    'personal_info', 'employment_application', 'w4', 'i9', 'employment_ref_1', 'employment_ref_2',
+    'personal_info', 'employment_application', 'application_statement', 'w4', 'i9',
+    'employment_ref_1', 'employment_ref_2', 'background_auth',
     'safety_acknowledgements', 'documents',
   ];
   const total     = contentSteps.reduce((sum, s) => sum + (completions[s]?.total     ?? 0), 0);

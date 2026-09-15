@@ -43,6 +43,7 @@ export default function OnboardingOverview() {
             key={step.id}
             label={step.label}
             completed={step.completed}
+            required={step.required}
             onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: step.id } })}
           />
         ))}

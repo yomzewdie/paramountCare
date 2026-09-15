@@ -4,7 +4,6 @@ import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
 
-const STEP_ID = 'application_statement';
 const FORM_DATA_KEY = 'acknowledgements';
 
 const EMPTY_ENTRY: AcknowledgementEntry = { checked: false, typedSignature: '', signedAt: '' };
@@ -15,32 +14,36 @@ export type SubmitOutcome =
   | { kind: 'invalid' }
   | { kind: 'error'; message: string };
 
-function readStored(formData: Record<string, unknown> | undefined): AcknowledgementEntry {
+function readStored(formData: Record<string, unknown> | undefined, stepId: string): AcknowledgementEntry {
   const acks = (formData?.[FORM_DATA_KEY] ?? {}) as Record<string, Partial<AcknowledgementEntry> | undefined>;
-  return { ...EMPTY_ENTRY, ...(acks[STEP_ID] ?? {}) };
+  return { ...EMPTY_ENTRY, ...(acks[stepId] ?? {}) };
 }
 
 /**
- * Form-state + save/conflict logic for Application Statement — the first
- * real signature/attestation step. This is NOT usePersonalInfoForm/
- * useEmploymentApplicationForm's shape reused: its data lives in the
- * shared `formData.acknowledgements` record (like employment references'
- * nested-record shape from M6), and it has exactly two fields with very
- * different interaction models (a checkbox that also stamps a timestamp,
- * and a typed-name signature), so it gets its own small hook rather than
- * being forced into either existing pattern. See ADR-021 for the full
- * signature-model reasoning; this hook implements exactly what
- * AcknowledgementSection.tsx (the existing web component) already does —
- * nothing invented.
+ * Form-state + save/conflict logic for any `acknowledgement`-type,
+ * typed-signature step (Application Statement in M8, Background
+ * Authorization in M10, and — pending each one's own pre-flight
+ * confirmation that this same model actually applies — future steps like
+ * Health Information Authorization, Patient Bill of Rights, JCAHO Review).
+ *
+ * Generalized from M8's step-specific useApplicationStatementForm once a
+ * SECOND real example (Background Authorization) proved the two were
+ * genuinely identical except stepId, the packet's own step.label (heading),
+ * and step.config.text (legal body) — not merely similar. See ADR-022.
+ * Every other acknowledgement step must still be confirmed against source
+ * before assuming this hook fits: some (the vaccine declinations) have an
+ * additional `decision` field this hook does not model, so they are NOT
+ * automatically compatible just because they're also type: 'acknowledgement'.
  */
-export function useApplicationStatementForm() {
+export function useAcknowledgementForm(stepId: string) {
   const { session, saveStep } = useSession();
 
-  const step = session ? getPacket(session.packetId)?.steps.find((s) => s.id === STEP_ID) : undefined;
+  const step = session ? getPacket(session.packetId)?.steps.find((s) => s.id === stepId) : undefined;
+  const heading = step?.label ?? '';
   const statementText = step?.config?.text ?? '';
   const requiresSignature = step?.config?.requiresSignature ?? false;
 
-  const [data, setData] = useState<AcknowledgementEntry>(() => readStored(session?.formData));
+  const [data, setData] = useState<AcknowledgementEntry>(() => readStored(session?.formData, stepId));
   const [touched, setTouched] = useState<Partial<Record<keyof AcknowledgementEntry, boolean>>>({});
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -48,7 +51,7 @@ export function useApplicationStatementForm() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ latest: AcknowledgementEntry } | null>(null);
 
-  const isCompleted = session?.stepStates[STEP_ID] === 'completed';
+  const isCompleted = session?.stepStates[stepId] === 'completed';
 
   const errors = useMemo<FieldErrors>(() => validateAcknowledgement(data, requiresSignature), [data, requiresSignature]);
   const shownErrors = useMemo<FieldErrors>(() => revealTouched(errors, touched), [errors, touched]);
@@ -82,7 +85,7 @@ export function useApplicationStatementForm() {
    * data — same reasoning as useEmploymentReferenceForm's mergedReferences. */
   function mergedAcknowledgements(next: AcknowledgementEntry): Record<string, unknown> {
     const existing = (session?.formData?.[FORM_DATA_KEY] ?? {}) as Record<string, unknown>;
-    return { ...existing, [STEP_ID]: next };
+    return { ...existing, [stepId]: next };
   }
 
   function handleResult(result: SaveStepResult): SubmitOutcome {
@@ -91,7 +94,7 @@ export function useApplicationStatementForm() {
       return { kind: 'saved' };
     }
     if (result.status === 'conflict') {
-      setConflict({ latest: readStored(result.latestSession.formData) });
+      setConflict({ latest: readStored(result.latestSession.formData, stepId) });
       return { kind: 'conflict' };
     }
     setSaveError(result.error.message);
@@ -110,7 +113,7 @@ export function useApplicationStatementForm() {
     const result = await saveStep({
       formDataKey: FORM_DATA_KEY,
       stepData: mergedAcknowledgements(data),
-      stepId: STEP_ID,
+      stepId,
       status: isCompleted ? undefined : 'in_progress',
     });
     setIsSaving(false);
@@ -123,14 +126,14 @@ export function useApplicationStatementForm() {
    * an already-completed statement (e.g. re-signing after reviewing it
    * again) is permitted, matching the existing web app's own lack of any
    * completed-step immutability lock (confirmed by inspection — see
-   * ADR-021). */
+   * ADR-021, re-confirmed for Background Authorization in ADR-022). */
   async function complete(): Promise<SubmitOutcome> {
     setTouched(touchAll(EMPTY_ENTRY));
     if (Object.keys(errors).length > 0) return { kind: 'invalid' };
 
     setIsCompleting(true);
     setSaveError(null);
-    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: mergedAcknowledgements(data), stepId: STEP_ID, status: 'completed' });
+    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: mergedAcknowledgements(data), stepId, status: 'completed' });
     setIsCompleting(false);
     return handleResult(result);
   }
@@ -154,6 +157,7 @@ export function useApplicationStatementForm() {
 
   return {
     data,
+    heading,
     statementText,
     requiresSignature,
     toggleChecked,
