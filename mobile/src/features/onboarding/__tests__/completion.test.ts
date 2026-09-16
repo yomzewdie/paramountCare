@@ -252,6 +252,40 @@ describe('completion-evaluator coverage invariant', () => {
     }
   });
 
+  it('M15: safety_acknowledgements blocks 100% until all 9 booleans (8 topics + attestation) are true, for every packet that requires it', () => {
+    for (const packetId of Object.keys(PACKETS)) {
+      const packet = getPacket(packetId)!;
+      if (!packet.steps.some((s) => s.id === 'safety_acknowledgements')) continue;
+
+      const missingAttestation: OnboardingFormData = {
+        ...FULLY_COMPLETE_FORM_DATA,
+        safetyEducation: { ...FULLY_COMPLETE_FORM_DATA.safetyEducation, examAttestation: false },
+      };
+      expect(computeOverallCompletion(packet, missingAttestation)).toBeLessThan(100);
+
+      const missingOneTopic: OnboardingFormData = {
+        ...FULLY_COMPLETE_FORM_DATA,
+        safetyEducation: { ...FULLY_COMPLETE_FORM_DATA.safetyEducation, fireSafety: false },
+      };
+      expect(computeOverallCompletion(packet, missingOneTopic)).toBeLessThan(100);
+    }
+  });
+
+  it('M15: the OPTIONAL safety_exam step never blocks a General RN/LVN packet from reaching 100%, and has no evaluator entry at all', () => {
+    const completions = computeStepCompletion(FULLY_COMPLETE_FORM_DATA);
+    expect(completions.safety_exam).toBeUndefined();
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const examStep = packet.steps.find((s) => s.id === 'safety_exam');
+      expect(examStep).toBeDefined();
+      expect(examStep!.required).toBe(false);
+      // FULLY_COMPLETE_FORM_DATA has no safety_exam data at all (no
+      // shared field even exists for it), yet these packets still reach
+      // 100% — proving the optional exam is genuinely never counted.
+      expect(computeOverallCompletion(packet, FULLY_COMPLETE_FORM_DATA)).toBe(100);
+    }
+  });
+
   it('the "review" step type retains its always-complete, never-participating semantics in every packet', () => {
     const completions = computeStepCompletion(defaultFormData); // nothing else filled in
     for (const packetId of Object.keys(PACKETS)) {

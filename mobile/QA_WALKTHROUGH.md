@@ -478,7 +478,7 @@ Jest cannot exercise real camera/scanner hardware — `useDocumentCapture.test.t
 
 5. **Test both paths** exactly as Hepatitis B's Path A (steps 5–10 of the M13 walkthrough above) — declining requires the checkbox + signature; providing proof completes immediately with no upload required at this step.
 
-6. **Complete the step.** Expected: dashboard progress increases; "Next step" names the Influenza declination step, which remains an honest "available in an upcoming release" placeholder (not implemented this milestone — only Tdap is wired in, per "earliest missing step only").
+6. **Complete the step.** Expected: dashboard progress increases; "Next step" names the Influenza declination step (see M15 below — now a real, implemented step, not a placeholder).
 
 7. **Restart the app after completing**, confirm the decision restores correctly, server-backed.
 
@@ -506,7 +506,7 @@ Jest cannot exercise real camera/scanner hardware — `useDocumentCapture.test.t
 
 10. **Replace a credential document** with a new capture. Expected: the new file is what's shown afterward; the old one is gone (not left as a duplicate).
 
-11. **Fill every required slot (List A, or List B+C, plus both credentials) and tap Continue.** Expected: no errors; dashboard progress increases; "Next step" names whatever follows Documents for this packet (Safety & Education Exam acknowledgement for ICU/ER/Travel; JCAHO/TJC Standards Review for General RN/LVN — neither implemented this milestone, both remain honest placeholders).
+11. **Fill every required slot (List A, or List B+C, plus both credentials) and tap Continue.** Expected: no errors; dashboard progress increases; "Next step" names whatever follows Documents for this packet (Safety & Education Acknowledgements for ICU/ER/Travel — see M15 below, a real implemented step; JCAHO/TJC Standards Review for General RN/LVN, which remains an honest placeholder).
 
 12. **Test each capture path's quality gate** (blurry/too-small camera or library image) on at least one slot — same expected behavior as M13's Direct Deposit walkthrough (blocked "Use Document," clear guidance, Retake required).
 
@@ -517,6 +517,58 @@ Jest cannot exercise real camera/scanner hardware — `useDocumentCapture.test.t
 15. **Confirm packet isolation**: General RN/LVN applicants who haven't yet reached Documents (still on their vaccine declinations) should never see it early; once they do reach it (after completing hep_b/tdap/flu + W-4 + I-9 + Direct Deposit), it should show the identical required set as ICU/ER/Travel.
 
 No real identity documents, license numbers, or certification numbers in any of this testing — use obviously-fake synthetic images/documents. This applies to UAT as well as local testing.
+
+## M15 — Flu Declination + Safety & Education Acknowledgements
+
+### Path A — General RN / LVN (Influenza Vaccine Declination)
+
+1. **Sign in as a test applicant on a General RN or LVN packet.**
+
+2. **Complete Hepatitis B, then Tdap declinations**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names the Influenza/Flu vaccine step.**
+
+4. **Open the step.** Expected: the same screen shape as Hepatitis B/Tdap, with Flu-specific copy (CDC/ACIP seasonal-vaccination context, "Are you declining the seasonal Influenza/H1N1 vaccination at this time?").
+
+5. **Test both paths** exactly as Hepatitis B's Path A (steps 5–10 of the M13 walkthrough above) — declining requires the checkbox + signature; providing proof completes immediately with no upload required at this step.
+
+6. **Complete the step.** Expected: dashboard progress increases; "Next step" names Tax Forms / W-4.
+
+7. **Restart the app after completing**, confirm the decision restores correctly, server-backed.
+
+8. **Confirm packet isolation**: sign in as an ICU RN/ER RN/Travel RN applicant — they should never see any of the three vaccine declination steps (their packet has none).
+
+### Path B — ICU RN / ER RN / Travel RN, and later General RN / LVN (Safety & Education Acknowledgements)
+
+1. **Sign in as a test applicant on an ICU RN, ER RN, or Travel RN packet.**
+
+2. **Complete License & Credential Uploads (Documents)**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names Safety & Education Exam.**
+
+4. **Open the step.** Expected: an intro card explaining the orientation requirement, a progress indicator ("0 of 8 topics acknowledged") with a progress bar, and 8 topic cards (Patient Safety, Infection Control, Fire Safety, Patient Rights/HIPAA, Workplace Violence, Body Mechanics, Hazardous Materials, Documentation & Reporting), each with a title and a full description. No final attestation card should be visible yet.
+
+5. **Check one topic.** Expected: the progress indicator updates to "1 of 8," the attestation card still does not appear.
+
+6. **Tap Continue with only some topics checked.** Expected: a single combined error naming how many topics remain (e.g. "3 safety topics must be acknowledged before continuing") — not 8 separate per-topic error messages.
+
+7. **Check all 8 topics.** Expected: the final attestation card appears immediately below the topic list (progressive disclosure) — its full text should read exactly as: "I confirm that I have reviewed all safety and education topics listed above. I understand that I will complete the 25-question Safety & Education Exam during my in-person orientation with Paramount Care Staffing, LLC. I agree to comply with all safety policies and procedures at all facilities where I am placed."
+
+8. **Tap Continue without checking the attestation.** Expected: an error under the attestation checkbox; the 8 topics remain checked (no data loss).
+
+9. **Check the attestation.** Expected: an "all complete" success banner appears ("Safety & Education orientation complete...").
+
+10. **Uncheck one topic after the attestation was checked.** Expected: the attestation card and success banner both disappear again (progressive disclosure works in both directions) — no stale "complete" state lingers.
+
+11. **Re-check everything and tap Continue.** Expected: no errors; dashboard progress increases; "Next step" names Review & Submit (ICU/ER/Travel have no JCAHO review or exam step between Safety and Review).
+
+12. **Restart the app after completing**, confirm all 8 topics and the attestation restore correctly, server-backed.
+
+13. **Confirm packet isolation**: General RN/LVN applicants reach this exact same step later (after JCAHO/TJC Standards Review, which remains an honest placeholder) — do not test that path this milestone, since JCAHO is unimplemented and out of scope.
+
+14. **Do NOT test a "Safety Exam" quiz, questions, answer key, or retake flow anywhere in this walkthrough.** No such feature exists — `safety_acknowledgements` (the checklist above) is a distinct, separate step from the optional `safety_exam` ("Clinical Competency Exam") step, which remains entirely unimplemented and is never reached in this app.
+
+No real employment/compliance data needed for this step — it contains no PII, only checkbox state.
 
 ## What "safe" documentation means here
 

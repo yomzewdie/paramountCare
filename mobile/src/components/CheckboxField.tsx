@@ -3,6 +3,14 @@ import { useTheme } from '../theme/ThemeProvider';
 
 interface CheckboxFieldProps {
   label: string;
+  /** M15: an optional second line of detail below the label — e.g. a
+   * safety topic's title (`label`) plus its full description
+   * (`description`). Omitted entirely, this renders byte-identical to the
+   * original single-line checkbox (Employment Reference's own consent
+   * checkbox, unchanged). The accessible name always reads both together
+   * ("title. description"), never just the bold title alone, so a screen
+   * reader user gets the full acknowledgement context in one announcement. */
+  description?: string;
   value: boolean;
   onChange: (value: boolean) => void;
   error?: string;
@@ -15,8 +23,11 @@ interface CheckboxFieldProps {
  * to contact this employer" consent; reusable for any future single-consent
  * acknowledgement that isn't a full signed statement (that path already
  * exists via the `acknowledgement` step type / AcknowledgementSection on web).
+ * Extended in M15 with an optional `description` for topic-style checklists
+ * (Safety & Education) rather than building a second, near-identical
+ * checkbox component.
  */
-export function CheckboxField({ label, value, onChange, error }: CheckboxFieldProps) {
+export function CheckboxField({ label, description, value, onChange, error }: CheckboxFieldProps) {
   const theme = useTheme();
 
   return (
@@ -25,7 +36,7 @@ export function CheckboxField({ label, value, onChange, error }: CheckboxFieldPr
         onPress={() => onChange(!value)}
         accessibilityRole="checkbox"
         accessibilityState={{ checked: value }}
-        accessibilityLabel={label}
+        accessibilityLabel={description ? `${label}. ${description}` : label}
         style={{
           flexDirection: 'row',
           alignItems: 'flex-start',
@@ -53,7 +64,12 @@ export function CheckboxField({ label, value, onChange, error }: CheckboxFieldPr
         >
           {value ? <Text style={{ color: theme.colors.surface, fontSize: 14, fontWeight: '700' }}>{'✓'}</Text> : null}
         </View>
-        <Text style={[theme.typography.body, { color: theme.colors.text, flex: 1 }]}>{label}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[description ? theme.typography.bodyStrong : theme.typography.body, { color: theme.colors.text }]}>{label}</Text>
+          {description ? (
+            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.xs }]}>{description}</Text>
+          ) : null}
+        </View>
       </Pressable>
       {error ? (
         <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: theme.spacing.xs }]}>

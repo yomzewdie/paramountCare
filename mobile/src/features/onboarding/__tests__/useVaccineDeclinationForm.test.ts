@@ -43,13 +43,16 @@ beforeEach(() => jest.clearAllMocks());
 /**
  * M14 generalized this from a single hep_b_declination suite once
  * tdap_declination was independently confirmed (not assumed) to share the
- * exact same packet config shape and web behavior — see ADR-027. Every
+ * exact same packet config shape and web behavior — see ADR-027. M15 added
+ * flu_declination after an identical direct comparison (ADR-028) — every
  * scenario below runs once per real vaccine step this app registers, the
  * same reuse-proof pattern useAcknowledgementForm.test.ts already
  * established for the acknowledgement family.
  */
-describe.each(['hep_b_declination', 'tdap_declination'])('useVaccineDeclinationForm(%s)', (STEP_ID) => {
-  const OTHER_STEP_ID = STEP_ID === 'hep_b_declination' ? 'tdap_declination' : 'hep_b_declination';
+const VACCINE_STEP_IDS = ['hep_b_declination', 'tdap_declination', 'flu_declination'];
+
+describe.each(VACCINE_STEP_IDS)('useVaccineDeclinationForm(%s)', (STEP_ID) => {
+  const OTHER_STEP_ID = VACCINE_STEP_IDS.find((id) => id !== STEP_ID)!;
 
   describe('loading', () => {
     it(`reads heading, requiresSignature, and vaccineType from the real ${STEP_ID} packet config`, () => {

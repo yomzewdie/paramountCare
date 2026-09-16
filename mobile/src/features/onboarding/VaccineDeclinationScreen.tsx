@@ -15,15 +15,15 @@ import { useVaccineDeclinationForm } from './useVaccineDeclinationForm';
 
 // Per-vaccine descriptive copy — approved text copied verbatim from the
 // existing web VaccineDeclinationSection.tsx's own VACCINE_META object
-// (not invented here). hep_b_declination (M13) and tdap_declination (M14)
-// are structurally identical in the source — same decision values, same
-// checkbox+signature declining path, same optional (not step-blocking)
-// proof-upload note on the providing-proof path — confirmed by direct
-// comparison, not assumed from both being vaccine declinations. Only their
-// copy differs. flu_declination remains unregistered until its own
-// milestone confirms it the same way; the fallback below (matching web's
-// own fallback shape) keeps the screen functional if it's registered
-// before its metadata is added here.
+// (not invented here). hep_b_declination (M13), tdap_declination (M14),
+// and flu_declination (M15) are all structurally identical in the source —
+// same decision values, same checkbox+signature declining path, same
+// optional (not step-blocking) proof-upload note on the providing-proof
+// path — confirmed by direct comparison each time, not assumed from all
+// three being vaccine declinations. Only their copy differs. The fallback
+// below (matching web's own fallback shape) keeps the screen functional if
+// any future vaccine step is registered before its own metadata is added
+// here.
 const VACCINE_META: Record<string, { riskContext: string; offerStatement: string; declinationQuestion: string; proofInstructions: string; acceptableDocs: string }> = {
   hep_b_declination: {
     riskContext:
@@ -46,6 +46,17 @@ const VACCINE_META: Record<string, { riskContext: string; offerStatement: string
       'Please provide documentation confirming you have received the Tdap vaccine (within the past 10 years). Proof must be submitted prior to your first clinical assignment.',
     acceptableDocs:
       'Immunization record, vaccination card, or a healthcare provider letter confirming Tdap administration and date',
+  },
+  flu_declination: {
+    riskContext:
+      'Influenza causes serious illness and death each year, particularly in the elderly, infants, and immunocompromised patients — populations commonly encountered in clinical assignments. Unvaccinated healthcare workers are a documented source of patient transmission.',
+    offerStatement:
+      'Paramount Care Staffing, LLC has offered you the seasonal Influenza/H1N1 vaccine, as recommended annually by the CDC and ACIP for all healthcare workers. Note: some client facilities require annual influenza vaccination as a condition of placement.',
+    declinationQuestion: 'Are you declining the seasonal Influenza/H1N1 vaccination at this time?',
+    proofInstructions:
+      'Please provide documentation confirming you have received the current-season influenza vaccine. Proof must be submitted prior to your first clinical assignment.',
+    acceptableDocs:
+      'Immunization record, pharmacy vaccination receipt, vaccination card, or a healthcare provider letter confirming flu vaccination and date',
   },
 };
 

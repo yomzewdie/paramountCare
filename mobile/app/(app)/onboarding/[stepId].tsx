@@ -14,6 +14,7 @@ import I9Screen from '../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
+import SafetyAcknowledgementsScreen from '../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -71,8 +72,8 @@ import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
 // decision values, same declining/proof-upload behavior, only the copy
 // differs), so it reuses VaccineDeclinationScreen with zero new code, per
 // the exact reuse-readiness this registry's own hep_b_declination comment
-// already anticipated. flu_declination remains an honest placeholder —
-// still unconfirmed, out of scope for this milestone. See ADR-027.
+// already anticipated. flu_declination was confirmed and wired in M15 —
+// see its own comment below. See ADR-027.
 // documents (M14) is ICU/ER/Travel's next step after direct_deposit — the
 // real "License & Credential Uploads" checklist (I-9 identity, nursing
 // license, CPR/BLS certification), sourced from packets.ts's own
@@ -82,6 +83,27 @@ import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
 // vaccine declinations + W-4 + I-9) — this one registry entry, keyed by
 // step id, correctly serves both branches once each reaches it, the same
 // way direct_deposit already does. See ADR-027.
+// flu_declination (M15) is General RN/LVN's next step after
+// tdap_declination — directly compared (not assumed) against both hep_b
+// and tdap and confirmed identical in every structural respect (decision
+// values, declining/proof-upload behavior, requiresSignature), differing
+// only in copy already added to VaccineDeclinationScreen's VACCINE_META.
+// No new component or hook needed, same as tdap's own reuse. See ADR-028.
+// safety_acknowledgements (M15) is ICU/ER/Travel's next step after
+// documents, AND General RN/LVN's own later step after their own
+// jcaho_review (unimplemented, out of scope). One registry entry, keyed by
+// step id, correctly serves both branches once each reaches it — same
+// pattern as direct_deposit/documents above. Deliberately NOT built on
+// AcknowledgementScreen/useAcknowledgementForm: the real source model
+// (frontend/components/onboarding/SafetySection.tsx) is 8 independent
+// topic checkboxes plus one final attestation checkbox, with no typed
+// signature anywhere — a genuinely different shape, not a relabeled
+// AcknowledgementEntry. Its own already-existing shared validator
+// (validateSafety) and data shape (SafetyEducationData) required zero
+// shared-package changes. The optional safety_exam step (General RN/LVN
+// only, required: false) remains unimplemented and never blocks packet
+// completion — resolveNextRequiredStep already filters it out. See
+// ADR-028.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -99,8 +121,10 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   i9: I9Screen,
   hep_b_declination: VaccineDeclinationScreen,
   tdap_declination: VaccineDeclinationScreen,
+  flu_declination: VaccineDeclinationScreen,
   direct_deposit: DirectDepositScreen,
   documents: DocumentsScreen,
+  safety_acknowledgements: SafetyAcknowledgementsScreen,
 };
 
 export default function OnboardingStep() {

@@ -9,6 +9,7 @@ import I9Screen from '../../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../../src/features/onboarding/DocumentsScreen';
+import SafetyAcknowledgementsScreen from '../../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -51,8 +52,16 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.tdap_declination).toBe(VaccineDeclinationScreen);
   });
 
+  it('maps flu_declination to the same real VaccineDeclinationScreen as hep_b_declination/tdap_declination', () => {
+    expect(REAL_STEP_SCREENS.flu_declination).toBe(VaccineDeclinationScreen);
+  });
+
   it('maps documents to the real DocumentsScreen', () => {
     expect(REAL_STEP_SCREENS.documents).toBe(DocumentsScreen);
+  });
+
+  it('maps safety_acknowledgements to the real SafetyAcknowledgementsScreen', () => {
+    expect(REAL_STEP_SCREENS.safety_acknowledgements).toBe(SafetyAcknowledgementsScreen);
   });
 
   it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
@@ -62,15 +71,14 @@ describe('onboarding [stepId] real-screen registry', () => {
   });
 
   it('leaves genuinely unmigrated steps as honest placeholders', () => {
-    // flu_declination reuses the exact same VaccineDeclinationScreen model
-    // as hep_b_declination/tdap_declination once its own VACCINE_META copy
-    // is independently confirmed — "earliest missing step only" means M14
-    // stops at tdap_declination. jcaho_review/safety_acknowledgements/
-    // safety_exam are the real steps after `documents` and remain
-    // out of scope for this milestone.
-    expect(REAL_STEP_SCREENS.flu_declination).toBeUndefined();
+    // M15 wires in flu_declination (General RN/LVN's next step after
+    // tdap_declination) and safety_acknowledgements (ICU/ER/Travel's next
+    // step after documents). jcaho_review (General RN/LVN only, between
+    // documents and safety_acknowledgements) and safety_exam (General
+    // RN/LVN's OPTIONAL "Clinical Competency Exam" — required: false, a
+    // different step entirely from safety_acknowledgements' own "Safety &
+    // Education Exam" label) remain out of scope for this milestone.
     expect(REAL_STEP_SCREENS.jcaho_review).toBeUndefined();
-    expect(REAL_STEP_SCREENS.safety_acknowledgements).toBeUndefined();
     expect(REAL_STEP_SCREENS.safety_exam).toBeUndefined();
   });
 
@@ -176,10 +184,10 @@ describe('onboarding [stepId] real-screen registry', () => {
       const tdapIdx = packet.steps.findIndex((s) => s.id === 'tdap_declination');
       expect(tdapIdx).toBe(hepBIdx + 1);
       expect(packet.steps[tdapIdx].required).toBe(true);
-      // flu_declination immediately follows, still unregistered — "earliest
-      // missing step only" stops M14 at tdap_declination.
+      // flu_declination immediately follows — unregistered as of M14
+      // ("earliest missing step only" stopped M14 at tdap_declination);
+      // wired in by M15, confirmed in its own describe block below.
       expect(packet.steps[tdapIdx + 1]?.id).toBe('flu_declination');
-      expect(REAL_STEP_SCREENS.flu_declination).toBeUndefined();
     }
     for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
       expect(getPacket(packetId)!.steps.find((s) => s.id === 'tdap_declination')).toBeUndefined();
@@ -204,5 +212,60 @@ describe('onboarding [stepId] real-screen registry', () => {
     }
     // ICU/ER/Travel have no vaccine declination steps at all — confirmed
     // already above — so there is nothing for them to see "early."
+  });
+
+  it('confirms the real M15 branch: flu_declination is General RN/LVN\'s immediate next step after tdap_declination, and its own next step is w4', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const tdapIdx = packet.steps.findIndex((s) => s.id === 'tdap_declination');
+      const fluIdx = packet.steps.findIndex((s) => s.id === 'flu_declination');
+      expect(fluIdx).toBe(tdapIdx + 1);
+      expect(packet.steps[fluIdx].required).toBe(true);
+      expect(packet.steps[fluIdx + 1]?.id).toBe('w4');
+    }
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      expect(getPacket(packetId)!.steps.find((s) => s.id === 'flu_declination')).toBeUndefined();
+    }
+  });
+
+  it('confirms the real M15 branch: safety_acknowledgements is ICU/ER/Travel\'s immediate next step after documents, with review immediately after it — no safety_exam/jcaho_review for these packets', () => {
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      const documentsIdx = packet.steps.findIndex((s) => s.id === 'documents');
+      const safetyIdx = packet.steps.findIndex((s) => s.id === 'safety_acknowledgements');
+      expect(safetyIdx).toBe(documentsIdx + 1);
+      expect(packet.steps[safetyIdx].required).toBe(true);
+      expect(packet.steps[safetyIdx + 1]?.id).toBe('review');
+      expect(packet.steps.find((s) => s.id === 'jcaho_review')).toBeUndefined();
+      expect(packet.steps.find((s) => s.id === 'safety_exam')).toBeUndefined();
+    }
+  });
+
+  it('confirms the real M15 branch: General RN/LVN reach safety_acknowledgements via documents -> jcaho_review -> safety_acknowledgements, then an OPTIONAL safety_exam before review', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const documentsIdx = packet.steps.findIndex((s) => s.id === 'documents');
+      const jcahoIdx = packet.steps.findIndex((s) => s.id === 'jcaho_review');
+      const safetyIdx = packet.steps.findIndex((s) => s.id === 'safety_acknowledgements');
+      const examIdx = packet.steps.findIndex((s) => s.id === 'safety_exam');
+      const reviewIdx = packet.steps.findIndex((s) => s.id === 'review');
+      expect(jcahoIdx).toBe(documentsIdx + 1);
+      expect(safetyIdx).toBe(jcahoIdx + 1);
+      expect(packet.steps[safetyIdx].required).toBe(true);
+      // safety_exam sits between safety_acknowledgements and review, but is
+      // NOT required — it must never block reaching review.
+      expect(examIdx).toBe(safetyIdx + 1);
+      expect(packet.steps[examIdx].required).toBe(false);
+      expect(reviewIdx).toBe(examIdx + 1);
+    }
+  });
+
+  it('safety_acknowledgements has an identical config across every packet — no role variation', () => {
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+      const step = getPacket(packetId)!.steps.find((s) => s.id === 'safety_acknowledgements')!;
+      expect(step.config?.acknowledgementId).toBe('safety_acknowledgements');
+      expect(step.config?.requiresSignature).toBe(false);
+      expect(step.required).toBe(true);
+    }
   });
 });
