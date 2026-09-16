@@ -210,9 +210,45 @@ export function validateSafety(data: SafetyEducationData): FieldErrors {
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
+//
+// M14: this was previously a no-op stub — a `document_upload` step could be
+// marked "completed" with zero uploads. Sourced directly from the step's
+// own config (`packets.ts`'s `i9Uploads`/`requiredUploads` — identical
+// across every packet today, confirmed by reading the actual definitions,
+// not assumed), never a hardcoded list, so a future packet with a
+// different document set is a config change here, not a code change.
+// `UploadedFile` values in `formData.uploadedDocuments` only ever arrive
+// via the ownership-verified session-association endpoint (M13/M13
+// hardening) — a locally-picked-but-not-yet-uploaded, failed, or orphaned
+// file structurally can never appear here, so no separate "is this really
+// associated" check is needed beyond "is the field non-null."
 
-export function validateDocuments(_data: UploadedDocuments): FieldErrors {
-  return {};
+const REQUIRED_UPLOAD_FIELD: Record<string, { field: keyof UploadedDocuments; label: string }> = {
+  nursing_license: { field: 'nursingLicense', label: 'your nursing license' },
+  cpr_cert:        { field: 'cprCertification', label: 'your CPR/BLS certification' },
+};
+
+export function validateDocuments(data: UploadedDocuments, step?: PacketStep): FieldErrors {
+  const errors: FieldErrors = {};
+  const config = step?.config;
+
+  if (config?.i9Uploads) {
+    const hasListA = !!data.listA;
+    const hasListBAndC = !!data.listB && !!data.listC;
+    if (!hasListA && !hasListBAndC) {
+      errors.i9 = 'Upload a List A document, or both a List B and a List C document, to verify your identity and work authorization.';
+    }
+  }
+
+  for (const key of config?.requiredUploads ?? []) {
+    const entry = REQUIRED_UPLOAD_FIELD[key];
+    if (!entry) continue; // an unrecognized config key never invents a slot to require
+    if (!data[entry.field]) {
+      errors[entry.field] = `Upload ${entry.label} to continue.`;
+    }
+  }
+
+  return errors;
 }
 
 // ── Signature ─────────────────────────────────────────────────────────────────
@@ -418,7 +454,7 @@ export function validateStep(
         return validateEmploymentReference(data.employmentReferences?.[step.id] ?? defaultEmploymentReference);
 
       case 'document_upload':
-        return validateDocuments(data.uploadedDocuments);
+        return validateDocuments(data.uploadedDocuments, step);
 
       case 'exam':
       case 'review':

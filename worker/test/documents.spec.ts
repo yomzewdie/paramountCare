@@ -294,3 +294,81 @@ describe('DELETE /api/sessions/:sessionId/documents/:docType — safe remove lif
     expect(await objectExists(objectKey)).toBe(true);
   });
 });
+
+// M14: the `documents` step (License & Credential Uploads) reuses this
+// exact same association/removal endpoint for five more docTypes, each
+// nested under formData.uploadedDocuments rather than a top-level field.
+// No new route, no new ownership logic — just five more DOC_TYPE_APPLIERS
+// map entries (worker/src/routes/sessions.ts).
+describe('M14 — documents step docTypes reuse the same association endpoint', () => {
+  const DOC_TYPE_TO_FIELD: Record<string, string> = {
+    list_a: 'listA',
+    list_b: 'listB',
+    list_c: 'listC',
+    nursing_license: 'nursingLicense',
+    cpr_cert: 'cprCertification',
+  };
+
+  for (const [docType, field] of Object.entries(DOC_TYPE_TO_FIELD)) {
+    it(`associates ${docType} into formData.uploadedDocuments.${field}, nested correctly and never colliding with other slots`, async () => {
+      const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail(`docs-${docType}`));
+      const session = await createSession(accessToken, 'general_rn');
+      const { objectKey } = await upload(accessToken, fakeFile(`${docType}.jpg`, 'image/jpeg', 50));
+
+      const res = await associate(accessToken, session.sessionId, objectKey, session.revision, docType);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { formData: { uploadedDocuments?: Record<string, { objectKey: string } | null> } };
+      expect(body.formData.uploadedDocuments?.[field]?.objectKey).toBe(objectKey);
+    });
+  }
+
+  it('associating two different slots on the same session never overwrites the other — each lives at its own nested key', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('docs-multi-slot'));
+    const session = await createSession(accessToken, 'general_rn');
+
+    const licenseUpload = await upload(accessToken, fakeFile('license.jpg', 'image/jpeg', 50));
+    const licenseRes = await associate(accessToken, session.sessionId, licenseUpload.objectKey, session.revision, 'nursing_license');
+    const licenseBody = await licenseRes.json() as { revision: number };
+
+    const cprUpload = await upload(accessToken, fakeFile('cpr.jpg', 'image/jpeg', 50));
+    const cprRes = await associate(accessToken, session.sessionId, cprUpload.objectKey, licenseBody.revision, 'cpr_cert');
+    expect(cprRes.status).toBe(200);
+    const cprBody = await cprRes.json() as { formData: { uploadedDocuments?: Record<string, { objectKey: string } | null> } };
+
+    expect(cprBody.formData.uploadedDocuments?.nursingLicense?.objectKey).toBe(licenseUpload.objectKey);
+    expect(cprBody.formData.uploadedDocuments?.cprCertification?.objectKey).toBe(cprUpload.objectKey);
+  });
+
+  it('cross-user association and forged-key rejection apply identically to every new docType', async () => {
+    const victim = await registerVerifyAndLoginApplicant(uniqueEmail('docs-victim'));
+    const attacker = await registerVerifyAndLoginApplicant(uniqueEmail('docs-attacker'));
+    const { objectKey } = await upload(victim.accessToken, fakeFile('license.jpg', 'image/jpeg', 50));
+    const attackerSession = await createSession(attacker.accessToken, 'general_rn');
+
+    const res = await associate(attacker.accessToken, attackerSession.sessionId, objectKey, attackerSession.revision, 'nursing_license');
+    expect(res.status).toBe(403);
+  });
+
+  it('safe replace and remove ordering apply identically to a documents-step slot', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('docs-replace-remove'));
+    const session = await createSession(accessToken, 'general_rn');
+
+    const first = await upload(accessToken, fakeFile('license-v1.jpg', 'image/jpeg', 50));
+    const firstAssoc = await associate(accessToken, session.sessionId, first.objectKey, session.revision, 'nursing_license');
+    const firstBody = await firstAssoc.json() as { revision: number };
+    expect(await objectExists(first.objectKey)).toBe(true);
+
+    const second = await upload(accessToken, fakeFile('license-v2.jpg', 'image/jpeg', 60));
+    const secondAssoc = await associate(accessToken, session.sessionId, second.objectKey, firstBody.revision, 'nursing_license');
+    expect(secondAssoc.status).toBe(200);
+    const secondBody = await secondAssoc.json() as { formData: { uploadedDocuments?: Record<string, { objectKey: string } | null> }; revision: number };
+    expect(secondBody.formData.uploadedDocuments?.nursingLicense?.objectKey).toBe(second.objectKey);
+    expect(await objectExists(first.objectKey)).toBe(false); // old one cleaned up only after the new one was safely saved
+
+    const removeRes = await remove(accessToken, session.sessionId, secondBody.revision, 'nursing_license');
+    expect(removeRes.status).toBe(200);
+    const removeBody = await removeRes.json() as { formData: { uploadedDocuments?: Record<string, unknown | null> } };
+    expect(removeBody.formData.uploadedDocuments?.nursingLicense).toBeNull();
+    expect(await objectExists(second.objectKey)).toBe(false);
+  });
+});

@@ -278,11 +278,31 @@ interface DocumentFileMeta {
   uploadedAt: string;
 }
 
+// M14: the `documents` step (License & Credential Uploads) needs five more
+// slots, each nested under `formData.uploadedDocuments` rather than a
+// top-level field — this small helper is the only thing new, the map/route
+// logic around it is unchanged. docType strings match the naming already
+// anticipated (unused, until now) by application_documents.doc_type's own
+// comment in migrations/0002_phase1.sql.
+function applyUploadedDocumentsField(
+  formData: Record<string, unknown>,
+  field: 'listA' | 'listB' | 'listC' | 'nursingLicense' | 'cprCertification',
+  file: DocumentFileMeta | null,
+): Record<string, unknown> {
+  const existing = (formData.uploadedDocuments as Record<string, unknown> | undefined) ?? {};
+  return { ...formData, uploadedDocuments: { ...existing, [field]: file } };
+}
+
 const DOC_TYPE_APPLIERS: Record<
   string,
   (formData: Record<string, unknown>, file: DocumentFileMeta | null) => Record<string, unknown>
 > = {
   direct_deposit_voided_check: (formData, file) => ({ ...formData, directDepositProofDocument: file }),
+  list_a:           (formData, file) => applyUploadedDocumentsField(formData, 'listA', file),
+  list_b:           (formData, file) => applyUploadedDocumentsField(formData, 'listB', file),
+  list_c:           (formData, file) => applyUploadedDocumentsField(formData, 'listC', file),
+  nursing_license:  (formData, file) => applyUploadedDocumentsField(formData, 'nursingLicense', file),
+  cpr_cert:         (formData, file) => applyUploadedDocumentsField(formData, 'cprCertification', file),
 };
 
 function toFileMeta(row: { file_name: string; file_size: number; content_type: string; object_key: string; uploaded_at: string }): DocumentFileMeta {

@@ -10,7 +10,6 @@ jest.mock('../SessionContext', () => ({
 }));
 
 const mockedUseSession = useSession as jest.Mock;
-const STEP_ID = 'hep_b_declination';
 
 function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
@@ -41,9 +40,19 @@ function setupSession(session: SessionResponse, saveStepImpl?: jest.Mock) {
 
 beforeEach(() => jest.clearAllMocks());
 
-describe('useVaccineDeclinationForm', () => {
+/**
+ * M14 generalized this from a single hep_b_declination suite once
+ * tdap_declination was independently confirmed (not assumed) to share the
+ * exact same packet config shape and web behavior — see ADR-027. Every
+ * scenario below runs once per real vaccine step this app registers, the
+ * same reuse-proof pattern useAcknowledgementForm.test.ts already
+ * established for the acknowledgement family.
+ */
+describe.each(['hep_b_declination', 'tdap_declination'])('useVaccineDeclinationForm(%s)', (STEP_ID) => {
+  const OTHER_STEP_ID = STEP_ID === 'hep_b_declination' ? 'tdap_declination' : 'hep_b_declination';
+
   describe('loading', () => {
-    it('reads heading, requiresSignature, and vaccineType from the real hep_b_declination packet config', () => {
+    it(`reads heading, requiresSignature, and vaccineType from the real ${STEP_ID} packet config`, () => {
       setupSession(fakeSession());
       const { result } = renderHook(() => useVaccineDeclinationForm(STEP_ID));
       const step = getPacket('general_rn')!.steps.find((s) => s.id === STEP_ID)!;
@@ -60,7 +69,7 @@ describe('useVaccineDeclinationForm', () => {
     });
 
     it('reads only its OWN stepId, ignoring a different acknowledgement stored under the same key', () => {
-      setupSession(fakeSession({ formData: { acknowledgements: { tdap_declination: { checked: true, typedSignature: 'Other', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' } } } }));
+      setupSession(fakeSession({ formData: { acknowledgements: { [OTHER_STEP_ID]: { checked: true, typedSignature: 'Other', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' } } } }));
       const { result } = renderHook(() => useVaccineDeclinationForm(STEP_ID));
       expect(result.current.data.decision).toBeNull();
     });

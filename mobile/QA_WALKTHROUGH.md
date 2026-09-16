@@ -464,6 +464,60 @@ Jest cannot exercise real camera/scanner hardware — `useDocumentCapture.test.t
 - App restart immediately after a successful capture confirmation, before Save Progress.
 - Network loss during the upload itself, and network loss after upload but before the session association completes — confirm the applicant sees an honest failed state in both cases, never a false "saved."
 
+## M14 — Tdap Declination + License & Credential Uploads
+
+### Path A — General RN / LVN (Tdap Vaccine Declination)
+
+1. **Sign in as a test applicant on a General RN or LVN packet.**
+
+2. **Complete the Hepatitis B declination step**, then return to My Onboarding.
+
+3. **Confirm "Next step" now names the Tdap vaccine step.**
+
+4. **Open the step.** Expected: the same screen shape as Hepatitis B, with Tdap-specific copy (CDC/ACIP context, "Are you declining the Tdap vaccination at this time?").
+
+5. **Test both paths** exactly as Hepatitis B's Path A (steps 5–10 of the M13 walkthrough above) — declining requires the checkbox + signature; providing proof completes immediately with no upload required at this step.
+
+6. **Complete the step.** Expected: dashboard progress increases; "Next step" names the Influenza declination step, which remains an honest "available in an upcoming release" placeholder (not implemented this milestone — only Tdap is wired in, per "earliest missing step only").
+
+7. **Restart the app after completing**, confirm the decision restores correctly, server-backed.
+
+8. **Confirm packet isolation**: sign in as an ICU RN/ER RN/Travel RN applicant — they should never see the Tdap step at all (their packet has no vaccine declination steps).
+
+### Path B — ICU RN / ER RN / Travel RN, and later General RN / LVN (License & Credential Uploads)
+
+1. **Sign in as a test applicant on an ICU RN, ER RN, or Travel RN packet.**
+
+2. **Complete Direct Deposit Authorization** (including its voided-check attachment), then return to My Onboarding.
+
+3. **Confirm "Next step" now names License & Credential Uploads.**
+
+4. **Open the step.** Expected: a progress summary ("0 of 3 requirements complete"), an "Identity & Work Authorization" group with three cards (List A, List B, List C — with OR/+ badges matching the existing web app), and separate cards for Nursing License and CPR/BLS Certification. No "Optional Documents" section should appear (nothing is optional today).
+
+5. **Attach only a List A document** (any capture path — scan, photo, library, or PDF). Expected: once uploaded, the identity requirement is satisfied without touching List B/C.
+
+6. **Remove the List A document, then attach List B and List C instead.** Expected: the identity requirement becomes satisfied again through the B+C combination. Attach only List B (remove List C) — expected: identity requirement shows as NOT satisfied.
+
+7. **Attempt Continue with the identity requirement unsatisfied and both credentials missing.** Expected: clear, actionable errors under each missing requirement ("Upload your nursing license to continue.", etc.) — not a generic failure message.
+
+8. **Attach a Nursing License and a CPR/BLS Certification** (any capture path each). Expected: each shows Uploaded with Replace/Remove controls, independent of the others.
+
+9. **Restart the app immediately after attaching a document, before tapping Save Progress or Continue.** Reopen the step — expected: every already-attached document is still there (each persists to the session the instant it's confirmed).
+
+10. **Replace a credential document** with a new capture. Expected: the new file is what's shown afterward; the old one is gone (not left as a duplicate).
+
+11. **Fill every required slot (List A, or List B+C, plus both credentials) and tap Continue.** Expected: no errors; dashboard progress increases; "Next step" names whatever follows Documents for this packet (Safety & Education Exam acknowledgement for ICU/ER/Travel; JCAHO/TJC Standards Review for General RN/LVN — neither implemented this milestone, both remain honest placeholders).
+
+12. **Test each capture path's quality gate** (blurry/too-small camera or library image) on at least one slot — same expected behavior as M13's Direct Deposit walkthrough (blocked "Use Document," clear guidance, Retake required).
+
+13. **Test network failure during upload, and network failure after upload but before association** on at least one slot — same honest-failure expectations as M13.
+
+14. **Cross-device resume**: start Documents on one device, attach one document, then sign in on a second device — confirm that document (and only that one) shows as already attached.
+
+15. **Confirm packet isolation**: General RN/LVN applicants who haven't yet reached Documents (still on their vaccine declinations) should never see it early; once they do reach it (after completing hep_b/tdap/flu + W-4 + I-9 + Direct Deposit), it should show the identical required set as ICU/ER/Travel.
+
+No real identity documents, license numbers, or certification numbers in any of this testing — use obviously-fake synthetic images/documents. This applies to UAT as well as local testing.
+
 ## What "safe" documentation means here
 
 Nowhere in this file, in test tickets, in Slack, or in commit messages should a real invitation token, verification code, access token, refresh token, or real applicant PII appear — even in a "just for this test" context. Use placeholders (`<raw token>`, `<the code from the email>`, "Test User") exactly as this document does.

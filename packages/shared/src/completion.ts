@@ -141,6 +141,14 @@ function directDepositCompletion(
   return { step: 'direct_deposit', completed, total, percent: pct(completed, total) };
 }
 
+// M14: mirrors validateDocuments()'s own required set exactly (I-9 identity
+// — List A alone, or List B + List C together — plus nursing license and
+// CPR/BLS certification), sourced from packets.ts's `documents` step
+// config, which is identical across every packet today. Each of the 5
+// individual UploadedFile fields only ever gets set via the
+// ownership-verified session-association endpoint, never by a local
+// selection alone, so "completed" here can never mean "picked but not
+// actually uploaded."
 function documentsCompletion(data: OnboardingFormData['uploadedDocuments']): StepCompletion {
   const creds = [data.nursingLicense, data.cprCertification].filter(Boolean).length;
   const i9 = (!!data.listA || (!!data.listB && !!data.listC)) ? 1 : 0;

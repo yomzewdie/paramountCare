@@ -15,10 +15,15 @@ import { useVaccineDeclinationForm } from './useVaccineDeclinationForm';
 
 // Per-vaccine descriptive copy — approved text copied verbatim from the
 // existing web VaccineDeclinationSection.tsx's own VACCINE_META object
-// (not invented here). Only hep_b_declination is populated, since it's the
-// only vaccine step M13 actually wires into the registry — the fallback
-// below (matching web's own fallback shape) keeps the screen functional if
-// a future milestone registers tdap/flu before adding their metadata here.
+// (not invented here). hep_b_declination (M13) and tdap_declination (M14)
+// are structurally identical in the source — same decision values, same
+// checkbox+signature declining path, same optional (not step-blocking)
+// proof-upload note on the providing-proof path — confirmed by direct
+// comparison, not assumed from both being vaccine declinations. Only their
+// copy differs. flu_declination remains unregistered until its own
+// milestone confirms it the same way; the fallback below (matching web's
+// own fallback shape) keeps the screen functional if it's registered
+// before its metadata is added here.
 const VACCINE_META: Record<string, { riskContext: string; offerStatement: string; declinationQuestion: string; proofInstructions: string; acceptableDocs: string }> = {
   hep_b_declination: {
     riskContext:
@@ -30,6 +35,17 @@ const VACCINE_META: Record<string, { riskContext: string; offerStatement: string
       'Please provide documentation confirming you have received or are in the process of receiving the Hepatitis B vaccine series, or laboratory evidence of immunity (anti-HBs titer). Proof must be submitted prior to your first clinical assignment.',
     acceptableDocs:
       'Immunization record from a healthcare provider, vaccination card, or a positive hepatitis B surface antibody (HBsAb) titer report',
+  },
+  tdap_declination: {
+    riskContext:
+      'Pertussis (whooping cough) can be life-threatening for vulnerable patients including infants and immunocompromised individuals. Healthcare workers are at increased risk of transmitting pertussis to patients in their care.',
+    offerStatement:
+      'Paramount Care Staffing, LLC has offered you the Tdap vaccine, as recommended by the CDC and the Advisory Committee on Immunization Practices (ACIP) for all healthcare personnel who have not previously received Tdap as an adult.',
+    declinationQuestion: 'Are you declining the Tdap vaccination at this time?',
+    proofInstructions:
+      'Please provide documentation confirming you have received the Tdap vaccine (within the past 10 years). Proof must be submitted prior to your first clinical assignment.',
+    acceptableDocs:
+      'Immunization record, vaccination card, or a healthcare provider letter confirming Tdap administration and date',
   },
 };
 

@@ -13,6 +13,7 @@ import W4Screen from '../../../src/features/onboarding/W4Screen';
 import I9Screen from '../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
+import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -65,6 +66,22 @@ import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositS
 // left as the prior "coming soon" placeholder). Its own next step
 // (`documents`) remains an honest placeholder — it has no mobile
 // implementation yet and is out of scope for this milestone. See ADR-025.
+// tdap_declination (M14) is General RN/LVN's next step after
+// hep_b_declination — confirmed structurally identical to it (same
+// decision values, same declining/proof-upload behavior, only the copy
+// differs), so it reuses VaccineDeclinationScreen with zero new code, per
+// the exact reuse-readiness this registry's own hep_b_declination comment
+// already anticipated. flu_declination remains an honest placeholder —
+// still unconfirmed, out of scope for this milestone. See ADR-027.
+// documents (M14) is ICU/ER/Travel's next step after direct_deposit — the
+// real "License & Credential Uploads" checklist (I-9 identity, nursing
+// license, CPR/BLS certification), sourced from packets.ts's own
+// `i9Uploads`/`requiredUploads` config and the existing web
+// UploadSection.tsx's document catalog, not invented. General RN/LVN also
+// have this exact step later in their own sequence (after the three
+// vaccine declinations + W-4 + I-9) — this one registry entry, keyed by
+// step id, correctly serves both branches once each reaches it, the same
+// way direct_deposit already does. See ADR-027.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -81,7 +98,9 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   patient_bill_of_rights: AcknowledgementScreen,
   i9: I9Screen,
   hep_b_declination: VaccineDeclinationScreen,
+  tdap_declination: VaccineDeclinationScreen,
   direct_deposit: DirectDepositScreen,
+  documents: DocumentsScreen,
 };
 
 export default function OnboardingStep() {

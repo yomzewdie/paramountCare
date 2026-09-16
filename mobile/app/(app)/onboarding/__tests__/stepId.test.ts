@@ -8,6 +8,7 @@ import W4Screen from '../../../../src/features/onboarding/W4Screen';
 import I9Screen from '../../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepositScreen';
+import DocumentsScreen from '../../../../src/features/onboarding/DocumentsScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -46,6 +47,14 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.direct_deposit).toBe(DirectDepositScreen);
   });
 
+  it('maps tdap_declination to the same real VaccineDeclinationScreen as hep_b_declination', () => {
+    expect(REAL_STEP_SCREENS.tdap_declination).toBe(VaccineDeclinationScreen);
+  });
+
+  it('maps documents to the real DocumentsScreen', () => {
+    expect(REAL_STEP_SCREENS.documents).toBe(DocumentsScreen);
+  });
+
   it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
     expect(REAL_STEP_SCREENS.employment_ref_2).toBe(EmploymentReferenceScreen);
@@ -53,18 +62,16 @@ describe('onboarding [stepId] real-screen registry', () => {
   });
 
   it('leaves genuinely unmigrated steps as honest placeholders', () => {
-    // tdap_declination/flu_declination reuse the exact same
-    // VaccineDeclinationScreen model as hep_b_declination once their own
-    // VACCINE_META copy is confirmed and added — "earliest missing step
-    // only" means M13 registers hep_b_declination alone. documents is the
-    // step immediately after direct_deposit in every packet and has no
-    // mobile implementation at all yet (see DirectDepositScreen's own
-    // voided-check upload, which is Direct-Deposit-specific, not this
-    // step's later credential-upload experience).
-    expect(REAL_STEP_SCREENS.tdap_declination).toBeUndefined();
+    // flu_declination reuses the exact same VaccineDeclinationScreen model
+    // as hep_b_declination/tdap_declination once its own VACCINE_META copy
+    // is independently confirmed — "earliest missing step only" means M14
+    // stops at tdap_declination. jcaho_review/safety_acknowledgements/
+    // safety_exam are the real steps after `documents` and remain
+    // out of scope for this milestone.
     expect(REAL_STEP_SCREENS.flu_declination).toBeUndefined();
-    expect(REAL_STEP_SCREENS.documents).toBeUndefined();
     expect(REAL_STEP_SCREENS.jcaho_review).toBeUndefined();
+    expect(REAL_STEP_SCREENS.safety_acknowledgements).toBeUndefined();
+    expect(REAL_STEP_SCREENS.safety_exam).toBeUndefined();
   });
 
   it('keeps the real packet order intact regardless of implementation history (employment_ref_1 stays after employment_application)', () => {
@@ -156,9 +163,46 @@ describe('onboarding [stepId] real-screen registry', () => {
       const ddIdx = packet.steps.findIndex((s) => s.id === 'direct_deposit');
       expect(i9Idx).toBeGreaterThanOrEqual(0);
       expect(ddIdx).toBe(i9Idx + 1);
-      // `documents` (still an honest placeholder — see above) is always the
-      // very next step after direct_deposit, in every packet.
+      // `documents` is always the very next step after direct_deposit, in
+      // every packet — now a real screen, confirmed above.
       expect(packet.steps[ddIdx + 1].id).toBe('documents');
     }
+  });
+
+  it('confirms the real M14 branch: tdap_declination is General RN/LVN\'s immediate next step after hep_b_declination — the expected split, fresh from source', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const hepBIdx = packet.steps.findIndex((s) => s.id === 'hep_b_declination');
+      const tdapIdx = packet.steps.findIndex((s) => s.id === 'tdap_declination');
+      expect(tdapIdx).toBe(hepBIdx + 1);
+      expect(packet.steps[tdapIdx].required).toBe(true);
+      // flu_declination immediately follows, still unregistered — "earliest
+      // missing step only" stops M14 at tdap_declination.
+      expect(packet.steps[tdapIdx + 1]?.id).toBe('flu_declination');
+      expect(REAL_STEP_SCREENS.flu_declination).toBeUndefined();
+    }
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      expect(getPacket(packetId)!.steps.find((s) => s.id === 'tdap_declination')).toBeUndefined();
+    }
+  });
+
+  it('confirms the real M14 branch: documents\' actual required document set is identical across every packet (i9Uploads + nursing_license/cpr_cert), not assumed', () => {
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      const documentsStep = packet.steps.find((s) => s.id === 'documents')!;
+      expect(documentsStep.required).toBe(true);
+      expect(documentsStep.config?.i9Uploads).toBe(true);
+      expect(documentsStep.config?.requiredUploads).toEqual(['nursing_license', 'cpr_cert']);
+    }
+  });
+
+  it('packet-driven routing keeps TDAP and Documents from leaking into the wrong branch — General RN/LVN never see documents before their own vaccine declinations finish', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const packet = getPacket(packetId)!;
+      const ids = packet.steps.map((s) => s.id);
+      expect(ids.indexOf('tdap_declination')).toBeLessThan(ids.indexOf('documents'));
+    }
+    // ICU/ER/Travel have no vaccine declination steps at all — confirmed
+    // already above — so there is nothing for them to see "early."
   });
 });

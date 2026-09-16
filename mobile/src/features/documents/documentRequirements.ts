@@ -51,3 +51,34 @@ export const VOIDED_CHECK_REQUIREMENT: DocumentRequirement = {
   maxSizeBytes: SERVER_MAX_SIZE_BYTES,
   allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
 };
+
+// M14 — License & Credential Uploads (the `documents` step). Every slot
+// shares the same file-type/size ceiling the Worker itself enforces; the
+// resolution floor is deliberately generous (these are photographed cards/
+// letter-size documents, not fine print) — the real constraint is that the
+// document is legible at all, which the native scanner's own crop/
+// perspective correction already helps with far more than a stricter
+// pixel threshold would.
+export const IDENTITY_DOCUMENT_REQUIREMENT: DocumentRequirement = {
+  label: 'Identity Document',
+  scannerAllowed: true,
+  cameraAllowed: true,
+  existingPhotoAllowed: true,
+  pdfAllowed: true,
+  minWidthPx: 500,
+  minHeightPx: 300,
+  maxSizeBytes: SERVER_MAX_SIZE_BYTES,
+  allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
+};
+
+export const CREDENTIAL_DOCUMENT_REQUIREMENT: DocumentRequirement = {
+  label: 'Credential',
+  scannerAllowed: true,
+  cameraAllowed: true,
+  existingPhotoAllowed: true,
+  pdfAllowed: true,
+  minWidthPx: 500,
+  minHeightPx: 300,
+  maxSizeBytes: SERVER_MAX_SIZE_BYTES,
+  allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
+};
