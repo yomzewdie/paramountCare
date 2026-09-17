@@ -143,6 +143,14 @@ uploads.delete('/', async (c) => {
       // from "already deleted."
       return c.json({ success: false, error: 'File not found.' }, 404);
     }
+    if (result.reason === 'promoted') {
+      // M16 hardening: this object is referenced by a submitted
+      // application's document manifest (services/documents.ts's
+      // isObjectPromoted) — never retryable, so a distinct 409 rather
+      // than the retry-suggesting 500 below (retrying a promoted-file
+      // deletion would just fail identically forever).
+      return c.json({ success: false, error: 'This file is part of a submitted application and can no longer be deleted.' }, 409);
+    }
     // Raw R2/D1 errors are never exposed — see services/documents.ts.
     return c.json({ success: false, error: 'Storage error. Please try again.' }, 500);
   }

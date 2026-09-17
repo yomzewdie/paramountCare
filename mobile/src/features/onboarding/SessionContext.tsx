@@ -3,7 +3,16 @@ import { DEFAULT_PACKET_ID } from '@pcs/shared';
 import { createSessionEnsurer, type SessionEnsurer } from './ensureSession';
 import { deriveProgress, type OnboardingProgress } from './steps';
 import { buildStepPatch, type StepPatchInput } from './stepPatch';
-import { updateSession, associateDocument, removeDocument, type SessionResponse } from './sessionApi';
+import {
+  updateSession,
+  associateDocument,
+  removeDocument,
+  submitApplication,
+  getSession,
+  type SessionResponse,
+  type SubmitApplicationSuccess,
+  type IncompleteStepInfo,
+} from './sessionApi';
 import { appError, type AppError } from '../../utils/errors';
 
 export type SessionStatus = 'loading' | 'ready' | 'error';
@@ -11,6 +20,12 @@ export type SessionStatus = 'loading' | 'ready' | 'error';
 export type SaveStepResult =
   | { status: 'saved'; session: SessionResponse }
   | { status: 'conflict'; latestSession: SessionResponse }
+  | { status: 'error'; error: AppError };
+
+export type SubmitResult =
+  | { status: 'submitted'; data: SubmitApplicationSuccess }
+  | { status: 'conflict'; latestSession: SessionResponse }
+  | { status: 'incomplete'; incompleteSteps: IncompleteStepInfo[] }
   | { status: 'error'; error: AppError };
 
 interface SessionContextValue {
@@ -48,6 +63,18 @@ interface SessionContextValue {
   /** The counterpart to associateDocument — clears a document slot and
    * deletes the underlying R2 object server-side. */
   removeDocument: (docType: string) => Promise<SaveStepResult>;
+  /**
+   * M16 (ADR-029) — the real final application submission via
+   * `POST /api/sessions/:id/submit`, never a plain PATCH marking `review`
+   * completed (see that route's own doc comment for why). On success
+   * (fresh or idempotently-already-submitted), this re-fetches the
+   * session directly by id — not via `refresh()`/ensureSession's
+   * get-or-create flow, which only ever looks for a still-'active'
+   * session — so `session` here always reflects the real post-submission
+   * state (`status: 'submitted'`, `applicationId`, `stepStates.review`)
+   * afterward, never a locally-reconstructed guess.
+   */
+  submitApplication: () => Promise<SubmitResult>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -164,14 +191,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return applyUpdateResult(result);
   }, []);
 
+  const submitApplicationFn = useCallback(async (): Promise<SubmitResult> => {
+    const current = sessionRef.current;
+    if (!current) return { status: 'error', error: appError('unknown') };
+
+    const result = await submitApplication(current.sessionId, { revision: current.revision });
+
+    if (result.ok) {
+      // Re-fetch by id (not refresh()/ensureSession — see this function's
+      // own doc comment on the SessionContextValue interface) so `session`
+      // reflects the real, authoritative post-submission state.
+      const fetched = await getSession(current.sessionId);
+      if (fetched.ok) setSession(fetched.data);
+      return { status: 'submitted', data: result.data };
+    }
+    if (result.conflict) {
+      setSession(result.current);
+      return { status: 'conflict', latestSession: result.current };
+    }
+    if (result.incomplete) {
+      return { status: 'incomplete', incompleteSteps: result.incompleteSteps };
+    }
+    return { status: 'error', error: result.error };
+  }, []);
+
   const progress = useMemo<OnboardingProgress | null>(
     () => (session ? deriveProgress(session.packetId, session.stepStates) : null),
     [session],
   );
 
   const value = useMemo<SessionContextValue>(
-    () => ({ status, session, progress, error, refresh: load, saveStep, associateDocument: associateDocumentFn, removeDocument: removeDocumentFn }),
-    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn],
+    () => ({
+      status, session, progress, error, refresh: load, saveStep,
+      associateDocument: associateDocumentFn, removeDocument: removeDocumentFn,
+      submitApplication: submitApplicationFn,
+    }),
+    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn, submitApplicationFn],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

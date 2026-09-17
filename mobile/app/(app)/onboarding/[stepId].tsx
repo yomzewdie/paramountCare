@@ -15,6 +15,7 @@ import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDe
 import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
 import SafetyAcknowledgementsScreen from '../../../src/features/onboarding/SafetyAcknowledgementsScreen';
+import ReviewScreen from '../../../src/features/onboarding/ReviewScreen';
 
 // A real form for a migrated step, an honest placeholder for everything
 // else — one small registry, so slotting in the next migrated step means
@@ -90,20 +91,39 @@ import SafetyAcknowledgementsScreen from '../../../src/features/onboarding/Safet
 // only in copy already added to VaccineDeclinationScreen's VACCINE_META.
 // No new component or hook needed, same as tdap's own reuse. See ADR-028.
 // safety_acknowledgements (M15) is ICU/ER/Travel's next step after
-// documents, AND General RN/LVN's own later step after their own
-// jcaho_review (unimplemented, out of scope). One registry entry, keyed by
-// step id, correctly serves both branches once each reaches it — same
-// pattern as direct_deposit/documents above. Deliberately NOT built on
-// AcknowledgementScreen/useAcknowledgementForm: the real source model
-// (frontend/components/onboarding/SafetySection.tsx) is 8 independent
-// topic checkboxes plus one final attestation checkbox, with no typed
-// signature anywhere — a genuinely different shape, not a relabeled
-// AcknowledgementEntry. Its own already-existing shared validator
-// (validateSafety) and data shape (SafetyEducationData) required zero
-// shared-package changes. The optional safety_exam step (General RN/LVN
-// only, required: false) remains unimplemented and never blocks packet
-// completion — resolveNextRequiredStep already filters it out. See
-// ADR-028.
+// documents, AND General RN/LVN's own later step after jcaho_review
+// (M16). One registry entry, keyed by step id, correctly serves both
+// branches once each reaches it — same pattern as direct_deposit/documents
+// above. Deliberately NOT built on AcknowledgementScreen/
+// useAcknowledgementForm: the real source model (frontend/components/
+// onboarding/SafetySection.tsx) is 8 independent topic checkboxes plus one
+// final attestation checkbox, with no typed signature anywhere — a
+// genuinely different shape, not a relabeled AcknowledgementEntry. Its own
+// already-existing shared validator (validateSafety) and data shape
+// (SafetyEducationData) required zero shared-package changes. The
+// optional safety_exam step (General RN/LVN only, required: false, real
+// label "Clinical Competency Exam" — a different exam from
+// safety_acknowledgements' own "Safety & Education Exam" label) remains
+// unimplemented and never blocks packet completion — resolveNextRequiredStep
+// already filters it out. See ADR-028.
+// jcaho_review (M16) is General RN/LVN's next step after documents —
+// freshly compared against source (packets.ts) and found structurally
+// IDENTICAL to background_auth/health_info_auth/patient_bill_of_rights:
+// `{acknowledgementId, requiresSignature: true, text}`, no hasDeclination,
+// no per-item structure. Reuses AcknowledgementScreen/useAcknowledgementForm
+// with zero new code, exactly like patient_bill_of_rights (M12) — the
+// shared validation/completion layer already dispatches it through the
+// same generic acknowledgement path. Not present in ICU/ER/Travel's
+// packet at all. See ADR-029.
+// review (M16) is every packet's final required step — "Review & Submit."
+// Confirmed from the real web product (frontend/app/onboarding/demo/page.tsx
+// + ReviewSection.tsx) that Review is not merely a read-only summary: its
+// own Submit action IS the real final-submission boundary (calls
+// /api/submit-onboarding there). ReviewScreen mirrors that same boundary
+// for the authenticated mobile session architecture via a new, dedicated
+// POST /api/sessions/:sessionId/submit endpoint — server-authoritative,
+// idempotent, and never gated on a client-supplied "ready" flag. See
+// ADR-029.
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
@@ -125,6 +145,8 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   direct_deposit: DirectDepositScreen,
   documents: DocumentsScreen,
   safety_acknowledgements: SafetyAcknowledgementsScreen,
+  jcaho_review: AcknowledgementScreen,
+  review: ReviewScreen,
 };
 
 export default function OnboardingStep() {

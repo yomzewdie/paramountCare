@@ -77,6 +77,28 @@ export async function getMySession(): Promise<ApiResult<SessionResponse | null>>
   }
 }
 
+/**
+ * `GET /api/sessions/:sessionId` — a direct-by-id read, distinct from
+ * `getMySession()`'s `/mine` (which only ever finds a session whose status
+ * is still 'active'). Needed after a successful submission (M16): the
+ * session's own status has just become 'submitted', so `/mine` would no
+ * longer find it — re-fetching by its known id is how SessionContext
+ * re-syncs to the authoritative post-submission state without going
+ * through ensureSession's get-or-create flow at all.
+ */
+export async function getSession(sessionId: string): Promise<ApiResult<SessionResponse>> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: (await res.json()) as SessionResponse };
+  } catch (err) {
+    return { ok: false, error: networkFailureToAppError(err) };
+  }
+}
+
 export async function createSession(packetId: string): Promise<ApiResult<SessionResponse>> {
   try {
     const res = await authedRequest('/api/sessions', {
@@ -185,5 +207,63 @@ export async function removeDocument(
     return { ok: true, data: (await res.json()) as SessionResponse };
   } catch (err) {
     return { ok: false, conflict: false, error: networkFailureToAppError(err) };
+  }
+}
+
+export interface IncompleteStepInfo {
+  id: string;
+  label: string;
+}
+
+export interface SubmitApplicationSuccess {
+  applicationId: string;
+  /** Only present on the request that actually performed the submission —
+   * an idempotent "already submitted" response has no fresh timestamp of
+   * its own to report (see services/submission.ts on the Worker side). */
+  submittedAt: string | null;
+  alreadySubmitted: boolean;
+}
+
+export type SubmitApplicationResult =
+  | { ok: true; data: SubmitApplicationSuccess }
+  | { ok: false; conflict: true; incomplete: false; current: SessionResponse }
+  | { ok: false; conflict: false; incomplete: true; incompleteSteps: IncompleteStepInfo[] }
+  | { ok: false; conflict: false; incomplete: false; error: AppError };
+
+/**
+ * `POST /api/sessions/:sessionId/submit` (M16, ADR-029) — the real final
+ * application submission, not merely marking the `review` step complete.
+ * A 422 here is NOT a field-validation error (never routed through
+ * `toAppError`'s `issues` handling) — it's the server's own fresh,
+ * authoritative "which required steps are still incomplete" answer,
+ * always re-derived server-side and never inferred from what the client
+ * thinks is done. A 200 (vs. 201) means this exact submission already
+ * happened — a double tap, retry, or reopening this screen after a prior
+ * success — and is handled identically to a fresh 201 by every caller.
+ */
+export async function submitApplication(sessionId: string, payload: { revision: number }): Promise<SubmitApplicationResult> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 201 || res.status === 200) {
+      const body = (await res.json()) as SubmitApplicationSuccess;
+      return { ok: true, data: body };
+    }
+    if (res.status === 409) {
+      const body = (await res.json()) as { current: SessionResponse };
+      return { ok: false, conflict: true, incomplete: false, current: body.current };
+    }
+    if (res.status === 422) {
+      const body = (await res.json()) as { incompleteSteps: IncompleteStepInfo[] };
+      return { ok: false, conflict: false, incomplete: true, incompleteSteps: body.incompleteSteps ?? [] };
+    }
+    const body = await res.json().catch(() => undefined);
+    return { ok: false, conflict: false, incomplete: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+  } catch (err) {
+    return { ok: false, conflict: false, incomplete: false, error: networkFailureToAppError(err) };
   }
 }

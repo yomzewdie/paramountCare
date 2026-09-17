@@ -5,7 +5,7 @@ import { Card } from '../../src/components/Card';
 import { Button } from '../../src/components/Button';
 import { ProgressBar } from '../../src/components/ProgressBar';
 import { StepRow } from '../../src/components/StepRow';
-import { LoadingState, ErrorState } from '../../src/components/StatusStates';
+import { LoadingState, ErrorState, SuccessState } from '../../src/components/StatusStates';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useAuth } from '../../src/features/auth/AuthContext';
 import { useSession } from '../../src/features/onboarding/SessionContext';
@@ -47,6 +47,31 @@ export default function Home() {
     return (
       <Screen scroll={false}>
         <ErrorState message="We couldn't load your onboarding checklist. Please try again." onRetry={() => void refresh()} />
+      </Screen>
+    );
+  }
+
+  // M16 hardening (ADR-029 addendum): a submitted session must land the
+  // applicant in the authoritative confirmation state — never the
+  // editable step list/"Continue Onboarding" flow — on every path that
+  // can bring them back here: app restart, sign-out/sign-in, cross-device
+  // login, or reopening after a lost-response retry. `session.status` is
+  // read fresh from the server every time (via the normal session-load
+  // flow), never inferred from local/transient screen state, so this is
+  // honest regardless of how the applicant got here. This is a UX
+  // courtesy only — the Worker's own post-submission immutability guard
+  // (routes/sessions.ts's rejectIfSubmitted) is what actually prevents
+  // any edit from taking effect, independent of what this screen shows.
+  if (session.status === 'submitted' && session.applicationId) {
+    return (
+      <Screen scroll={false}>
+        <SuccessState
+          message={`Application submitted. Your reference number is ${session.applicationId}. Documents received — Paramount Care Staffing, LLC will review your application within 1–2 business days.`}
+        />
+        <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
+          <Button label="View Application" onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: 'review' } })} />
+          <Button label="Sign out" variant="secondary" onPress={() => void signOut()} />
+        </View>
       </Screen>
     );
   }

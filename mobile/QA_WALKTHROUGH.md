@@ -564,11 +564,71 @@ No real identity documents, license numbers, or certification numbers in any of 
 
 12. **Restart the app after completing**, confirm all 8 topics and the attestation restore correctly, server-backed.
 
-13. **Confirm packet isolation**: General RN/LVN applicants reach this exact same step later (after JCAHO/TJC Standards Review, which remains an honest placeholder) — do not test that path this milestone, since JCAHO is unimplemented and out of scope.
+13. **Confirm packet isolation**: General RN/LVN applicants reach this exact same step later, after JCAHO/TJC Standards Review (see M16 below — now a real, implemented step).
 
 14. **Do NOT test a "Safety Exam" quiz, questions, answer key, or retake flow anywhere in this walkthrough.** No such feature exists — `safety_acknowledgements` (the checklist above) is a distinct, separate step from the optional `safety_exam` ("Clinical Competency Exam") step, which remains entirely unimplemented and is never reached in this app.
 
 No real employment/compliance data needed for this step — it contains no PII, only checkbox state.
+
+## M16 — JCAHO Review + Review & Final Application Submission
+
+### Path A — General RN / LVN (JCAHO / TJC Standards Review)
+
+1. **Sign in as a test applicant on a General RN or LVN packet, and complete License & Credential Uploads (Documents).**
+
+2. **Confirm "Next step" now names JCAHO / TJC Standards Review.**
+
+3. **Open the step.** Expected: the same screen shape as Patient Bill of Rights/Background Authorization (full policy text, a single acknowledgement checkbox, a typed-signature field) — because this step really is that same model, confirmed from source.
+
+4. **Attempt Continue unchecked/unsigned.** Expected: the same actionable errors as every other acknowledgement step.
+
+5. **Check the box, type a signature, and Continue.** Expected: dashboard progress increases; "Next step" names Safety & Education Exam.
+
+6. **Confirm packet isolation**: ICU RN/ER RN/Travel RN applicants never see this step at all (their packet has none).
+
+### Path B — Review & Final Application Submission (all five packets)
+
+1. **Complete an entire packet** (any of the five) up through its last real required step (Safety & Education Acknowledgements).
+
+2. **Open Review.** Expected: a progress bar, a "Ready to submit" banner (every required step is done), and grouped sections — Personal Information, Employment Application, Employment Reference(s), Authorizations & Acknowledgements, Vaccine Declarations (General RN/LVN only), Tax Forms/W-4, Form I-9, Direct Deposit, License & Credential Uploads, JCAHO Review (General RN/LVN only), Safety & Education Acknowledgements, and an Optional section if any optional step exists (e.g. Travel RN's Employment Reference #3, or General RN/LVN's Clinical Competency Exam). Each required section shows Complete or Needs attention; each has an Edit button.
+
+3. **Confirm no sensitive values appear anywhere on Review** — no SSN, no bank account or routing number (Direct Deposit shows a status line only, never account details), no raw uploaded document image content (filenames/checkmarks only).
+
+4. **Before completing everything, verify the "needs attention" path**: leave one required step incomplete (e.g. don't complete Direct Deposit), open Review. Expected: the readiness banner shows "N sections need attention," that section is flagged "Needs attention," and Submit Application is disabled.
+
+5. **Tap Edit on the incomplete section**, complete it, save, and return to Review. Expected: Review reflects the newly-completed state immediately (re-read from the authoritative session, not a stale cached summary) — the banner now shows "Ready to submit" and Submit Application is enabled.
+
+6. **Read the final certification text above Submit Application** — it should read exactly: "By submitting, you certify that all information provided is true and accurate to the best of your knowledge. False statements may result in termination and are subject to penalties under federal law. Paramount Care Staffing, LLC will review your application within 1–2 business days." No separate checkbox exists for this — tapping Submit Application itself is the certification, matching the real product exactly.
+
+7. **Tap Submit Application.** Expected: a loading state, then a success screen naming your application reference number (format `PCS-YYYY-XXXX`) and confirming submission — never an approval, hiring, or review-outcome claim.
+
+8. **Restart the app after a successful submission.** Expected: the confirmation/submitted state restores correctly (the session's own `status`/`applicationId` are authoritative and server-backed, not held only in transient screen state).
+
+9. **Double-tap Submit Application** (or rapidly tap it twice) before the first request resolves. Expected: no duplicate submission — the button disables/shows progress after the first tap, and even if a second request reaches the server, it resolves to the identical application id, not a second one.
+
+10. **Simulate a network failure during submission** (airplane mode mid-tap, or a timeout) and retry. Expected: no duplicate application is created — retrying resolves to the same success state (this is enforced server-side, not by the button's own disabled state, which is UX only).
+
+11. **Simulate the "lost response" case**: submit successfully, but pretend the app never saw the response (force-close before the confirmation renders), then reopen the app. Expected: the dashboard/Review reflects the real submitted state; nothing invites a second application.
+
+12. **Cross-device**: submit from one device; open the same account on a second device. Expected: the second device sees the same submitted/confirmed state, not an invitation to submit again.
+
+13. **Confirm the optional Clinical Competency Exam never blocks anything** (General RN/LVN only): leave it entirely untouched and still reach a successful submission.
+
+14. **Do NOT test a Clinical Competency Exam quiz, approval status, "You're hired," background-check completion, or any review-time-estimate other than the exact "1–2 business days" text above.** None of that exists in this app.
+
+No real SSNs, bank accounts, or identity documents in any of this testing — use only obviously-fake synthetic data, exactly as every prior milestone's walkthrough requires.
+
+### Path C — Post-submission immutability (M16 hardening)
+
+1. **Submit a complete application**, then from the Home dashboard, confirm you land directly on the confirmation state (application reference number, no "Continue Onboarding" button, no tappable step list).
+
+2. **Force the app back into an individual step screen after submission** (e.g. via a deep link to a step id, if you have a way to trigger one, or by backgrounding mid-navigation) and attempt to Save Progress or Continue. Expected: a clear error/conflict response — the edit is refused, never silently accepted, even though this path is no longer offered by normal navigation.
+
+3. **Restart the app after submission.** Expected: you land back on the confirmation state, not the editable onboarding checklist — every time, not just immediately after submitting.
+
+4. **Sign out and sign back in as the same applicant after submission.** Expected: same confirmation state, not a fresh/blank onboarding flow and not a second application.
+
+Do not attempt to verify server-side document deletion protection from the mobile app directly — that guard (an applicant cannot delete an R2 object that's part of their submitted application, even via the raw upload-delete API) is proven by Worker tests, not observable through the mobile UI, which has no delete-after-submission button in the first place.
 
 ## What "safe" documentation means here
 

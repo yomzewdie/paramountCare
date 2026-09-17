@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont, PDFForm } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 
 export interface I9PdfInput {
   // Personal info (from Step 1)
@@ -49,6 +50,39 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Embeds a custom, Unicode-capable font when one is supplied — used for
+ * EVERY piece of applicant-entered text (name, address, city, alien
+ * numbers, typed signature), never for this file's own static English
+ * labels/notices, which stay on the WinAnsi standard fonts unchanged.
+ *
+ * Why this exists: `StandardFonts.*` (Helvetica, etc. — pdf-lib's only
+ * built-in fonts) are WinAnsiEncoding-only. A legal name outside that
+ * character set (e.g. many Vietnamese, Cyrillic-beyond-WinAnsi's-subset,
+ * or non-Latin-script names — a realistic, non-hypothetical input for a
+ * healthcare-staffing applicant, not an edge case) makes pdf-lib throw
+ * at generation time — see pdf-lib's own `PDFForm.updateFieldAppearances`
+ * documentation, which names exactly this limitation and recommends
+ * exactly this fix. `unicodeFontBytes` is expected to be fetched from R2
+ * by the caller (services/submission.ts), mirroring the exact same
+ * fallback-tolerant pattern already established for the I-9 template PDF
+ * itself: a large, rarely-changing binary asset Paramount/ops provides
+ * via a one-time `wrangler r2 object put`, not something bundled into
+ * this Worker's own deployed code. Returns null (falls back to the
+ * existing WinAnsi standard-font behavior) if no bytes were supplied or
+ * embedding fails for any reason — never throws.
+ */
+async function embedUnicodeFont(pdfDoc: PDFDocument, unicodeFontBytes?: Uint8Array | null): Promise<PDFFont | null> {
+  if (!unicodeFontBytes || unicodeFontBytes.byteLength === 0) return null;
+  try {
+    pdfDoc.registerFontkit(fontkit);
+    return await pdfDoc.embedFont(unicodeFontBytes, { subset: true });
+  } catch (e) {
+    console.error('[i9pdf] Unicode font embed failed — falling back to WinAnsi standard fonts:', e);
+    return null;
+  }
+}
+
 // Safe AcroForm field setters — ignore unknown field names gracefully.
 function safeSetText(form: PDFForm, fieldName: string, value: string): void {
   try {
@@ -84,6 +118,7 @@ function safeCheck(form: PDFForm, fieldName: string): void {
 async function generateFromTemplate(
   templateBytes: Uint8Array,
   input: I9PdfInput,
+  unicodeFontBytes?: Uint8Array | null,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(templateBytes, { ignoreEncryption: true });
   const form = pdfDoc.getForm();
@@ -140,6 +175,18 @@ async function generateFromTemplate(
   const sigText = input.i9TypedSignature || `${input.firstName} ${input.lastName}`;
   safeSetText(form, "Signature of Employee", sigText);
   safeSetText(form, "Today's Date mmddyyy",  input.i9SignedDate);
+
+  // Every text field in this AcroForm holds applicant-entered (or
+  // applicant-derived) data — there is no "static label" field to
+  // accidentally mis-style here, unlike the fallback layout below, so a
+  // Unicode font (when available) is safe to apply to the WHOLE form at
+  // once via updateFieldAppearances(). Must run BEFORE flatten(): once
+  // flattened, fields no longer exist to have their appearances updated —
+  // flatten() itself would otherwise generate WinAnsi-only appearances
+  // for any field whose appearance hasn't already been set (see pdf-lib's
+  // own updateFieldAppearances() documentation).
+  const unicodeFont = await embedUnicodeFont(pdfDoc, unicodeFontBytes);
+  if (unicodeFont) form.updateFieldAppearances(unicodeFont);
 
   // Flatten — converts all AcroForm fields to static content.
   form.flatten();
@@ -220,9 +267,19 @@ function sectionBar(page: PDFPage, label: string, y: number, bold: PDFFont): num
   return y - BAR_H;
 }
 
-function checkboxFallback(page: PDFPage, x: number, y: number, checked: boolean, bold: PDFFont) {
+function checkboxFallback(page: PDFPage, x: number, y: number, checked: boolean) {
   rect(page, x, y, 12, 12, checked ? NAVY : WHITE, DGRAY, 0.8);
-  if (checked) txt(page, '✓', x + 2, y + 2, 9, bold, WHITE);
+  if (checked) {
+    // Drawn as vector line segments, not a text glyph — WinAnsiEncoding
+    // (the only encoding pdf-lib's StandardFonts support) has no code
+    // point for U+2713 CHECK MARK, so drawing it as text throws at PDF
+    // generation time for EVERY real applicant whose citizenship status
+    // renders a checked box (i.e. almost every real submission — this was
+    // a live, previously-undiscovered bug, not a hypothetical one). A
+    // vector checkmark has no font/encoding dependency at all.
+    page.drawLine({ start: { x: x + 2.5, y: y + 6 }, end: { x: x + 5, y: y + 3 }, thickness: 1.4, color: WHITE });
+    page.drawLine({ start: { x: x + 5, y: y + 3 }, end: { x: x + 9.5, y: y + 9.5 }, thickness: 1.4, color: WHITE });
+  }
 }
 
 const CITIZENSHIP_LABELS: Record<string, string> = {
@@ -232,15 +289,28 @@ const CITIZENSHIP_LABELS: Record<string, string> = {
   alien_authorized:          '4. A noncitizen authorized to work',
 };
 
-async function generateFallbackPdf(input: I9PdfInput): Promise<Uint8Array> {
+async function generateFallbackPdf(input: I9PdfInput, unicodeFontBytes?: Uint8Array | null): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.setTitle('Form I-9 Section 1 Attestation');
   pdfDoc.setAuthor('Paramount Care Staffing, LLC');
 
   const page = pdfDoc.addPage([PW, PH]);
-  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold    = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const italic  = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold      = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  const unicodeFont = await embedUnicodeFont(pdfDoc, unicodeFontBytes);
+  // `regular` renders every field label AND every applicant-entered value
+  // via fieldBox() below — using the Unicode font (when available) for
+  // BOTH is simplest and harmless, since any real font covers plain ASCII
+  // labels identically to Helvetica. `signatureFont` covers the one other
+  // spot applicant data renders (the typed signature name), which would
+  // otherwise stay on the italic WinAnsi font. Static, always-English
+  // notice/heading text keeps `bold`/`italic` (the WinAnsi fonts)
+  // unchanged — there is nothing in those calls a Unicode font is ever
+  // needed for.
+  const regular = unicodeFont ?? helvetica;
+  const italic = timesItalic;
+  const signatureFont = unicodeFont ?? italic;
 
   let y = PH - 36;
 
@@ -285,7 +355,7 @@ async function generateFallbackPdf(input: I9PdfInput): Promise<Uint8Array> {
 
   for (const status of ['citizen', 'noncitizen_national', 'lawful_permanent_resident', 'alien_authorized']) {
     const checked = input.citizenshipStatus === status;
-    checkboxFallback(page, ML + 2, y - 10, checked, bold);
+    checkboxFallback(page, ML + 2, y - 10, checked);
     txt(page, CITIZENSHIP_LABELS[status] ?? status, ML + 20, y - 8, 8.5, checked ? bold : regular, checked ? NAVY : DGRAY);
     if (status === 'lawful_permanent_resident' && checked) { txt(page, `A-Number: ${input.alienRegistrationNumber || '—'}`, ML + 20, y - 18, 7.5, regular, DGRAY); y -= 10; }
     if (status === 'alien_authorized' && checked) {
@@ -318,10 +388,10 @@ async function generateFallbackPdf(input: I9PdfInput): Promise<Uint8Array> {
       const dims = pngImage.scaleToFit(SIG_W - 12, SIG_H - 18);
       page.drawImage(pngImage, { x: ML + 6, y: y - SIG_H + 6, width: dims.width, height: dims.height });
     } catch {
-      txt(page, input.i9TypedSignature || `${input.firstName} ${input.lastName}`, ML + 6, y - SIG_H + 16, 16, italic, BLACK);
+      txt(page, input.i9TypedSignature || `${input.firstName} ${input.lastName}`, ML + 6, y - SIG_H + 16, 16, signatureFont, BLACK);
     }
   } else {
-    txt(page, truncate(input.i9TypedSignature || `${input.firstName} ${input.lastName}`, italic, 18, SIG_W - 12), ML + 6, y - SIG_H + 16, 18, italic, BLACK);
+    txt(page, truncate(input.i9TypedSignature || `${input.firstName} ${input.lastName}`, signatureFont, 18, SIG_W - 12), ML + 6, y - SIG_H + 16, 18, signatureFont, BLACK);
     txt(page, '(Electronic signature)', ML + 6, y - SIG_H + 6, 6, regular, DGRAY);
   }
 
@@ -351,13 +421,24 @@ async function generateFallbackPdf(input: I9PdfInput): Promise<Uint8Array> {
 //
 // To upload the template to R2 (one-time setup):
 //   wrangler r2 object put <bucket>/templates/i9-2024.pdf --file=frontend/public/forms/i9-2024.pdf
+//
+// Pass `unicodeFontBytes` (bytes of a TTF/OTF font covering whatever
+// scripts Paramount's applicant population actually needs — Latin
+// Extended, Cyrillic, CJK, etc.) to render applicant-entered text with
+// full Unicode support instead of pdf-lib's WinAnsi-only standard fonts.
+// Exactly the same "large binary asset, ops-provided via R2, not bundled
+// into this Worker's own deployed code" pattern as the template above —
+// see services/submission.ts for where this gets fetched. Pass null/
+// omit to keep the existing WinAnsi-only rendering (the current default,
+// until such a font is actually uploaded).
 
 export async function generateI9Pdf(
   input: I9PdfInput,
   templateBytes?: Uint8Array | null,
+  unicodeFontBytes?: Uint8Array | null,
 ): Promise<Uint8Array> {
   if (templateBytes && templateBytes.byteLength > 0) {
-    return generateFromTemplate(templateBytes, input);
+    return generateFromTemplate(templateBytes, input, unicodeFontBytes);
   }
-  return generateFallbackPdf(input);
+  return generateFallbackPdf(input, unicodeFontBytes);
 }

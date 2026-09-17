@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { Screen } from '../../../src/components/Screen';
 import { Card } from '../../../src/components/Card';
@@ -17,7 +18,22 @@ export default function OnboardingOverview() {
   const router = useRouter();
   const { status, session, progress, error, refresh } = useSession();
 
-  if (status === 'loading') {
+  // M16 hardening: a submitted session's steps must never present as an
+  // editable, tappable list — home.tsx already owns the authoritative
+  // confirmation view, so this screen simply hands off to it rather than
+  // duplicating that UI a third time (ReviewScreen being the other).
+  // Reachable directly (deep link, back-navigation) even though home.tsx
+  // no longer offers a "Continue Onboarding" button into here once
+  // submitted — this is a UX courtesy only; the Worker's own
+  // rejectIfSubmitted guard is what actually prevents any edit here from
+  // taking effect regardless of whether this redirect ever ran.
+  useEffect(() => {
+    if (session?.status === 'submitted') {
+      router.replace('/(app)/home');
+    }
+  }, [session?.status, router]);
+
+  if (status === 'loading' || session?.status === 'submitted') {
     return (
       <Screen scroll={false}>
         <LoadingState label="Loading your onboarding checklist…" />

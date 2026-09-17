@@ -16,12 +16,16 @@ jest.mock('../sessionApi', () => ({
   updateSession: jest.fn(),
   associateDocument: jest.fn(),
   removeDocument: jest.fn(),
+  submitApplication: jest.fn(),
+  getSession: jest.fn(),
 }));
 
 const mockEnsure = jest.fn();
 const mockedUpdateSession = sessionApi.updateSession as jest.Mock;
 const mockedAssociateDocument = sessionApi.associateDocument as jest.Mock;
 const mockedRemoveDocument = sessionApi.removeDocument as jest.Mock;
+const mockedSubmitApplication = sessionApi.submitApplication as jest.Mock;
+const mockedGetSession = sessionApi.getSession as jest.Mock;
 
 function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
@@ -272,6 +276,104 @@ describe('SessionContext', () => {
 
       expect(outcome).toEqual({ status: 'conflict', latestSession: fresh });
       expect(result.current.session).toEqual(fresh);
+    });
+  });
+
+  describe('submitApplication (M16, ADR-029)', () => {
+    it('on success, re-fetches the session BY ID (not refresh()/ensureSession) so context reflects the real post-submission state', async () => {
+      const initial = fakeSession({ revision: 5, status: 'active', applicationId: null });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedSubmitApplication.mockResolvedValue({ ok: true, data: { applicationId: 'PCS-2026-ABCD', submittedAt: '2026-01-01T00:00:00.000Z', alreadySubmitted: false } });
+      const submitted = fakeSession({ revision: 6, status: 'submitted', applicationId: 'PCS-2026-ABCD', stepStates: { personal_info: 'completed', review: 'completed' } });
+      mockedGetSession.mockResolvedValue({ ok: true, data: submitted });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.submitApplication>> | undefined;
+      await act(async () => {
+        outcome = await result.current.submitApplication();
+      });
+
+      expect(mockedSubmitApplication).toHaveBeenCalledWith('sess-1', { revision: 5 });
+      expect(outcome).toEqual({ status: 'submitted', data: { applicationId: 'PCS-2026-ABCD', submittedAt: '2026-01-01T00:00:00.000Z', alreadySubmitted: false } });
+      expect(mockedGetSession).toHaveBeenCalledWith('sess-1');
+      expect(result.current.session).toEqual(submitted);
+      // ensureSession's get-or-create flow (mockEnsure) is never invoked
+      // again just to observe a successful submission.
+      expect(mockEnsure).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats an idempotent "already submitted" response the same way — still re-fetches and updates context', async () => {
+      const initial = fakeSession({ revision: 5, status: 'active' });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedSubmitApplication.mockResolvedValue({ ok: true, data: { applicationId: 'PCS-2026-ABCD', submittedAt: null, alreadySubmitted: true } });
+      const submitted = fakeSession({ revision: 6, status: 'submitted', applicationId: 'PCS-2026-ABCD' });
+      mockedGetSession.mockResolvedValue({ ok: true, data: submitted });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.submitApplication>> | undefined;
+      await act(async () => {
+        outcome = await result.current.submitApplication();
+      });
+
+      expect(outcome).toEqual({ status: 'submitted', data: { applicationId: 'PCS-2026-ABCD', submittedAt: null, alreadySubmitted: true } });
+      expect(result.current.session).toEqual(submitted);
+    });
+
+    it('on a 409 conflict, updates the context session and reports the conflict distinctly — never re-fetches by id', async () => {
+      const initial = fakeSession({ revision: 5 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      const fresh = fakeSession({ revision: 9 });
+      mockedSubmitApplication.mockResolvedValue({ ok: false, conflict: true, incomplete: false, current: fresh });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.submitApplication>> | undefined;
+      await act(async () => {
+        outcome = await result.current.submitApplication();
+      });
+
+      expect(outcome).toEqual({ status: 'conflict', latestSession: fresh });
+      expect(result.current.session).toEqual(fresh);
+      expect(mockedGetSession).not.toHaveBeenCalled();
+    });
+
+    it('on a server-side incomplete rejection, leaves the context session untouched and reports the server\'s incompleteSteps', async () => {
+      const initial = fakeSession({ revision: 5 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedSubmitApplication.mockResolvedValue({ ok: false, conflict: false, incomplete: true, incompleteSteps: [{ id: 'w4', label: 'Tax Forms / W-4' }] });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.submitApplication>> | undefined;
+      await act(async () => {
+        outcome = await result.current.submitApplication();
+      });
+
+      expect(outcome).toEqual({ status: 'incomplete', incompleteSteps: [{ id: 'w4', label: 'Tax Forms / W-4' }] });
+      expect(result.current.session).toEqual(initial);
+    });
+
+    it('on a generic error, leaves the context session untouched', async () => {
+      const initial = fakeSession({ revision: 5 });
+      mockEnsure.mockResolvedValue({ ok: true, session: initial });
+      mockedSubmitApplication.mockResolvedValue({ ok: false, conflict: false, incomplete: false, error: appError('server_error') });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let outcome: Awaited<ReturnType<typeof result.current.submitApplication>> | undefined;
+      await act(async () => {
+        outcome = await result.current.submitApplication();
+      });
+
+      expect(outcome).toEqual({ status: 'error', error: appError('server_error') });
+      expect(result.current.session).toEqual(initial);
     });
   });
 });

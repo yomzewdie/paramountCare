@@ -1,5 +1,5 @@
 import { REAL_STEP_SCREENS } from '../[stepId]';
-import { getPacket } from '@pcs/shared';
+import { getPacket, computeStepCompletion, defaultFormData, PACKETS } from '@pcs/shared';
 import PersonalInfoScreen from '../../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../../src/features/onboarding/EmploymentApplicationScreen';
 import AcknowledgementScreen from '../../../../src/features/onboarding/AcknowledgementScreen';
@@ -10,6 +10,7 @@ import VaccineDeclinationScreen from '../../../../src/features/onboarding/Vaccin
 import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../../src/features/onboarding/DocumentsScreen';
 import SafetyAcknowledgementsScreen from '../../../../src/features/onboarding/SafetyAcknowledgementsScreen';
+import ReviewScreen from '../../../../src/features/onboarding/ReviewScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -25,11 +26,12 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.employment_application).toBe(EmploymentApplicationScreen);
   });
 
-  it('maps application_statement, background_auth, health_info_auth, AND patient_bill_of_rights to the same real AcknowledgementScreen', () => {
+  it('maps application_statement, background_auth, health_info_auth, patient_bill_of_rights, AND jcaho_review to the same real AcknowledgementScreen', () => {
     expect(REAL_STEP_SCREENS.application_statement).toBe(AcknowledgementScreen);
     expect(REAL_STEP_SCREENS.background_auth).toBe(AcknowledgementScreen);
     expect(REAL_STEP_SCREENS.health_info_auth).toBe(AcknowledgementScreen);
     expect(REAL_STEP_SCREENS.patient_bill_of_rights).toBe(AcknowledgementScreen);
+    expect(REAL_STEP_SCREENS.jcaho_review).toBe(AcknowledgementScreen);
   });
 
   it('maps w4 to the real W4Screen', () => {
@@ -64,21 +66,26 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.safety_acknowledgements).toBe(SafetyAcknowledgementsScreen);
   });
 
+  it('maps review to the real ReviewScreen, for every packet', () => {
+    expect(REAL_STEP_SCREENS.review).toBe(ReviewScreen);
+  });
+
   it('maps employment_ref_1, employment_ref_2, AND employment_ref_3 to the same real Employment Reference screen', () => {
     expect(REAL_STEP_SCREENS.employment_ref_1).toBe(EmploymentReferenceScreen);
     expect(REAL_STEP_SCREENS.employment_ref_2).toBe(EmploymentReferenceScreen);
     expect(REAL_STEP_SCREENS.employment_ref_3).toBe(EmploymentReferenceScreen);
   });
 
-  it('leaves genuinely unmigrated steps as honest placeholders', () => {
-    // M15 wires in flu_declination (General RN/LVN's next step after
-    // tdap_declination) and safety_acknowledgements (ICU/ER/Travel's next
-    // step after documents). jcaho_review (General RN/LVN only, between
-    // documents and safety_acknowledgements) and safety_exam (General
-    // RN/LVN's OPTIONAL "Clinical Competency Exam" — required: false, a
-    // different step entirely from safety_acknowledgements' own "Safety &
-    // Education Exam" label) remain out of scope for this milestone.
-    expect(REAL_STEP_SCREENS.jcaho_review).toBeUndefined();
+  it('leaves the one genuinely unimplemented step (the OPTIONAL safety_exam) as an honest placeholder', () => {
+    // M16 wires in jcaho_review and review (every packet's required, final
+    // "Review & Submit" step, now a real submission boundary — see
+    // ADR-029). safety_exam (General RN/LVN's OPTIONAL "Clinical
+    // Competency Exam" — required: false, a different step entirely from
+    // safety_acknowledgements' own "Safety & Education Exam" label) is the
+    // one remaining unimplemented step, deliberately: it never blocks
+    // Review or submission (required: false, filtered out by
+    // resolveNextRequiredStep/isPacketComplete already), and no quiz
+    // content/scoring was invented for it.
     expect(REAL_STEP_SCREENS.safety_exam).toBeUndefined();
   });
 
@@ -267,5 +274,79 @@ describe('onboarding [stepId] real-screen registry', () => {
       expect(step.config?.requiresSignature).toBe(false);
       expect(step.required).toBe(true);
     }
+  });
+
+  it('confirms the real M16 branch: jcaho_review is structurally identical to the other single-checkbox+signature acknowledgements — no hasDeclination, no per-topic structure', () => {
+    for (const packetId of ['general_rn', 'lvn']) {
+      const step = getPacket(packetId)!.steps.find((s) => s.id === 'jcaho_review')!;
+      expect(step.type).toBe('acknowledgement');
+      expect(step.config?.acknowledgementId).toBe('jcaho_review');
+      expect(step.config?.requiresSignature).toBe(true);
+      expect(step.config?.hasDeclination).toBeUndefined();
+      expect(step.required).toBe(true);
+    }
+    for (const packetId of ['icu_rn', 'er_rn', 'travel_rn']) {
+      expect(getPacket(packetId)!.steps.find((s) => s.id === 'jcaho_review')).toBeUndefined();
+    }
+  });
+
+  it('confirms `review` is every packet\'s final step, required, and reachable', () => {
+    for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+      const packet = getPacket(packetId)!;
+      const lastStep = packet.steps[packet.steps.length - 1];
+      expect(lastStep.id).toBe('review');
+      expect(lastStep.type).toBe('review');
+      expect(lastStep.required).toBe(true);
+      expect(REAL_STEP_SCREENS[lastStep.id]).toBe(ReviewScreen);
+    }
+  });
+
+  /**
+   * M16 §42 — the capstone coverage invariant. After this milestone, the
+   * complete REQUIRED applicant packet should be provably implemented: not
+   * asserted from memory of what's been built milestone-by-milestone, but
+   * checked directly against the real packet definitions, the real shared
+   * completion evaluators, and the real mobile screen registry, for every
+   * packet that exists today. A future packet addition with a required
+   * step missing either piece fails this test instead of silently shipping
+   * as an unreachable or uncompletable placeholder.
+   */
+  describe('M16 — required-implementation-coverage invariant', () => {
+    it('every REQUIRED, non-review step in every current packet has BOTH a completion evaluator AND a real mobile screen', () => {
+      const completions = computeStepCompletion(defaultFormData);
+      const missingEvaluator: string[] = [];
+      const missingScreen: string[] = [];
+
+      for (const packetId of Object.keys(PACKETS)) {
+        const packet = getPacket(packetId)!;
+        for (const step of packet.steps) {
+          if (!step.required || step.type === 'review') continue;
+          if (completions[step.id] === undefined) missingEvaluator.push(`${packetId}:${step.id}`);
+          if (!REAL_STEP_SCREENS[step.id]) missingScreen.push(`${packetId}:${step.id}`);
+        }
+      }
+
+      expect(missingEvaluator).toEqual([]);
+      expect(missingScreen).toEqual([]);
+    });
+
+    it('`review` itself is routable in every packet (a completion evaluator is not expected — see completion.ts\'s own always-complete review semantics)', () => {
+      for (const packetId of Object.keys(PACKETS)) {
+        const packet = getPacket(packetId)!;
+        const reviewStep = packet.steps.find((s) => s.type === 'review')!;
+        expect(REAL_STEP_SCREENS[reviewStep.id]).toBe(ReviewScreen);
+      }
+    });
+
+    it('the one intentionally unimplemented step is OPTIONAL (safety_exam) — every other packet step, required or not, that has mobile relevance is accounted for', () => {
+      const unimplementedRequired: string[] = [];
+      for (const packetId of Object.keys(PACKETS)) {
+        const packet = getPacket(packetId)!;
+        for (const step of packet.steps) {
+          if (!REAL_STEP_SCREENS[step.id] && step.required) unimplementedRequired.push(`${packetId}:${step.id}`);
+        }
+      }
+      expect(unimplementedRequired).toEqual([]);
+    });
   });
 });

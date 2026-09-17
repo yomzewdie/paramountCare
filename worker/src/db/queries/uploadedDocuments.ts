@@ -59,6 +59,31 @@ export async function findOwnedUpload(
     .first<UploadedDocumentRow>();
 }
 
+/**
+ * Every live (not soft-deleted) upload currently associated with a session,
+ * across every doc_type — the authoritative source for document promotion
+ * at final submission (M16). Deliberately queries this ledger directly
+ * rather than trusting the file list embedded in a session's own
+ * form_data_json: even though `formData.uploadedDocuments`/
+ * `directDepositProofDocument` values only ever arrive via the
+ * ownership-verified association endpoint (never client-writable directly —
+ * see validation.ts's own comment), re-deriving the promotion set from the
+ * ledger itself — scoped to (session_id, live only) — is the same
+ * "never trust the client-shaped blob for something a durable server
+ * record can answer more directly" discipline uploads.ts/documents.ts
+ * already apply everywhere else.
+ */
+export async function findLiveUploadsForSession(
+  db: D1Database,
+  p: { sessionId: string; userId: number },
+): Promise<UploadedDocumentRow[]> {
+  const result = await db
+    .prepare('SELECT * FROM uploaded_documents WHERE session_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY id ASC')
+    .bind(p.sessionId, p.userId)
+    .all<UploadedDocumentRow>();
+  return result.results;
+}
+
 /** Whatever currently occupies a given session's document slot, if
  * anything — used to know what to clean up after a successful replace, and
  * what to delete on an explicit remove. */

@@ -40,3 +40,13 @@ export const removeDocumentSchema = z.object({
   revision: z.number().int().nonnegative('revision must be a non-negative integer'),
 });
 export type RemoveDocumentPayload = z.infer<typeof removeDocumentSchema>;
+
+// M16 — final submission. Same revision contract as every other
+// session-mutating endpoint; no other client-supplied field is accepted
+// (in particular, no client-supplied "ready"/"complete" flag — see
+// services/submission.ts for why completeness is always re-derived
+// server-side).
+export const submitSessionSchema = z.object({
+  revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+});
+export type SubmitSessionPayload = z.infer<typeof submitSessionSchema>;

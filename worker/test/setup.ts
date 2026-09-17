@@ -30,6 +30,11 @@ beforeAll(async () => {
     )
   `).run();
 
+  // session_id/doc_type mirror migrations/0002_phase1.sql's own ALTER TABLE
+  // ("Link uploaded documents to a session (before submission) or
+  // application (after)") — never exercised by any test before M16's
+  // document-promotion-at-submission feature, so this bootstrap had not
+  // mirrored it until now.
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS application_documents (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +43,8 @@ beforeAll(async () => {
       file_name      TEXT NOT NULL,
       file_size      INTEGER NOT NULL,
       uploaded_at    TEXT NOT NULL,
+      session_id     TEXT REFERENCES onboarding_sessions(session_id),
+      doc_type       TEXT,
       FOREIGN KEY (application_id) REFERENCES applications(application_id)
     )
   `).run();

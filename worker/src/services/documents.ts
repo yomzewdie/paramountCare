@@ -1,8 +1,10 @@
 import { findOwnedUpload, markUploadDeleted } from '../db/queries/uploadedDocuments';
+import { isObjectPromoted } from '../db/queries/documents';
 
 export type DeleteOwnedUploadResult =
   | { ok: true }
   | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'promoted' }
   | { ok: false; reason: 'storage_error' };
 
 /**
@@ -31,6 +33,20 @@ export type DeleteOwnedUploadResult =
  * best-effort cleanup call sites (replace/remove/orphan cleanup) log it and
  * proceed, documenting the residual orphan risk rather than failing an
  * otherwise-successful operation because of it (M13 hardening §4, §5, §7).
+ *
+ * M16 hardening: independently refuses to delete an object that
+ * `application_documents` references (`isObjectPromoted`), regardless of
+ * caller — the standalone `DELETE /api/uploads` route, session
+ * remove/replace's best-effort cleanup, ALL of them share this one
+ * function specifically so this guard cannot be bypassed by calling a
+ * lower-level path directly. This is independent of, and in addition to,
+ * `sessions.ts`'s own `rejectIfSubmitted` guard on the session-mutation
+ * routes: a submitted session's own document-slot routes are already
+ * blocked from reaching this point at all, but the standalone
+ * `DELETE /api/uploads` route has no session/submission context of its
+ * own to check — the object-level promotion check here is what actually
+ * protects it, checked by the real DB relationship, never an object-key
+ * naming convention.
  */
 export async function deleteOwnedUpload(
   env: { DB: D1Database; UPLOADS_BUCKET: R2Bucket },
@@ -38,6 +54,10 @@ export async function deleteOwnedUpload(
 ): Promise<DeleteOwnedUploadResult> {
   const owned = await findOwnedUpload(env.DB, p);
   if (!owned) return { ok: false, reason: 'not_found' };
+
+  if (await isObjectPromoted(env.DB, p.objectKey)) {
+    return { ok: false, reason: 'promoted' };
+  }
 
   try {
     // R2's delete() is itself idempotent — deleting an already-absent key is

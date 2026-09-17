@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
 import { requireApplicant } from '../middleware/requireApplicant';
-import { createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema } from '../schemas/sessions';
+import { createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema, submitSessionSchema } from '../schemas/sessions';
 import { generateSessionId } from '../utils/sessionId';
 import {
   getPacket,
@@ -21,6 +21,7 @@ import {
 } from '../db/queries/onboardingSessions';
 import { findOwnedUpload, findCurrentSlotDocument, associateUploadToSlot } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
+import { submitSession } from '../services/submission';
 
 // computeOverallCompletion/isStepValid are written against a fully-shaped
 // OnboardingFormData (acknowledgements, employmentReferences, etc. always
@@ -105,6 +106,38 @@ async function loadOwnedSession(
   return { ok: true, session };
 }
 
+// ── Post-submission immutability (M16 hardening, ADR-029 addendum) ─────────
+//
+// `applications.payload_json` is a submitted SNAPSHOT (ADR-029 §9) — that
+// architecture only actually holds if the session it was taken from can no
+// longer drift underneath it. Every applicant-facing route that can change
+// `form_data_json`, `step_states_json`, or a document association/removal
+// must refuse once `status === 'submitted'`, server-side, unconditionally —
+// never inferred from the mobile UI hiding Edit buttons or disabling a
+// button (a client can always call these routes directly). Checked BEFORE
+// any revision logic, so a request against a submitted session is refused
+// the same way regardless of whether its revision happens to still match —
+// this is a state check, not a concurrency check, and must not be
+// conflated with the existing 409 "someone else edited this" conflict
+// (though it reuses the same status code and response shape, since a
+// submitted session update is very much “state conflict” to the caller,
+// and the client already knows how to react to a 409: re-read the
+// authoritative session and stop trying to apply its stale edit — a
+// distinct `reason: 'submitted'` field lets a caller tell the two apart
+// without needing a whole new response shape).
+function rejectIfSubmitted(session: OnboardingSessionRow): Response | null {
+  if (session.status !== 'submitted') return null;
+  return Response.json(
+    {
+      error: 'Conflict',
+      reason: 'submitted',
+      message: 'This application has already been submitted and can no longer be edited.',
+      current: serializeSession(session),
+    },
+    { status: 409 },
+  );
+}
+
 // ── POST /api/sessions — create (always owned by the authenticated caller) ──
 
 sessions.post('/', async (c) => {
@@ -179,6 +212,8 @@ sessions.patch('/:sessionId', async (c) => {
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
+  const submittedBlock = rejectIfSubmitted(authResult.session);
+  if (submittedBlock) return submittedBlock;
 
   let body: unknown;
   try {
@@ -327,6 +362,8 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
+  const submittedBlock = rejectIfSubmitted(authResult.session);
+  if (submittedBlock) return submittedBlock;
 
   let body: unknown;
   try {
@@ -428,6 +465,8 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
+  const submittedBlock = rejectIfSubmitted(authResult.session);
+  if (submittedBlock) return submittedBlock;
 
   let body: unknown;
   try {
@@ -479,4 +518,78 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
   }
 
   return c.json(serializeSession(updateResult.session), 200);
+});
+
+// ── POST /api/sessions/:sessionId/submit — final application submission ────
+//
+// M16 (ADR-029). Deliberately its own dedicated route, not "PATCH
+// stepStates.review = completed" through the generic PATCH above: that
+// path's own per-step validation only checks the ONE step being set, which
+// for `type: 'review'` is unconditionally valid (validateStep returns {}
+// for it) — it has no way to enforce "every OTHER required step in the
+// packet is actually done." Real packet-wide completeness, document
+// promotion, and the application-row creation all happen here, together,
+// server-authoritatively — see services/submission.ts for the full design.
+sessions.post('/:sessionId/submit', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const parsed = submitSessionSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
+  }
+
+  const result = await submitSession(c.env, {
+    sessionId,
+    expectedRevision: parsed.data.revision,
+    ownerUserId: payload.uid,
+  });
+
+  switch (result.kind) {
+    case 'submitted':
+      return c.json({ applicationId: result.applicationId, submittedAt: result.submittedAt, alreadySubmitted: false }, 201);
+
+    case 'already_submitted':
+      // Same shape as a fresh success — a retry, a double tap, or reopening
+      // this screen after submitting must all land on the identical
+      // confirmation state, not an error.
+      return c.json({ applicationId: result.applicationId, submittedAt: null, alreadySubmitted: true }, 200);
+
+    case 'incomplete':
+      return c.json(
+        {
+          error: 'Your application is not ready to submit yet.',
+          incompleteSteps: result.incompleteSteps,
+        },
+        422,
+      );
+
+    case 'not_found':
+      return c.json({ error: 'Session not found' }, 404);
+
+    case 'unknown_packet':
+      return c.json({ error: `Session references an unknown packet` }, 500);
+
+    case 'conflict':
+      return c.json(
+        {
+          error: 'Conflict',
+          message: 'This session was updated elsewhere since you last read it.',
+          currentRevision: result.current.revision,
+          current: serializeSession(result.current),
+        },
+        409,
+      );
+
+    case 'error':
+      return c.json({ error: result.message }, 500);
+  }
 });
