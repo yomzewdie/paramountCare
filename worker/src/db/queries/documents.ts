@@ -73,6 +73,28 @@ export async function findDocumentsByApplicationId(
 }
 
 /**
+ * Generic admin document download (Official Forms Audit finding): looks up
+ * a document by its own id AND requires it to belong to the given
+ * applicationId in the same query — an id that exists but belongs to a
+ * different application simply matches no row, rather than being fetched
+ * and checked afterward. This is the ownership check itself, not a
+ * pre-check for one done elsewhere — a caller can never pass an arbitrary
+ * R2 object key directly; only a (documentId, applicationId) pair that this
+ * query has already verified belong together ever reaches R2.
+ */
+export async function findDocumentByIdForApplication(
+  db: D1Database,
+  documentId: number,
+  applicationId: string,
+): Promise<DocumentRow | null> {
+  const row = await db
+    .prepare('SELECT * FROM application_documents WHERE id = ? AND application_id = ?')
+    .bind(documentId, applicationId)
+    .first<DocumentRow>();
+  return row ?? null;
+}
+
+/**
  * M16 hardening (ADR-029 addendum): is this exact R2 object referenced by
  * ANY submitted application's document manifest? Reference promotion
  * (`uploaded_documents.object_key` -> `application_documents.object_key`,

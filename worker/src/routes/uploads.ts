@@ -7,7 +7,11 @@ import { requireApplicant } from '../middleware/requireApplicant';
 import { insertUploadedDocument } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
 
-const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+// Exported so other routes that serve already-uploaded files back (the
+// generic admin document download route in routes/admin.ts) can validate
+// against the exact same allowlist a file was accepted under, rather than
+// duplicating it.
+export const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const uploads = new Hono<AppEnv>();

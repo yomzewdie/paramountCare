@@ -33,6 +33,14 @@ interface I9DataPayload {
   i9SignedDate?: string;
 }
 
+// Shape of the frontend's w4Data — only `ssn` is redaction-relevant here;
+// every other field passes through storedPayload untouched via the spread
+// below, so this doesn't need to enumerate the full W-4 field set.
+interface W4DataPayload {
+  ssn?: string;
+  [key: string]: unknown;
+}
+
 const onboarding = new Hono<AppEnv>();
 
 // ── POST /api/submit-onboarding ───────────────────────────────────────────────
@@ -65,6 +73,7 @@ onboarding.post('/submit-onboarding', async (c) => {
   const documents = (rawBody.documents ?? {}) as Record<string, DocumentRef | null | undefined>;
   const personalInfo = (rawBody.personalInfo ?? {}) as Record<string, string>;
   const i9Raw = (rawBody.i9Data ?? {}) as I9DataPayload;
+  const w4Raw = (rawBody.w4Data ?? {}) as W4DataPayload;
 
   // Extract sensitive fields for PDF generation — strip before storing in D1.
   const i9SignatureDataUrl = i9Raw.i9SignatureDataUrl ?? '';
@@ -74,12 +83,24 @@ onboarding.post('/submit-onboarding', async (c) => {
   const i9Ssn              = i9Raw.ssn                ?? '';
 
   // Payload stored in D1 — strip signature data URL and SSN.
+  //
+  // w4Data.ssn is redacted the same way i9Data.ssn already was — this route
+  // previously redacted only the I-9 SSN, leaving a raw W-4 SSN to reach
+  // applications.payload_json in plaintext whenever the frontend sent one
+  // (see the Official Forms Audit's high-priority security finding). The
+  // mobile/session submission path (services/submission.ts's
+  // redactSensitiveFormData) already redacted w4Data.ssn correctly; this
+  // brings the legacy web path in line with it.
   const storedPayload: Record<string, unknown> = {
     ...rawBody,
     i9Data: {
       ...i9Raw,
       ssn: '[redacted]',
       i9SignatureDataUrl: '[stored in R2 as signed PDF]',
+    },
+    w4Data: {
+      ...w4Raw,
+      ssn: '[redacted]',
     },
   };
 

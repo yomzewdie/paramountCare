@@ -44,6 +44,7 @@ export interface ApplicationsPage {
 }
 
 export interface DocumentRecord {
+  id: number;
   objectKey: string;
   fileName: string;
   fileSize: number;

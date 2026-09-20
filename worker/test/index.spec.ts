@@ -84,6 +84,54 @@ describe('POST /api/submit-onboarding', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  // Official Forms Audit security finding: this route redacted i9Data.ssn
+  // before writing applications.payload_json but left w4Data.ssn untouched,
+  // so a raw W-4 SSN reached D1 in plaintext on this path. Fixed in
+  // routes/onboarding.ts to redact w4Data.ssn the same way i9Data.ssn
+  // already was.
+  it('redacts w4Data.ssn in the stored payload, mirroring i9Data.ssn', async () => {
+    const submitRes = await SELF.fetch(`${BASE}/api/submit-onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...VALID_PAYLOAD,
+        email: 'w4-redaction-check@example.com',
+        i9Data: { ssn: '111223333' },
+        w4Data: {
+          firstNameMI: 'Jane',
+          lastName: 'Smith',
+          ssn: '999887777',
+          address: '123 Main St',
+          cityStateZip: 'Los Angeles, CA 90001',
+          filingStatus: 'single_mfs',
+          typedSignature: 'Jane Smith',
+          signedDate: '01/01/2026',
+        },
+      }),
+    });
+    expect(submitRes.status).toBe(201);
+    const { applicationId } = await submitRes.json() as { applicationId: string };
+
+    const cookie = await loginAsAdmin();
+    const getRes = await SELF.fetch(`${BASE}/api/admin/application/${applicationId}`, {
+      headers: { cookie },
+    });
+    expect(getRes.status).toBe(200);
+    const body = await getRes.json() as {
+      payload: { w4Data?: { ssn?: string; firstNameMI?: string }; i9Data?: { ssn?: string } };
+    };
+
+    // The raw SSNs must never appear anywhere in the stored payload.
+    const serialized = JSON.stringify(body.payload);
+    expect(serialized).not.toContain('999887777');
+    expect(serialized).not.toContain('111223333');
+
+    expect(body.payload.w4Data?.ssn).toBe('[redacted]');
+    expect(body.payload.i9Data?.ssn).toBe('[redacted]');
+    // Non-sensitive W-4 fields are preserved, not dropped by the redaction.
+    expect(body.payload.w4Data?.firstNameMI).toBe('Jane');
+  });
 });
 
 // ── Retrieve application (admin, authenticated) ───────────────────────────────

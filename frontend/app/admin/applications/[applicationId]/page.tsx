@@ -311,7 +311,17 @@ export default async function ApplicationDetailPage({
                 <ul className="space-y-3">
                   {app.documents.map((doc, i) => (
                     <li key={i} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1.5">
-                      <p className="text-sm font-medium text-slate-800 truncate">{doc.fileName}</p>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-slate-800 truncate">{doc.fileName}</p>
+                        <a
+                          href={`/api/admin/documents/${applicationId}/${doc.id}`}
+                          download={doc.fileName}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors flex-shrink-0"
+                        >
+                          <Download size={13} />
+                          Download
+                        </a>
+                      </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500">
                         <span>{formatFileSize(doc.fileSize)}</span>
                         <span>·</span>
