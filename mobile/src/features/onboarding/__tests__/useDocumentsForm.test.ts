@@ -18,6 +18,7 @@ jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(),
   launchImageLibraryAsync: jest.fn(),
   launchCameraAsync: jest.fn(),
+  UIImagePickerPreferredAssetRepresentationMode: { Automatic: 'automatic', Compatible: 'compatible', Current: 'current' },
 }));
 
 jest.mock('expo-document-picker', () => ({
@@ -223,6 +224,38 @@ describe('useDocumentsForm', () => {
       await act(async () => { outcome = await result.current.complete(); });
 
       expect(outcome).toEqual({ kind: 'conflict' });
+    });
+  });
+
+  describe('server validation rejection (defense-in-depth)', () => {
+    it('treats a "validation"-coded save error as a local invalid outcome, revealing real field errors instead of a generic banner', async () => {
+      const { saveStep } = setupSession(
+        fakeSession(), // nothing uploaded — real errors exist
+        jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+      );
+      const { result } = renderHook(() => useDocumentsForm());
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'invalid' });
+      expect(result.current.saveError).toBeNull();
+      expect(result.current.errors.i9).toBeDefined();
+      expect(saveStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the generic error banner when there is nothing locally invalid to reveal (data already valid)', async () => {
+      setupSession(
+        fakeSession({ formData: { uploadedDocuments: { listA: VALID_UPLOAD, listB: null, listC: null, nursingLicense: VALID_UPLOAD, cprCertification: VALID_UPLOAD } } }),
+        jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+      );
+      const { result } = renderHook(() => useDocumentsForm());
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
+      expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
     });
   });
 

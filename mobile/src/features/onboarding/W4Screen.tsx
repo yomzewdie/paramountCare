@@ -8,6 +8,7 @@ import { SensitiveField } from '../../components/SensitiveField';
 import { CheckboxField } from '../../components/CheckboxField';
 import { FormSection } from '../../components/FormSection';
 import { StepActionBar } from '../../components/StepActionBar';
+import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -145,7 +146,22 @@ export default function W4Screen() {
   });
 
   return (
-    <Screen ref={scrollRef}>
+    <Screen
+      ref={scrollRef}
+      footer={
+        <>
+          <FormFooterStatus saveError={form.saveError} isConnected={isConnected} />
+          <StepActionBar
+            completeLabel={form.isCompleted ? 'Save' : 'Continue'}
+            onSaveProgress={handleSaveProgress}
+            onComplete={handleComplete}
+            isSaving={form.isSaving}
+            isCompleting={form.isCompleting}
+            disabled={!isConnected}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Tax Forms / W-4</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.md }]}>
         Employee&rsquo;s Withholding Certificate — complete this form so that your employer can withhold the correct federal income tax from your pay. Your withholding is subject to review by the IRS.
@@ -268,29 +284,6 @@ export default function W4Screen() {
         </Text>
       </View>
 
-      {form.saveError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={form.saveError} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}
-        >
-          You&rsquo;re offline — connect to the internet to save.
-        </Text>
-      ) : null}
-
-      <StepActionBar
-        completeLabel={form.isCompleted ? 'Save' : 'Continue'}
-        onSaveProgress={handleSaveProgress}
-        onComplete={handleComplete}
-        isSaving={form.isSaving}
-        isCompleting={form.isCompleting}
-        disabled={!isConnected}
-      />
     </Screen>
   );
 }

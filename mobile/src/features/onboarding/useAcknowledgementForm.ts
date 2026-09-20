@@ -3,6 +3,7 @@ import { getPacket, validateAcknowledgement, type AcknowledgementEntry, type Fie
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
+import { isStepValidationRejection } from './serverValidationError';
 
 const FORM_DATA_KEY = 'acknowledgements';
 
@@ -96,6 +97,10 @@ export function useAcknowledgementForm(stepId: string) {
     if (result.status === 'conflict') {
       setConflict({ latest: readStored(result.latestSession.formData, stepId) });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      setTouched(touchAll(EMPTY_ENTRY));
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };

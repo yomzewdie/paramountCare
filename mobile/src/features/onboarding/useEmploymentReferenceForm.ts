@@ -3,6 +3,7 @@ import { defaultEmploymentReference, validateEmploymentReference, type Employmen
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
+import { isStepValidationRejection } from './serverValidationError';
 
 const FORM_DATA_KEY = 'employmentReferences';
 
@@ -85,6 +86,10 @@ export function useEmploymentReferenceForm(stepId: string) {
     if (result.status === 'conflict') {
       setConflict({ latest: readStored(result.latestSession.formData, stepId) });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      setTouched(touchAll(defaultEmploymentReference));
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };

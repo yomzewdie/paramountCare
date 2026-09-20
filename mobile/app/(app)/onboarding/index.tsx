@@ -1,18 +1,24 @@
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
+import { View } from 'react-native';
+import type { StepStatus } from '@pcs/shared';
 import { Screen } from '../../../src/components/Screen';
-import { Card } from '../../../src/components/Card';
-import { StepRow } from '../../../src/components/StepRow';
 import { ProgressBar } from '../../../src/components/ProgressBar';
+import { OnboardingPhaseCard } from '../../../src/components/OnboardingPhaseCard';
 import { LoadingState, ErrorState } from '../../../src/components/StatusStates';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
+import { groupStepsIntoPhases, findCurrentPhaseId } from '../../../src/features/onboarding/phases';
 
-// The full, interactive step list — reached via the dashboard's "Continue/
-// Start Onboarding" CTA. Each row is tappable and routes to
-// (app)/onboarding/[stepId], which is a real navigation architecture future
-// milestones slot actual forms into (M4 instructions §14) — not a fake form
-// today.
+// The full onboarding journey — reached via the Onboarding tab or the
+// dashboard's Continue card. Presented as four collapsible phase containers
+// (not a single flat 19-row list — see phases.ts) so a nurse onboarding in
+// short sessions between shifts sees "section 3 of 4," not "6 of 19 forms
+// left." Each row inside an expanded phase is tappable and routes to
+// (app)/onboarding/[stepId], exactly as the flat list already did — no new
+// navigation, no invented step locking (canNavigateToStep is unused
+// anywhere in this app today, confirmed by direct search, so arbitrary step
+// access was already the existing behavior; this pass doesn't change that).
 export default function OnboardingOverview() {
   const theme = useTheme();
   const router = useRouter();
@@ -49,21 +55,34 @@ export default function OnboardingOverview() {
     );
   }
 
+  const phases = groupStepsIntoPhases(progress.steps);
+  const currentPhaseId = findCurrentPhaseId(phases, progress.nextStep?.id);
+  const stepStates = session.stepStates as Partial<Record<string, StepStatus>>;
+
   return (
     <Screen>
       <ProgressBar percent={session.completionPercent ?? 0} label={progress.packetName} />
 
-      <Card style={{ marginTop: theme.spacing.lg }}>
-        {progress.steps.map((step) => (
-          <StepRow
-            key={step.id}
-            label={step.label}
-            completed={step.completed}
-            required={step.required}
-            onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: step.id } })}
-          />
-        ))}
-      </Card>
+      <View style={{ marginTop: theme.spacing.lg }}>
+        {phases.map((phase) => {
+          const isCurrent = phase.id === currentPhaseId;
+          // Completed phases collapse by default (still expandable to
+          // review/edit); the current phase is expanded by default and
+          // visually emphasized; a future not-yet-reached phase collapses
+          // too, but — per the same "no invented locking" reasoning above —
+          // stays fully expandable and tappable, never gated.
+          return (
+            <OnboardingPhaseCard
+              key={phase.id}
+              phase={phase}
+              isCurrent={isCurrent}
+              stepStates={stepStates}
+              defaultExpanded={isCurrent}
+              onStepPress={(stepId) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId } })}
+            />
+          );
+        })}
+      </View>
     </Screen>
   );
 }

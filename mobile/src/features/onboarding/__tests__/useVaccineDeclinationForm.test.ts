@@ -208,4 +208,37 @@ describe.each(VACCINE_STEP_IDS)('useVaccineDeclinationForm(%s)', (STEP_ID) => {
       expect(result.current.data.decision).toBe('declining');
     });
   });
+
+  describe('server validation rejection (defense-in-depth)', () => {
+    it('treats a "validation"-coded save error as a local invalid outcome, revealing real field errors instead of a generic banner', async () => {
+      const saveStep = setupSession(
+        fakeSession({ formData: {} }), // no decision made — a real error exists
+        jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+      );
+      const { result } = renderHook(() => useVaccineDeclinationForm(STEP_ID));
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'invalid' });
+      expect(result.current.saveError).toBeNull();
+      expect(result.current.errors.decision).toBeDefined();
+      expect(saveStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the generic error banner when there is nothing locally invalid to reveal (data already valid)', async () => {
+      const validEntry = { decision: 'declining' as const, checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z' };
+      setupSession(
+        fakeSession({ formData: { acknowledgements: { [STEP_ID]: validEntry } } }),
+        jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+      );
+      const { result } = renderHook(() => useVaccineDeclinationForm(STEP_ID));
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
+      expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
+    });
+  });
 });

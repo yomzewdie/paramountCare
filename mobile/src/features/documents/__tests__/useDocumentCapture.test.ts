@@ -9,6 +9,7 @@ jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(),
   launchImageLibraryAsync: jest.fn(),
   launchCameraAsync: jest.fn(),
+  UIImagePickerPreferredAssetRepresentationMode: { Automatic: 'automatic', Compatible: 'compatible', Current: 'current' },
 }));
 
 jest.mock('expo-document-picker', () => ({
@@ -24,8 +25,15 @@ jest.mock('react-native-document-scanner-plugin', () => ({
 
 const mockFileDelete = jest.fn();
 let mockFileExists = true;
+let mockFileSize = 12345;
 jest.mock('expo-file-system', () => ({
-  File: jest.fn().mockImplementation(() => ({ get exists() { return mockFileExists; }, delete: mockFileDelete })),
+  File: jest.fn().mockImplementation(() => ({ get exists() { return mockFileExists; }, get size() { return mockFileSize; }, delete: mockFileDelete })),
+}));
+
+const mockManipulate = jest.fn();
+jest.mock('expo-image-manipulator', () => ({
+  ImageManipulator: { manipulate: (...args: unknown[]) => mockManipulate(...args) },
+  SaveFormat: { JPEG: 'jpeg', PNG: 'png', WEBP: 'webp' },
 }));
 
 const mockedRequestMediaLibrary = ImagePicker.requestMediaLibraryPermissionsAsync as jest.Mock;
@@ -34,9 +42,30 @@ const mockedLaunchLibrary = ImagePicker.launchImageLibraryAsync as jest.Mock;
 const mockedLaunchCamera = ImagePicker.launchCameraAsync as jest.Mock;
 const mockedGetDocument = DocumentPicker.getDocumentAsync as jest.Mock;
 
+/** Arranges expo-image-manipulator's mock to succeed, producing a JPEG
+ * ImageResult with the given dimensions — mirrors the real
+ * ImageManipulator.manipulate(uri).renderAsync() -> ImageRef.saveAsync()
+ * chain (see useDocumentCapture.ts's normalizeHeicToJpeg). */
+function mockNormalizationSucceeds(result: { uri: string; width: number; height: number }) {
+  mockManipulate.mockReturnValue({
+    renderAsync: jest.fn().mockResolvedValue({
+      saveAsync: jest.fn().mockResolvedValue(result),
+    }),
+  });
+}
+
+/** Arranges expo-image-manipulator's mock to fail — normalizeHeicToJpeg
+ * catches this and returns null, same as a real native-module error. */
+function mockNormalizationFails() {
+  mockManipulate.mockReturnValue({
+    renderAsync: jest.fn().mockRejectedValue(new Error('native manipulation failed')),
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockFileExists = true;
+  mockFileSize = 12345;
 });
 
 describe('useDocumentCapture', () => {
@@ -112,6 +141,193 @@ describe('useDocumentCapture', () => {
       await act(async () => { await result.current.pickFromLibrary(); });
 
       expect(result.current.pending?.isTemporaryFile).toBe(false);
+    });
+
+    it('a normal JPEG library photo has no issue', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/existing.jpg', fileName: 'existing.jpg', mimeType: 'image/jpeg', fileSize: 100, width: 1200, height: 800 }] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+      await act(async () => { await result.current.pickFromLibrary(); });
+
+      expect(result.current.pending?.issue).toBeNull();
+    });
+
+    it('a PNG library photo has no issue', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/existing.png', fileName: 'existing.png', mimeType: 'image/png', fileSize: 100, width: 1200, height: 800 }] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+      await act(async () => { await result.current.pickFromLibrary(); });
+
+      expect(result.current.pending?.issue).toBeNull();
+    });
+  });
+
+  // HEIC/HEIF photo attachment fix — physical UAT found that an iPhone
+  // photo library HEIC/HEIF asset was rejected client-side with the
+  // generic "type isn't supported" message, leaving the applicant stuck at
+  // the preview screen with "Use Document" permanently disabled. Root
+  // cause (confirmed against the installed expo-image-picker@57.0.18
+  // native iOS source): with `quality: 0.8`, a HEIC source photo is handed
+  // back completely untouched (its own passthrough branch ignores
+  // `quality` entirely) — only non-HEIC/TIFF/AVIF sources get re-encoded.
+  describe('HEIC/HEIF photo library attachment', () => {
+    it('requests the Compatible asset representation from the OS picker on iOS', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/photo.jpg', fileName: 'photo.jpg', mimeType: 'image/jpeg', fileSize: 100, width: 1200, height: 800 }] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+      await act(async () => { await result.current.pickFromLibrary(); });
+
+      expect(mockedLaunchLibrary).toHaveBeenCalledWith(
+        expect.objectContaining({ preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible }),
+      );
+    });
+
+    describe('when normalization succeeds (the expected case once Compatible mode still returns HEIC/HEIF)', () => {
+      it('a HEIC photo is normalized to JPEG — output MIME, filename, and content all reflect the NEW file, not the original', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', width: 3000, height: 2000 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue).toBeNull();
+        expect(result.current.pending?.picked.type).toBe('image/jpeg');
+        expect(result.current.pending?.picked.name).toBe('photo.jpg');
+        expect(result.current.pending?.picked.uri).toBe('file:///cache/ImageManipulator/normalized123.jpg');
+        // The original HEIC URI must never appear as what would be uploaded.
+        expect(result.current.pending?.picked.uri).not.toBe('file:///library/IMG_1234.HEIC');
+      });
+
+      it('a HEIF photo is normalized the same way', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/photo.heif', fileName: 'photo.heif', mimeType: 'image/heif', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/normalized456.jpg', width: 3000, height: 2000 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue).toBeNull();
+        expect(result.current.pending?.picked.type).toBe('image/jpeg');
+        expect(result.current.pending?.picked.name).toBe('photo.jpg');
+      });
+
+      it('a HEIC file is still normalized when iOS reports incomplete/generic MIME metadata but the filename indicates HEIC', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/scan.heic', fileName: 'scan.heic', mimeType: undefined, fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/normalized789.jpg', width: 3000, height: 2000 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(mockManipulate).toHaveBeenCalledWith('file:///library/scan.heic');
+        expect(result.current.pending?.picked.type).toBe('image/jpeg');
+      });
+
+      it('the normalized JPEG is still subject to the same dimension/size validation as any other photo', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 50, height: 50 }] });
+        // Even though the SOURCE asset's own width/height look large enough
+        // in the picker result, the normalized output's own reported
+        // dimensions are what's actually validated.
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/tiny.jpg', width: 50, height: 50 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue).toMatch(/too small/i);
+      });
+
+      it('the normalized JPEG is treated as a temporary file this app produced — Retake deletes it, unlike an unmodified library photo', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', width: 3000, height: 2000 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        await act(async () => { result.current.retake(); });
+
+        expect(mockFileDelete).toHaveBeenCalled();
+      });
+
+      it('confirmUse hands the NORMALIZED file to the caller — the original HEIC bytes are never uploaded', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', width: 3000, height: 2000 });
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        const onUseDocument = jest.fn().mockResolvedValue(undefined);
+        await act(async () => { await result.current.confirmUse(onUseDocument); });
+
+        expect(onUseDocument).toHaveBeenCalledWith(expect.objectContaining({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', type: 'image/jpeg' }));
+      });
+    });
+
+    describe('when normalization fails (no local capability produced a compatible file)', () => {
+      it('a HEIC photo shows the friendly "couldn\'t prepare" message, not a generic "unsupported type" error', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationFails();
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue).toMatch(/couldn.t prepare this photo/i);
+        expect(result.current.pending?.issue).not.toMatch(/isn.t supported/i);
+      });
+
+      it('a HEIF photo gets the same normalization-failure treatment', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/photo.heif', fileName: 'photo.heif', mimeType: 'image/heif', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationFails();
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue).toMatch(/couldn.t prepare this photo/i);
+      });
+
+      it('records the ORIGINAL (unnormalized) file in pending.picked — nothing pretends a conversion happened', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationFails();
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.picked.uri).toBe('file:///library/IMG_1234.HEIC');
+      });
+
+      it('never uploads — confirmUse refuses to proceed while the issue is set', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationFails();
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+        await act(async () => { await result.current.pickFromLibrary(); });
+        expect(result.current.pending?.issue).toBeTruthy();
+
+        const onUseDocument = jest.fn();
+        await act(async () => { await result.current.confirmUse(onUseDocument); });
+
+        expect(onUseDocument).not.toHaveBeenCalled();
+        expect(result.current.pending).not.toBeNull();
+      });
+
+      it('does not expose the word "HEIC" or a MIME type to the applicant-facing message', async () => {
+        mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+        mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///library/IMG_1234.HEIC', fileName: 'IMG_1234.HEIC', mimeType: 'image/heic', fileSize: 1000, width: 3000, height: 2000 }] });
+        mockNormalizationFails();
+        const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+        await act(async () => { await result.current.pickFromLibrary(); });
+
+        expect(result.current.pending?.issue?.toLowerCase()).not.toContain('heic');
+        expect(result.current.pending?.issue?.toLowerCase()).not.toContain('image/');
+      });
     });
   });
 

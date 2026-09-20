@@ -1,24 +1,36 @@
 import { useRouter } from 'expo-router';
 import { Text, View } from 'react-native';
+import type { StepStatus } from '@pcs/shared';
 import { Screen } from '../../src/components/Screen';
 import { Card } from '../../src/components/Card';
 import { Button } from '../../src/components/Button';
 import { ProgressBar } from '../../src/components/ProgressBar';
-import { StepRow } from '../../src/components/StepRow';
+import { PersonalizedGreeting } from '../../src/components/PersonalizedGreeting';
+import { ContinueOnboardingCard } from '../../src/components/ContinueOnboardingCard';
+import { OnboardingPhaseHeader } from '../../src/components/OnboardingPhaseHeader';
 import { LoadingState, ErrorState, SuccessState } from '../../src/components/StatusStates';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { useAuth } from '../../src/features/auth/AuthContext';
 import { useSession } from '../../src/features/onboarding/SessionContext';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
+import { groupStepsIntoPhases, derivePhaseStatus, derivePhaseRequiredCounts, findCurrentPhaseId } from '../../src/features/onboarding/phases';
 
 // The real "My Onboarding" dashboard (docs/PRODUCT_ROADMAP.md item #3,
 // pulled into M4). Every number and step name here comes from the
 // authoritative server session via SessionContext — nothing is hardcoded or
 // computed by a second, competing algorithm (M4 instructions §8–§10).
+//
+// 4-phase journey pass: a 19-step flat checklist (or 12/13 for the
+// specialty packets) creates form fatigue for a nurse onboarding in short
+// sessions between shifts, so this screen now leads with a personalized
+// greeting, overall percent, ONE next action, and a four-phase summary —
+// never the raw step count as the primary framing. The full interactive
+// step-by-step list (grouped the same way) is the Onboarding tab's job.
+//
+// App-shell modernization: sign-out now lives on the Profile tab (reachable
+// from anywhere), so it is intentionally not duplicated here.
 export default function Home() {
   const theme = useTheme();
   const router = useRouter();
-  const { user, signOut } = useAuth();
   const { status, session, progress, error, refresh } = useSession();
   const { isConnected } = useNetworkStatus();
 
@@ -68,66 +80,80 @@ export default function Home() {
         <SuccessState
           message={`Application submitted. Your reference number is ${session.applicationId}. Documents received — Paramount Care Staffing, LLC will review your application within 1–2 business days.`}
         />
-        <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
+        <View style={{ marginTop: theme.spacing.lg }}>
           <Button label="View Application" onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: 'review' } })} />
-          <Button label="Sign out" variant="secondary" onPress={() => void signOut()} />
         </View>
       </Screen>
     );
   }
 
   const completionPercent = session.completionPercent ?? 0;
-  const ctaLabel = progress.completedSteps.length > 0 ? 'Continue Onboarding' : 'Start Onboarding';
+  const phases = groupStepsIntoPhases(progress.steps);
+  const currentPhaseId = findCurrentPhaseId(phases, progress.nextStep?.id);
+  const stepStates = session.stepStates as Partial<Record<string, StepStatus>>;
 
   return (
     <Screen>
       <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '700', marginBottom: theme.spacing.xs }]}>
         PARAMOUNT CARE
       </Text>
-      <Text style={[theme.typography.display, { color: theme.colors.text, marginBottom: theme.spacing.lg }]}>
-        {session.firstName ? `Welcome, ${session.firstName}` : 'Welcome'}
+      <View style={{ marginBottom: theme.spacing.md }}>
+        <PersonalizedGreeting firstName={session.firstName} />
+      </View>
+
+      <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.xs }]}>
+        {progress.isComplete ? 'Every required step is complete.' : `You're ${Math.round(completionPercent)}% through onboarding.`}
       </Text>
-
-      <Card style={{ marginBottom: theme.spacing.lg }}>
-        <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>Your Onboarding</Text>
-        <ProgressBar percent={completionPercent} />
-
-        <View style={{ marginTop: theme.spacing.md }}>
-          {progress.isComplete ? (
-            <Text style={[theme.typography.body, { color: theme.colors.success }]}>All steps complete — under review.</Text>
-          ) : (
-            <>
-              <Text style={[theme.typography.caption, { color: theme.colors.textMuted }]}>Next step</Text>
-              <Text style={[theme.typography.bodyStrong, { color: theme.colors.text }]}>{progress.nextStep?.label ?? '—'}</Text>
-            </>
-          )}
-        </View>
-      </Card>
-
       <View style={{ marginBottom: theme.spacing.lg }}>
-        <Button label={ctaLabel} onPress={() => router.push('/(app)/onboarding')} />
+        <ProgressBar percent={completionPercent} />
       </View>
 
-      {progress.completedSteps.length > 0 ? (
-        <Card style={{ marginBottom: theme.spacing.md }}>
-          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Completed</Text>
-          {progress.completedSteps.map((step) => (
-            <StepRow key={step.id} label={step.label} completed required={step.required} />
-          ))}
+      {progress.isComplete ? (
+        <Card style={{ marginBottom: theme.spacing.lg, borderColor: theme.colors.success }}>
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.success, marginBottom: theme.spacing.xs }]}>All steps complete</Text>
+          <Text style={[theme.typography.body, { color: theme.colors.textMuted }]}>Your application is under review.</Text>
         </Card>
-      ) : null}
+      ) : progress.nextStep ? (
+        <ContinueOnboardingCard
+          stepLabel={progress.nextStep.label}
+          phaseLabel={phases.find((p) => p.id === currentPhaseId)?.label ?? progress.packetName}
+          onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: progress.nextStep!.id } })}
+        />
+      ) : (
+        // Every required step is done but at least one OPTIONAL step is
+        // still incomplete (progress.nextStep is only ever null once no
+        // required step remains — see steps.ts's resolveNextRequiredStep).
+        // There is no single "next" step to send the applicant to here, so
+        // this points at the full journey instead of fabricating one.
+        <Card style={{ marginBottom: theme.spacing.lg }}>
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.md }]}>All required steps are complete</Text>
+          <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.md }]}>
+            A few optional steps remain if you&rsquo;d like to complete them.
+          </Text>
+          <Button label="View Onboarding" variant="secondary" onPress={() => router.push('/(app)/onboarding')} />
+        </Card>
+      )}
 
-      <Card style={{ marginBottom: theme.spacing.lg }}>
-        <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Remaining</Text>
-        {progress.remainingSteps.map((step) => (
-          <StepRow key={step.id} label={step.label} completed={false} required={step.required} />
-        ))}
+      <Text style={[theme.typography.caption, { color: theme.colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: theme.spacing.sm }]}>
+        Your Onboarding
+      </Text>
+      <Card>
+        {phases.map((phase, i) => {
+          const phaseStatus = derivePhaseStatus(phase.steps, stepStates);
+          const { completedRequired, totalRequired } = derivePhaseRequiredCounts(phase.steps);
+          return (
+            <View key={phase.id} style={i > 0 ? { borderTopWidth: 1, borderTopColor: theme.colors.border } : undefined}>
+              <OnboardingPhaseHeader
+                label={phase.label}
+                status={phaseStatus}
+                completedRequired={completedRequired}
+                totalRequired={totalRequired}
+                isCurrent={phase.id === currentPhaseId}
+              />
+            </View>
+          );
+        })}
       </Card>
-
-      <View>
-        <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.xs }]}>Signed in as {user?.email}</Text>
-        <Button label="Sign out" variant="secondary" onPress={() => void signOut()} />
-      </View>
     </Screen>
   );
 }

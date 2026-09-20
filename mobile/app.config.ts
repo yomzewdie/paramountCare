@@ -74,18 +74,31 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: '0.1.0',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic', // structural dark-mode support — see src/theme
-  // No icon/splash asset configured yet — no brand assets have been supplied
-  // for this milestone; Expo's own placeholder is used until real ones
-  // exist. Splash screen behavior itself is controlled at runtime via
-  // expo-splash-screen in app/_layout.tsx regardless of this file.
+  // Approved brand assets (see mobile/assets/branding/): the app icon uses
+  // an icon-mark-only crop (healthcare professional + stethoscope + teal/
+  // lime swoosh, no wordmark/tagline — a full logo with text reads poorly
+  // at home-screen icon sizes). The native splash screen uses the full
+  // logo instead, configured below via the expo-splash-screen plugin —
+  // app/_layout.tsx's SplashScreen calls only control *when* it hides, not
+  // its appearance.
   ios: {
     bundleIdentifier: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV]}`,
     supportsTablet: false,
     associatedDomains: ASSOCIATED_DOMAIN ? [`applinks:${ASSOCIATED_DOMAIN}`] : [],
+    icon: './assets/branding/app-icon-mark.png',
   },
   android: {
     package: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV].replace(/\./g, '_')}`,
-    adaptiveIcon: undefined,
+    adaptiveIcon: {
+      // A dedicated, transparent, safe-zone-inset crop — NOT the opaque iOS
+      // app-icon-mark.png. Android's launcher masks (circle/squircle/
+      // rounded-square/etc.) only guarantee the center ~66% of this layer
+      // stays visible, so this asset keeps its actual artwork within ~60%
+      // of the canvas width, well inside that. Background matches the
+      // splash's dark brand color rather than white.
+      foregroundImage: './assets/branding/adaptive-icon-foreground.png',
+      backgroundColor: '#0E1116',
+    },
     intentFilters: ASSOCIATED_DOMAIN
       ? [
           {
@@ -100,6 +113,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     'expo-router',
     'expo-secure-store',
+    // Required by @expo/vector-icons (bottom-tab icons) — expo install's own
+    // advice when adding it as a direct dependency.
+    'expo-font',
     [
       'expo-image-picker',
       {
@@ -123,6 +139,20 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'react-native-document-scanner-plugin',
       { cameraPermission: 'Paramount Care needs access to your camera so you can scan a document.' },
     ],
+    [
+      // Native splash: the full approved logo (wordmark + icon + tagline,
+      // already transparent-background), centered and contained on a dark
+      // background matching src/theme/tokens.ts's darkColors.background —
+      // one fixed brand background regardless of system light/dark mode,
+      // not the app's own light/dark theme colors.
+      'expo-splash-screen',
+      {
+        image: './assets/branding/paramount-care-logo.png',
+        imageWidth: 220,
+        resizeMode: 'contain',
+        backgroundColor: '#0E1116',
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,
@@ -137,7 +167,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // authorize anything by itself.
     inviteBaseUrl: requireUrlUnlessDev('INVITE_BASE_URL', process.env.INVITE_BASE_URL, APP_ENV, 'http://localhost:3000/register'),
     eas: {
-      projectId: process.env.EAS_PROJECT_ID, // set once `eas init` has been run — not invented here
+      // Static fallback to the real, already-created EAS project
+      // (`eas init --account yomzewdie`, @yomzewdie/paramount-care-mobile).
+      // Some EAS CLI commands (e.g. `eas device:create`) resolve this config
+      // without injecting an eas.json build profile's `env`, so relying on
+      // process.env.EAS_PROJECT_ID alone left this unset outside an actual
+      // `eas build` invocation. Still overridable via env var if ever needed.
+      projectId: process.env.EAS_PROJECT_ID ?? '760d3c4c-d127-415f-b7b2-22c4bbc2dad8',
     },
   },
   // runtimeVersion policy — see README.md "OTA update strategy" for the full

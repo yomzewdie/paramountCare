@@ -18,6 +18,7 @@ import {
   type IdentityPath,
 } from '../documents/documentSlots';
 import { IDENTITY_DOCUMENT_REQUIREMENT, CREDENTIAL_DOCUMENT_REQUIREMENT } from '../documents/documentRequirements';
+import { isStepValidationRejection } from './serverValidationError';
 
 const STEP_ID = 'documents';
 const FORM_DATA_KEY = 'uploadedDocuments';
@@ -209,6 +210,10 @@ export function useDocumentsForm() {
     setIsSaving(false);
     if (result.status === 'saved') return { kind: 'saved' };
     if (result.status === 'conflict') return { kind: 'conflict' };
+    if (isStepValidationRejection(result.error) && (Object.keys(errors).length > 0 || identityPathError)) {
+      setTouched(true);
+      return { kind: 'invalid' };
+    }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };
   }
@@ -231,6 +236,10 @@ export function useDocumentsForm() {
     setIsCompleting(false);
     if (result.status === 'saved') return { kind: 'saved' };
     if (result.status === 'conflict') return { kind: 'conflict' };
+    if (isStepValidationRejection(result.error) && (Object.keys(errors).length > 0 || identityPathError)) {
+      setTouched(true);
+      return { kind: 'invalid' };
+    }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };
   }

@@ -1,7 +1,10 @@
+import { useCallback, useRef } from 'react';
 import { useRouter } from 'expo-router';
-import { Image, Text, View } from 'react-native';
+import { Image, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { Button } from '../../components/Button';
+import { StepActionBar } from '../../components/StepActionBar';
+import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -135,6 +138,24 @@ export default function DocumentsScreen() {
   // instant it's uploaded, so leaving this screen at any point can never
   // discard anything.
 
+  // Section-level (not per-field — there are no text fields here) scroll
+  // targets: the identity group, and each individual credential slot,
+  // keyed by docType. Mirrors the same onLayout-offset-tracking pattern
+  // every other step screen uses for its own scroll-to-first-error.
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionOffsets = useRef<Record<string, number>>({});
+  const setSectionOffset = useCallback((key: string, e: LayoutChangeEvent) => {
+    sectionOffsets.current[key] = e.nativeEvent.layout.y;
+  }, []);
+
+  function scrollToFirstError() {
+    const identityInvalid = !!form.errors.i9 || !!form.identityPathError;
+    const firstCredentialKey = form.visibleCredentialSlots.find((s) => form.errors[s.formDataField])?.docType;
+    const key = identityInvalid ? 'identity' : firstCredentialKey;
+    const y = key ? sectionOffsets.current[key] : undefined;
+    if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+  }
+
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
     if (outcome.kind === 'saved') router.back();
@@ -143,6 +164,7 @@ export default function DocumentsScreen() {
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') router.back();
+    else if (outcome.kind === 'invalid') scrollToFirstError();
   }
 
   const totalRequired = form.visibleIdentitySlots.length > 0 ? 1 + form.visibleCredentialSlots.length : form.visibleCredentialSlots.length;
@@ -151,14 +173,29 @@ export default function DocumentsScreen() {
     form.visibleCredentialSlots.filter((s) => form.slotHooks[s.docType]?.status === 'uploaded').length;
 
   return (
-    <Screen>
+    <Screen
+      ref={scrollRef}
+      footer={
+        <>
+          <FormFooterStatus saveError={form.saveError} isConnected={isConnected} />
+          <StepActionBar
+            completeLabel={form.isCompleted ? 'Save' : 'Continue'}
+            onSaveProgress={handleSaveProgress}
+            onComplete={handleComplete}
+            isSaving={form.isSaving}
+            isCompleting={form.isCompleting}
+            disabled={!isConnected}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>License & Credential Uploads</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
         {completedRequired} of {totalRequired} requirements complete
       </Text>
 
       {form.identityRequired ? (
-        <View style={{ marginBottom: theme.spacing.lg }}>
+        <View style={{ marginBottom: theme.spacing.lg }} onLayout={(e) => setSectionOffset('identity', e)}>
           <Text
             style={[
               theme.typography.caption,
@@ -234,7 +271,7 @@ export default function DocumentsScreen() {
           ) : null}
 
           {form.visibleCredentialSlots.map((slot) => (
-            <View key={slot.docType} style={{ marginTop: theme.spacing.md }}>
+            <View key={slot.docType} style={{ marginTop: theme.spacing.md }} onLayout={(e) => setSectionOffset(slot.docType, e)}>
               <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{slot.label}</Text>
               <DocumentSlotCard slot={slot} hook={form.slotHooks[slot.docType]} />
               {form.errors[slot.formDataField] ? (
@@ -280,30 +317,6 @@ export default function DocumentsScreen() {
           shape (`DocumentSlotDef.optional`) already supports a future
           genuinely-optional document type appearing here. */}
 
-      {form.saveError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={form.saveError} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}
-        >
-          You&rsquo;re offline — connect to the internet to save.
-        </Text>
-      ) : null}
-
-      <View style={{ gap: theme.spacing.sm }}>
-        <Button
-          label={form.isCompleted ? 'Save' : 'Continue'}
-          onPress={handleComplete}
-          loading={form.isCompleting}
-          disabled={!isConnected || form.isSaving}
-        />
-        <Button label="Save Progress" variant="secondary" onPress={handleSaveProgress} loading={form.isSaving} disabled={!isConnected || form.isCompleting} />
-      </View>
     </Screen>
   );
 }

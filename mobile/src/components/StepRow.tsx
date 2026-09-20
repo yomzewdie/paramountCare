@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import type { StepStatus } from '@pcs/shared';
 import { useTheme } from '../theme/ThemeProvider';
+import { StatusBadge } from './StatusBadge';
 
 interface StepRowProps {
   label: string;
@@ -10,19 +12,25 @@ interface StepRowProps {
    * communicated by color alone, so it reads correctly in
    * grayscale/high-contrast modes and to screen readers. */
   required?: boolean;
+  /** The step's real lifecycle state (session.stepStates[id]) — optional
+   * because not every caller has it to hand. When provided, a StatusBadge
+   * (Not Started / In Progress / Complete / Optional) replaces the plain
+   * completed/not-completed wording, since it's strictly more truthful
+   * without inventing anything the data can't back up. */
+  status?: StepStatus;
   /** Omit for a read-only summary row (dashboard); provide for a tappable
    * row (the full step list) — the same component serves both because the
    * only real difference is interactivity. */
   onPress?: () => void;
 }
 
-export function StepRow({ label, completed, required = true, onPress }: StepRowProps) {
+export function StepRow({ label, completed, required = true, status, onPress }: StepRowProps) {
   const theme = useTheme();
   // Completion is never conveyed by the glyph/color alone — the
-  // accessibilityLabel below states "completed"/"not completed" in words,
-  // and the glyph itself (✓ vs ○) is a shape difference, not just a color
+  // accessibilityLabel below states the step's status in words, and the
+  // glyph itself (✓ vs ○) is a shape difference, not just a color
   // difference, so it also reads clearly in grayscale/high-contrast modes.
-  const statusLabel = completed ? 'completed' : 'not completed';
+  const statusLabel = status ? status.replace('_', ' ') : completed ? 'completed' : 'not completed';
   const optionalLabel = required ? '' : ', optional';
 
   const content = (
@@ -36,7 +44,9 @@ export function StepRow({ label, completed, required = true, onPress }: StepRowP
       </Text>
       <View style={{ flex: 1 }}>
         <Text style={[theme.typography.body, { color: theme.colors.text }]}>{label}</Text>
-        {!required ? (
+        {status ? (
+          <StatusBadge status={status} required={required} />
+        ) : !required ? (
           <Text style={[theme.typography.caption, { color: theme.colors.textMuted }]}>Optional</Text>
         ) : null}
       </View>

@@ -8,6 +8,7 @@ import { SensitiveField } from '../../components/SensitiveField';
 import { SignaturePad } from '../../components/SignaturePad';
 import { FormSection } from '../../components/FormSection';
 import { StepActionBar } from '../../components/StepActionBar';
+import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -127,7 +128,22 @@ export default function I9Screen() {
   const hasSignature = sigMode === 'draw' ? !!form.data.i9SignatureDataUrl : !!form.data.i9TypedSignature.trim();
 
   return (
-    <Screen ref={scrollRef}>
+    <Screen
+      ref={scrollRef}
+      footer={
+        <>
+          <FormFooterStatus saveError={form.saveError} isConnected={isConnected} />
+          <StepActionBar
+            completeLabel={form.isCompleted ? 'Save' : 'Continue'}
+            onSaveProgress={handleSaveProgress}
+            onComplete={handleComplete}
+            isSaving={form.isSaving}
+            isCompleting={form.isCompleting}
+            disabled={!isConnected}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Form I-9 (Section 1)</Text>
 
       <View style={[styles.notice, { backgroundColor: theme.colors.warningSurface, borderColor: theme.colors.warning, marginBottom: theme.spacing.lg }]}>
@@ -269,29 +285,6 @@ export default function I9Screen() {
         ) : null}
       </FormSection>
 
-      {form.saveError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={form.saveError} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}
-        >
-          You&rsquo;re offline — connect to the internet to save.
-        </Text>
-      ) : null}
-
-      <StepActionBar
-        completeLabel={form.isCompleted ? 'Save' : 'Continue'}
-        onSaveProgress={handleSaveProgress}
-        onComplete={handleComplete}
-        isSaving={form.isSaving}
-        isCompleting={form.isCompleting}
-        disabled={!isConnected}
-      />
     </Screen>
   );
 }

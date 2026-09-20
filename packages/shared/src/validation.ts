@@ -21,7 +21,20 @@ export type FieldErrors = Record<string, string>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const phoneRegex = /^[\d\s\(\)\-\+\.]{7,}$/;
+// A US phone number — this app is US-only (see zipRegex below and the
+// US-only state dropdown throughout every screen that collects an address),
+// so a 10-digit NANP number is the correct rule, not an invented policy.
+// The PREVIOUS version of this regex (`/^[\d\s\(\)\-\+\.]{7,}$/`) only
+// checked character class + a minimum length of 7 — it never actually
+// counted digits, so a 7/8/9-digit number was unconditionally accepted,
+// and even a 6-digit number became "valid" the instant any 7th allowed
+// character (e.g. a single stray trailing space from the keyboard) was
+// present. Structured to require exactly 3+3+4 digits, with optional
+// parens/space/dash/dot separators in the conventional positions — matches
+// every format already used across this app's own screens/tests/fixtures
+// (5551234567, 555-123-4567, (555) 123-4567, 555 123 4567). No +1/country
+// code support is added — nothing in the existing source establishes that.
+const phoneRegex = /^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/;
 const zipRegex = /^\d{5}(-\d{4})?$/;
 
 function parseSchema<T>(schema: z.ZodSchema<T>, data: unknown): FieldErrors {
@@ -38,7 +51,7 @@ const personalInfoSchema = z.object({
   firstName:   z.string().min(1, 'First name is required'),
   lastName:    z.string().min(1, 'Last name is required'),
   email:       z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  phone:       z.string().min(1, 'Phone is required').regex(phoneRegex, 'Enter a valid phone number'),
+  phone:       z.string().min(1, 'Phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
   address:     z.string().min(3, 'Street address is required'),
   city:        z.string().min(1, 'City or town is required'),
   state:       z.string().min(2, 'State is required'),
@@ -100,7 +113,7 @@ export function validateEmploymentApplication(data: EmploymentApplicationData): 
   if (!data.emergencyContactName.trim())         errors.emergencyContactName         = 'Emergency contact name is required';
   if (!data.emergencyContactRelationship.trim())  errors.emergencyContactRelationship  = 'Relationship is required';
   if (!data.emergencyContactPhone.trim())         errors.emergencyContactPhone         = 'Emergency contact phone is required';
-  else if (!phoneRegex.test(data.emergencyContactPhone)) errors.emergencyContactPhone = 'Enter a valid phone number';
+  else if (!phoneRegex.test(data.emergencyContactPhone)) errors.emergencyContactPhone = 'Enter a valid 10-digit phone number.';
 
   return errors;
 }
@@ -170,7 +183,7 @@ const employmentReferenceSchema = z.object({
   employerCity:       z.string().min(1, 'City is required'),
   employerState:      z.string().min(2, 'State is required'),
   supervisorName:     z.string().min(1, 'Supervisor name is required'),
-  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid phone number'),
+  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
   permissionGranted:  z.boolean(),
   reasonForLeaving:   z.string().min(1, 'Reason for leaving is required'),
   eligibleForRehire:  z.union([z.boolean(), z.null()]),

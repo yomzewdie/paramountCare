@@ -20,6 +20,7 @@ jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(),
   launchImageLibraryAsync: jest.fn(),
   launchCameraAsync: jest.fn(),
+  UIImagePickerPreferredAssetRepresentationMode: { Automatic: 'automatic', Compatible: 'compatible', Current: 'current' },
 }));
 
 jest.mock('expo-document-picker', () => ({
@@ -295,6 +296,90 @@ describe('useDirectDepositForm', () => {
       expect(result.current.attachment.file).toBeNull();
       expect(result.current.errors.directDepositProofDocument).toBeUndefined(); // not yet touched
     });
+
+    function fillEverythingExceptAttachment(result: { current: ReturnType<typeof useDirectDepositForm> }): void {
+      act(() => result.current.setLastName('Doe'));
+      act(() => result.current.setFirstName('Jane'));
+      act(() => { Object.entries(VALID_PRIMARY).forEach(([k, v]) => result.current.setPrimaryField(k as keyof typeof VALID_PRIMARY, v as never)); });
+      act(() => result.current.setTypedSignature('Jane Doe'));
+    }
+
+    // Physical UAT bug: a successful "Use Document" on a supported photo
+    // (reported with a PNG) was leaving the form stuck showing "A voided
+    // check must be attached..." until the applicant pressed Continue a
+    // second time. Confirmed via a real local Worker reproduction that
+    // /api/uploads already accepts image/png correctly — the bug (once it
+    // was one) was that the stale validation error didn't recompute
+    // immediately. The raw `errors` useMemo is keyed on
+    // [data, associatedProof], so it recomputes the instant
+    // setAssociatedProof runs inside persistProof; `shownErrors` (the
+    // exported `errors`) recomputes right alongside it — this proves that
+    // reactivity directly, with no second Continue press.
+    it('the missing-attachment validation error clears immediately once association succeeds — no second Continue press needed', async () => {
+      setupSession(fakeSession(), {
+        associateDocument: jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }) } satisfies SaveStepResult),
+      });
+      const { result } = renderHook(() => useDirectDepositForm());
+      fillEverythingExceptAttachment(result);
+
+      // A first Continue attempt with everything but the attachment filled
+      // in reveals exactly the missing-attachment error (touch-gated, same
+      // as every other field) and blocks.
+      let outcome;
+      await act(async () => { outcome = await result.current.complete(); });
+      expect(outcome).toEqual({ kind: 'invalid' });
+      expect(result.current.errors.directDepositProofDocument).toBe('A voided check must be attached to complete direct deposit authorization');
+
+      await pickAndUpload(result);
+
+      expect(result.current.attachment.status).toBe('uploaded');
+      // Cleared immediately — no second Continue tap happened above.
+      expect(result.current.errors.directDepositProofDocument).toBeUndefined();
+
+      // And Continue now genuinely succeeds.
+      let secondOutcome;
+      await act(async () => { secondOutcome = await result.current.complete(); });
+      expect(secondOutcome).toEqual({ kind: 'saved' });
+    });
+
+    it('a supported PNG photo (not just JPEG) reaches Use Document, uploads, and associates through the same shared path', async () => {
+      const { associateDocument } = setupSession(fakeSession(), {
+        associateDocument: jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession({ formData: { directDepositProofDocument: { ...VALID_PROOF, type: 'image/png', name: 'check.png' } } }) } satisfies SaveStepResult),
+      });
+      const { result } = renderHook(() => useDirectDepositForm());
+
+      await pickAndUpload(result, { ...VALID_PROOF, type: 'image/png', name: 'check.png' });
+
+      expect(mockedUploadFile).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png', name: 'check.png' }));
+      expect(result.current.attachment.status).toBe('uploaded');
+      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', VALID_PROOF.objectKey);
+    });
+
+    it('a failed upload never marks the attachment complete, and a successful retry does not create a duplicate attachment/upload', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file://check.png', fileName: 'check.png', mimeType: 'image/png', fileSize: 100 }] });
+      mockedUploadFile
+        .mockResolvedValueOnce({ ok: false, error: { code: 'network', message: 'Unable to reach Paramount Care. Check your connection and try again.' } })
+        .mockResolvedValueOnce({ ok: true, data: VALID_PROOF });
+      setupSession(fakeSession(), {
+        associateDocument: jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }) } satisfies SaveStepResult),
+      });
+      const { result } = renderHook(() => useDirectDepositForm());
+
+      await act(async () => { await result.current.capture.pickFromLibrary(); });
+      await act(async () => { await result.current.capture.confirmUse(); });
+      expect(result.current.attachment.status).toBe('failed');
+      expect(result.current.attachment.file).toBeNull();
+
+      await act(async () => { result.current.attachment.retry(); });
+
+      expect(mockedUploadFile).toHaveBeenCalledTimes(2);
+      expect(result.current.attachment.status).toBe('uploaded');
+      expect(result.current.attachment.file).toEqual(VALID_PROOF);
+      // Exactly one upload attempt succeeded — retry re-sent the SAME
+      // picked file rather than picking/uploading a second, duplicate one.
+      expect(mockedUploadFile).toHaveBeenNthCalledWith(2, expect.objectContaining({ uri: 'file://check.png' }));
+    });
   });
 
   describe('partial save', () => {
@@ -397,6 +482,42 @@ describe('useDirectDepositForm', () => {
       expect(result.current.attachment.file).toEqual(VALID_PROOF);
       expect(result.current.isDirty).toBe(false);
       expect(result.current.conflict).toBeNull();
+    });
+  });
+
+  describe('server validation rejection (defense-in-depth)', () => {
+    it('treats a "validation"-coded save error as a local invalid outcome, revealing real field errors instead of a generic banner', async () => {
+      const { saveStep } = setupSession(
+        fakeSession(), // nothing filled in — real errors exist
+        { saveStep: jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult) },
+      );
+      const { result } = renderHook(() => useDirectDepositForm());
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'invalid' });
+      expect(result.current.saveError).toBeNull();
+      expect(result.current.errors.lastName).toBeDefined();
+      expect(saveStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the generic error banner when there is nothing locally invalid to reveal (data already valid)', async () => {
+      setupSession(
+        fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }),
+        { saveStep: jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult) },
+      );
+      const { result } = renderHook(() => useDirectDepositForm());
+      act(() => result.current.setLastName('Doe'));
+      act(() => result.current.setFirstName('Jane'));
+      act(() => { Object.entries(VALID_PRIMARY).forEach(([k, v]) => result.current.setPrimaryField(k as keyof typeof VALID_PRIMARY, v as never)); });
+      act(() => result.current.setTypedSignature('Jane Doe'));
+
+      let outcome;
+      await act(async () => { outcome = await result.current.saveProgress(); });
+
+      expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
+      expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
     });
   });
 });

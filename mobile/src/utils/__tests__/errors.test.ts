@@ -60,13 +60,47 @@ describe('toAppError', () => {
 });
 
 describe('networkFailureToAppError', () => {
-  it('maps an AbortError to timeout', () => {
+  it('maps a real DOMException AbortError to timeout', () => {
     const err = networkFailureToAppError(new DOMException('aborted', 'AbortError'));
+    expect(err.code).toBe('timeout');
+  });
+
+  // Real bug found during physical UAT investigation, not a hypothetical:
+  // React Native's actual fetch is the `whatwg-fetch` package, which
+  // self-detects at load time whether the JS runtime's own global
+  // DOMException is usable (`try { new DOMException() } catch { ...build a
+  // private fallback class... }` — see whatwg-fetch's own source). On
+  // Hermes that constructor probe can fail, so an aborted request's
+  // rejection value is an instance of whatwg-fetch's own PRIVATE fallback
+  // class — never `instanceof` whatever `DOMException` this file's old
+  // check referenced — so every real timeout was silently reported as a
+  // generic "network" failure instead. This object is NOT a DOMException
+  // (confirmed by the assertion below) and must still classify as timeout.
+  it('maps an AbortError-shaped object that is NOT an instanceof DOMException to timeout (the actual React Native/Hermes case)', () => {
+    class FallbackDOMExceptionLike {
+      name = 'AbortError';
+      message = 'Aborted';
+    }
+    const fallbackError = new FallbackDOMExceptionLike();
+    expect(fallbackError).not.toBeInstanceOf(DOMException);
+
+    const err = networkFailureToAppError(fallbackError);
+    expect(err.code).toBe('timeout');
+  });
+
+  it('maps a plain object with name "AbortError" (no prototype chain at all) to timeout', () => {
+    const err = networkFailureToAppError({ name: 'AbortError', message: 'Aborted' });
     expect(err.code).toBe('timeout');
   });
 
   it('maps any other thrown error to network', () => {
     const err = networkFailureToAppError(new TypeError('Failed to fetch'));
     expect(err.code).toBe('network');
+  });
+
+  it('maps a non-object thrown value (string, null, undefined) to network without throwing', () => {
+    expect(networkFailureToAppError('some string').code).toBe('network');
+    expect(networkFailureToAppError(null).code).toBe('network');
+    expect(networkFailureToAppError(undefined).code).toBe('network');
   });
 });

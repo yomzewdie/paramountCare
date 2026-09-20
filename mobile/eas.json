@@ -8,21 +8,30 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "EAS_PROJECT_ID": "760d3c4c-d127-415f-b7b2-22c4bbc2dad8",
+        "EAS_OWNER": "yomzewdie"
       }
     },
     "uat": {
       "distribution": "internal",
       "channel": "uat",
+      "pnpm": "9.15.9",
       "env": {
-        "APP_ENV": "uat"
+        "APP_ENV": "uat",
+        "EAS_PROJECT_ID": "760d3c4c-d127-415f-b7b2-22c4bbc2dad8",
+        "EAS_OWNER": "yomzewdie",
+        "API_BASE_URL": "https://worker-uat.yomzewdie.workers.dev",
+        "INVITE_BASE_URL": "https://worker-uat.yomzewdie.workers.dev/register"
       }
     },
     "production": {
       "distribution": "store",
       "channel": "production",
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EAS_PROJECT_ID": "760d3c4c-d127-415f-b7b2-22c4bbc2dad8",
+        "EAS_OWNER": "yomzewdie"
       },
       "autoIncrement": true
     }

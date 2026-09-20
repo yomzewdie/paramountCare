@@ -186,7 +186,42 @@ export default function ReviewScreen() {
   }
 
   return (
-    <Screen>
+    <Screen
+      footer={
+        <>
+          {review.conflict ? (
+            <View style={{ marginBottom: theme.spacing.md }}>
+              <ErrorState message="This session was updated elsewhere since you last reviewed it. Your Review has been refreshed with the latest information — please check it and submit again." />
+            </View>
+          ) : null}
+
+          {review.submitError ? (
+            <View style={{ marginBottom: theme.spacing.md }}>
+              <ErrorState message={review.submitError} />
+            </View>
+          ) : null}
+
+          {review.incompleteSteps && review.incompleteSteps.length > 0 ? (
+            <View style={{ marginBottom: theme.spacing.md }}>
+              <ErrorState message={`Please complete: ${review.incompleteSteps.map((s) => s.label).join(', ')}`} />
+            </View>
+          ) : null}
+
+          {!isConnected ? (
+            <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}>
+              You&rsquo;re offline — connect to the internet to submit.
+            </Text>
+          ) : null}
+
+          <Button
+            label="Submit Application"
+            onPress={handleSubmit}
+            loading={review.isSubmitting}
+            disabled={!isConnected || !review.readyToSubmit}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Review Your Application</Text>
       <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.md }]}>
         Review all information carefully. Tap Edit on any section to make changes.
@@ -324,36 +359,6 @@ export default function ReviewScreen() {
         </Text>
       </View>
 
-      {review.conflict ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message="This session was updated elsewhere since you last reviewed it. Your Review has been refreshed with the latest information — please check it and submit again." />
-        </View>
-      ) : null}
-
-      {review.submitError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={review.submitError} />
-        </View>
-      ) : null}
-
-      {review.incompleteSteps && review.incompleteSteps.length > 0 ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={`Please complete: ${review.incompleteSteps.map((s) => s.label).join(', ')}`} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}>
-          You&rsquo;re offline — connect to the internet to submit.
-        </Text>
-      ) : null}
-
-      <Button
-        label="Submit Application"
-        onPress={handleSubmit}
-        loading={review.isSubmitting}
-        disabled={!isConnected || !review.readyToSubmit}
-      />
     </Screen>
   );
 }

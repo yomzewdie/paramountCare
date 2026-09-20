@@ -1,5 +1,6 @@
-import { REAL_STEP_SCREENS } from '../[stepId]';
+import { REAL_STEP_SCREENS, computePhaseStepPosition } from '../[stepId]';
 import { getPacket, computeStepCompletion, defaultFormData, PACKETS } from '@pcs/shared';
+import { deriveProgress } from '../../../../src/features/onboarding/steps';
 import PersonalInfoScreen from '../../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../../src/features/onboarding/EmploymentApplicationScreen';
 import AcknowledgementScreen from '../../../../src/features/onboarding/AcknowledgementScreen';
@@ -347,6 +348,69 @@ describe('onboarding [stepId] real-screen registry', () => {
         }
       }
       expect(unimplementedRequired).toEqual([]);
+    });
+  });
+
+  // 4-phase journey pass: the onboarding step header now shows the
+  // applicant's position WITHIN THEIR CURRENT PHASE ("Pay, Health &
+  // Documents — Step 2 of 5"), not the old global "Step X of 19" — this is
+  // the pure derivation that header wiring depends on. Uses the real
+  // deriveProgress()/groupStepsIntoPhases() pipeline throughout, never a
+  // hand-rolled step list.
+  describe('computePhaseStepPosition', () => {
+    const generalRnSteps = deriveProgress('general_rn', {})!.steps;
+
+    it('returns the phase label and 1-based position within that phase for the first step', () => {
+      expect(computePhaseStepPosition(generalRnSteps, 'personal_info')).toEqual({
+        phaseLabel: 'About You & Work History',
+        stepNumber: 1,
+        totalSteps: 5,
+      });
+    });
+
+    it('finds a step in a later phase, counting from that phase\'s own start (not the global packet position)', () => {
+      // i9 is the real packet's 13th step overall, but only the 5th step of
+      // its own "Pay, Health & Documents" phase (hep_b, tdap, flu, w4, i9).
+      expect(computePhaseStepPosition(generalRnSteps, 'i9')).toEqual({
+        phaseLabel: 'Pay, Health & Documents',
+        stepNumber: 5,
+        totalSteps: 7,
+      });
+    });
+
+    it('finds the final step (review), last position of the last phase', () => {
+      expect(computePhaseStepPosition(generalRnSteps, 'review')).toEqual({
+        phaseLabel: 'Safety & Final Review',
+        stepNumber: 4,
+        totalSteps: 4,
+      });
+    });
+
+    it('is packet-aware, not hardcoded: the same step id resolves to a different phase count on a shorter packet', () => {
+      const icuRnSteps = deriveProgress('icu_rn', {})!.steps;
+      // icu_rn's condensed "Pay, Health & Documents" phase has only 4 steps
+      // (w4, i9, direct_deposit, documents) — no vaccine declinations.
+      expect(computePhaseStepPosition(icuRnSteps, 'i9')).toEqual({
+        phaseLabel: 'Pay, Health & Documents',
+        stepNumber: 2,
+        totalSteps: 4,
+      });
+    });
+
+    it('returns null when stepId is not in the list', () => {
+      expect(computePhaseStepPosition(generalRnSteps, 'not_a_real_step')).toBeNull();
+    });
+
+    it('returns null when stepId is undefined (route param not yet resolved)', () => {
+      expect(computePhaseStepPosition(generalRnSteps, undefined)).toBeNull();
+    });
+
+    it('returns null when steps is undefined (progress not yet loaded)', () => {
+      expect(computePhaseStepPosition(undefined, 'personal_info')).toBeNull();
+    });
+
+    it('returns null when steps is empty', () => {
+      expect(computePhaseStepPosition([], 'personal_info')).toBeNull();
     });
   });
 });

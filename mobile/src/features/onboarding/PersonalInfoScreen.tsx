@@ -7,6 +7,7 @@ import { TextField } from '../../components/TextField';
 import { SelectField } from '../../components/SelectField';
 import { FormSection } from '../../components/FormSection';
 import { StepActionBar } from '../../components/StepActionBar';
+import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -84,7 +85,22 @@ export default function PersonalInfoScreen() {
   });
 
   return (
-    <Screen ref={scrollRef}>
+    <Screen
+      ref={scrollRef}
+      footer={
+        <>
+          <FormFooterStatus saveError={form.saveError} isConnected={isConnected} />
+          <StepActionBar
+            completeLabel={form.isCompleted ? 'Save' : 'Continue'}
+            onSaveProgress={handleSaveProgress}
+            onComplete={handleComplete}
+            isSaving={form.isSaving}
+            isCompleting={form.isCompleting}
+            disabled={!isConnected}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Personal Information</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
         Enter your full legal name and contact details. Sensitive identity information (date of birth, SSN) is collected later, in the Form I-9 step.
@@ -120,29 +136,6 @@ export default function PersonalInfoScreen() {
         <TextField label="ZIP Code" required keyboardType="number-pad" maxLength={10} autoComplete="postal-code" textContentType="postalCode" returnKeyType="done" onSubmitEditing={() => {}} {...field('zip')} />
       </FormSection>
 
-      {form.saveError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={form.saveError} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}
-        >
-          You&rsquo;re offline — connect to the internet to save.
-        </Text>
-      ) : null}
-
-      <StepActionBar
-        completeLabel={form.isCompleted ? 'Save' : 'Continue'}
-        onSaveProgress={handleSaveProgress}
-        onComplete={handleComplete}
-        isSaving={form.isSaving}
-        isCompleting={form.isCompleting}
-        disabled={!isConnected}
-      />
     </Screen>
   );
 }

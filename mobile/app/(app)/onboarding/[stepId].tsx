@@ -1,10 +1,13 @@
 import { View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '../../../src/components/Screen';
 import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/StatusStates';
+import { OnboardingHeader } from '../../../src/components/OnboardingHeader';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
+import { groupStepsIntoPhases } from '../../../src/features/onboarding/phases';
+import type { StepDisplayItem } from '../../../src/features/onboarding/steps';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
 import AcknowledgementScreen from '../../../src/features/onboarding/AcknowledgementScreen';
@@ -149,6 +152,35 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   review: ReviewScreen,
 };
 
+export interface PhaseStepPosition {
+  phaseLabel: string;
+  stepNumber: number;
+  totalSteps: number;
+}
+
+/** 1-based position of `stepId` within its OWN PHASE (see phases.ts), not
+ * the full packet — the 4-phase journey pass deliberately replaced the old
+ * global "Step X of 19" framing, since the applicant should think "I'm on
+ * section 3 of 4," not "6 of 19 forms left." Never hardcoded: both the
+ * phase label and the count are derived from the real, packet-ordered step
+ * list (steps.ts's deriveProgress) via groupStepsIntoPhases(). Returns null
+ * when the position isn't knowable yet (session/progress still loading) or
+ * the id isn't in the list, so the header can fall back to showing nothing
+ * rather than a misleading "Step 0 of 0". Exported (like REAL_STEP_SCREENS
+ * above) so this is directly unit-testable without a full screen render —
+ * see __tests__/stepId.test.ts. */
+export function computePhaseStepPosition(steps: StepDisplayItem[] | undefined, stepId: string | undefined): PhaseStepPosition | null {
+  if (!stepId || !steps || steps.length === 0) return null;
+  const phases = groupStepsIntoPhases(steps);
+  for (const phase of phases) {
+    const stepIndex = phase.steps.findIndex((s) => s.id === stepId);
+    if (stepIndex >= 0) {
+      return { phaseLabel: phase.label, stepNumber: stepIndex + 1, totalSteps: phase.steps.length };
+    }
+  }
+  return null;
+}
+
 export default function OnboardingStep() {
   const theme = useTheme();
   const router = useRouter();
@@ -156,7 +188,29 @@ export default function OnboardingStep() {
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
 
   const RealScreen = stepId ? REAL_STEP_SCREENS[stepId] : undefined;
-  if (RealScreen) return <RealScreen />;
+  const stepPosition = computePhaseStepPosition(progress?.steps, stepId);
+
+  if (RealScreen) {
+    return (
+      <>
+        {stepPosition ? (
+          <Stack.Screen
+            options={{
+              header: () => (
+                <OnboardingHeader
+                  phaseLabel={stepPosition.phaseLabel}
+                  stepNumber={stepPosition.stepNumber}
+                  totalSteps={stepPosition.totalSteps}
+                  onBack={() => router.back()}
+                />
+              ),
+            }}
+          />
+        ) : null}
+        <RealScreen />
+      </>
+    );
+  }
 
   const step = progress?.steps.find((s) => s.id === stepId);
 

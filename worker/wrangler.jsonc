@@ -35,7 +35,40 @@
 	// environment's own wrangler.jsonc block MUST override this to
 	// "production" — see routes/invites.ts's use of it as a fail-safe against
 	// ever emailing an applicant a localhost invitation link.
-	"vars": { "ENVIRONMENT": "development" }
+	"vars": { "ENVIRONMENT": "development" },
+	// Real, isolated UAT environment (mobile UAT phase). Deploys as a
+	// separate Worker script ("worker-uat", Wrangler's standard
+	// {name}-{env} convention) against its own D1 database and R2 bucket —
+	// never the "development" resources above. Binding names are
+	// deliberately identical to the top-level config (DB / UPLOADS_BUCKET)
+	// so no application code needs to change per-environment.
+	"env": {
+		"uat": {
+			"name": "worker-uat",
+			"r2_buckets": [
+				{
+					"binding": "UPLOADS_BUCKET",
+					"bucket_name": "paramountcare-uploads-uat",
+					"preview_bucket_name": "paramountcare-uploads-uat"
+				}
+			],
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "paramountcare-db-uat",
+					"database_id": "69163f6c-21ea-46d6-9c4d-68395b5f753b",
+					"migrations_dir": "migrations"
+				}
+			],
+			// Real, deployed worker-uat URL. No HTML page is served at this
+			// path — UAT invite testing deliberately does not depend on
+			// tapping the emailed link (Universal Links/App Links are out
+			// of scope this phase); testers copy the raw token out of the
+			// real invitation email itself and paste it into the app's
+			// existing manual invite-token field on Create Account.
+			"vars": { "ENVIRONMENT": "uat", "APPLICANT_INVITE_BASE_URL": "https://worker-uat.yomzewdie.workers.dev/register" }
+		}
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

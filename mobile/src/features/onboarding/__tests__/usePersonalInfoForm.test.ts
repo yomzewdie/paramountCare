@@ -119,6 +119,89 @@ describe('usePersonalInfoForm — validation', () => {
   });
 });
 
+describe('usePersonalInfoForm — phone number (physical-UAT bug fix)', () => {
+  it.each([
+    ['6 digits', '123456'],
+    ['7 digits', '1234567'],
+    ['9 digits', '123456789'],
+    ['6 digits plus a trailing space (the exact real-device repro)', '123456 '],
+  ])('rejects %s as an invalid phone number, once touched', (_label, phone) => {
+    setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, phone } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    act(() => result.current.blurField('phone'));
+
+    expect(result.current.errors.phone).toBe('Enter a valid 10-digit phone number.');
+  });
+
+  it.each([
+    ['10 digits, unformatted', '5551234567'],
+    ['dash-formatted', '555-123-4567'],
+    ['parens-and-space-formatted', '(555) 123-4567'],
+    ['space-formatted', '555 123 4567'],
+  ])('accepts %s as a valid phone number', (_label, phone) => {
+    setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, phone } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    act(() => result.current.blurField('phone'));
+
+    expect(result.current.errors.phone).toBeUndefined();
+  });
+
+  it('does not show the phone error before the field is touched', () => {
+    setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, phone: '123456' } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    expect(result.current.errors.phone).toBeUndefined();
+  });
+
+  it('a partial draft save with an invalid 6-digit phone is still allowed (draft persistence is not validation)', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: {}, stepStates: {} }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => usePersonalInfoForm());
+    act(() => result.current.setField('phone', '123456'));
+
+    const outcome = await act(async () => result.current.saveProgress());
+
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: 'in_progress' }));
+  });
+
+  it('complete() blocks on a 6-digit phone, preserves the typed value, and shows the error', async () => {
+    const saveStep = setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, phone: '123456' } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(saveStep).not.toHaveBeenCalled();
+    expect(result.current.data.phone).toBe('123456'); // typed value preserved, never wiped
+    expect(result.current.errors.phone).toBe('Enter a valid 10-digit phone number.');
+  });
+
+  it('correcting an invalid phone to a valid one clears the error and permits completion', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, phone: '123456' } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => usePersonalInfoForm());
+    act(() => result.current.blurField('phone'));
+    expect(result.current.errors.phone).toBeTruthy();
+
+    act(() => result.current.setField('phone', '5551234567'));
+    expect(result.current.errors.phone).toBeUndefined();
+
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
+  });
+});
+
 describe('usePersonalInfoForm — partial save', () => {
   it('saves current data as-is, with no validation gate, marking the step in_progress', async () => {
     const saveStep = setupSession(fakeSession({ formData: {}, stepStates: {} }), jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult));
@@ -245,5 +328,41 @@ describe('usePersonalInfoForm — network/server error', () => {
     expect(result.current.saveError).toBe('Unable to reach Paramount Care.');
     expect(result.current.data).toEqual(VALID_PERSONAL_INFO); // input preserved
     expect(saveStep).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('usePersonalInfoForm — server validation rejection (defense-in-depth)', () => {
+  it('treats a "validation"-coded save error as a local invalid outcome, revealing real field errors instead of a generic banner', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { personalInfo: {} } }), // empty/invalid — @pcs/shared's own validator will find real errors
+      jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.saveProgress();
+    });
+
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(result.current.saveError).toBeNull();
+    expect(result.current.errors.firstName).toBeDefined();
+    expect(saveStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the generic error banner when there is nothing locally invalid to reveal (data already valid)', async () => {
+    setupSession(
+      fakeSession({ formData: { personalInfo: VALID_PERSONAL_INFO } }),
+      jest.fn().mockResolvedValue({ status: 'error', error: { code: 'validation', message: 'Please check the highlighted fields and try again.' } } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => usePersonalInfoForm());
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.saveProgress();
+    });
+
+    expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
+    expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
   });
 });

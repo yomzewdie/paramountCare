@@ -5,6 +5,7 @@ import DocumentScanner, { ResponseType } from 'react-native-document-scanner-plu
 import { File } from 'expo-file-system';
 import type { DocumentRequirement } from './documentRequirements';
 import type { PickedFile } from '../onboarding/uploadApi';
+import { isHeicOrHeif, normalizeHeicToJpeg } from './imageFormat';
 
 export interface PendingCapture {
   picked: PickedFile;
@@ -20,7 +21,26 @@ export interface PendingCapture {
   isTemporaryFile: boolean;
 }
 
-function validateCommon(requirement: DocumentRequirement, type: string, size: number | undefined): string | null {
+// Shared with pickFromLibrary's own normalization-failure branch below —
+// one applicant-facing string for "this photo could not be turned into
+// something we accept," regardless of which of the two places detects it.
+// Deliberately never mentions HEIC, a MIME type, or any implementation
+// detail.
+const IMAGE_PREPARATION_FAILED_MESSAGE = 'We couldn’t prepare this photo for upload. Please try another photo or choose a PDF.';
+
+function validateCommon(requirement: DocumentRequirement, type: string, size: number | undefined, fileName?: string): string | null {
+  // Checked before the plain allow-list below: a HEIC/HEIF photo is a real,
+  // valid photo the applicant just took/chose — framed as "we couldn't
+  // prepare this" (a normalization failure), never the generic "wrong file
+  // type" message a genuinely unsupported format (e.g. a .zip) gets. In the
+  // normal case this never actually fires for pickFromLibrary — HEIC/HEIF
+  // is normalized to JPEG (or rejected with the same message) before
+  // reaching here — this is a defensive backstop for every other capture
+  // path (camera/scanner/document picker) and for a mimeType this project
+  // hasn't seen before.
+  if (isHeicOrHeif(type, fileName)) {
+    return IMAGE_PREPARATION_FAILED_MESSAGE;
+  }
   if (!requirement.allowedMimeTypes.includes(type)) {
     return 'That file type isn’t supported. Please attach a PDF, JPG, or PNG.';
   }
@@ -82,7 +102,7 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
       const uri = result.status === 'success' ? result.scannedImages?.[0] : undefined;
       if (!uri) return; // applicant cancelled — leave any existing attachment untouched
       const picked: PickedFile = { uri, name: 'scanned-document.jpg', type: 'image/jpeg' };
-      setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size), isTemporaryFile: true });
+      setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: true });
     } catch {
       setPermissionError('Unable to open the document scanner. Please try Take Photo instead.');
     }
@@ -99,7 +119,7 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
     const asset = result.canceled ? undefined : result.assets?.[0];
     if (!asset) return;
     const picked: PickedFile = { uri: asset.uri, name: asset.fileName ?? 'photo.jpg', type: asset.mimeType ?? 'image/jpeg', size: asset.fileSize };
-    const issue = validateCommon(requirement, picked.type, picked.size) ?? validateImageDimensions(requirement, asset.width, asset.height);
+    const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, asset.width, asset.height);
     setPending({ picked, issue, isTemporaryFile: true });
   }, [requirement]);
 
@@ -110,11 +130,48 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
       setPermissionError('Photo library access is required to attach a file.');
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      // Requests a non-HEIC/HEIF representation from the Photos framework
+      // itself, where iOS supports it (14+). Without this, a HEIC/HEIF
+      // library photo passes through completely untouched regardless of
+      // `quality` above — confirmed against the installed
+      // expo-image-picker@57.0.18 native source: its HEIC branch is an
+      // unconditional passthrough of the original asset; only the
+      // non-HEIC/TIFF/AVIF "default" branch actually re-encodes using
+      // `quality`. This option is a request, not a guarantee — the result
+      // below is still checked (isHeicOrHeif) rather than assumed
+      // converted, and normalized locally if it's still HEIC/HEIF.
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+    });
     const asset = result.canceled ? undefined : result.assets?.[0];
     if (!asset) return;
+
+    if (isHeicOrHeif(asset.mimeType, asset.fileName)) {
+      const normalized = await normalizeHeicToJpeg(asset.uri);
+      if (!normalized) {
+        // The original HEIC/HEIF bytes are never uploaded — this is a
+        // terminal state for this capture (Retake is the only way
+        // forward), same as any other blocking issue.
+        setPending({
+          picked: { uri: asset.uri, name: asset.fileName ?? 'photo.heic', type: asset.mimeType ?? 'image/heic', size: asset.fileSize },
+          issue: IMAGE_PREPARATION_FAILED_MESSAGE,
+          isTemporaryFile: false,
+        });
+        return;
+      }
+      const picked: PickedFile = { uri: normalized.uri, name: 'photo.jpg', type: 'image/jpeg', size: normalized.size };
+      const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, normalized.width, normalized.height);
+      // Unlike an untouched library asset, this JPEG is a fresh file this
+      // app itself wrote to its own cache — safe to delete once used or
+      // discarded, same as a scanner/camera capture.
+      setPending({ picked, issue, isTemporaryFile: true });
+      return;
+    }
+
     const picked: PickedFile = { uri: asset.uri, name: asset.fileName ?? 'photo.jpg', type: asset.mimeType ?? 'image/jpeg', size: asset.fileSize };
-    const issue = validateCommon(requirement, picked.type, picked.size) ?? validateImageDimensions(requirement, asset.width, asset.height);
+    const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, asset.width, asset.height);
     // Not a temp file this app produced — an existing library photo is the
     // applicant's own, left alone regardless of Use Document/Retake.
     setPending({ picked, issue, isTemporaryFile: false });
@@ -128,7 +185,7 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
     const picked: PickedFile = { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/pdf', size: asset.size ?? undefined };
     // PDFs never go through camera-framing/dimension logic (M13 hardening
     // §16) — only the type/size checks every path shares.
-    setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size), isTemporaryFile: false });
+    setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: false });
   }, [requirement]);
 
   const retake = useCallback(() => {

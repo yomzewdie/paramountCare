@@ -11,6 +11,7 @@ import {
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
+import { isStepValidationRejection } from './serverValidationError';
 import { useFileAttachment, type AttachmentStatus } from './useFileAttachment';
 import { deleteUpload } from './uploadApi';
 import { useDocumentCapture } from '../documents/useDocumentCapture';
@@ -134,6 +135,14 @@ export function useDirectDepositForm() {
 
   const isCompleted = session?.stepStates[STEP_ID] === 'completed';
 
+  // Declared here (before handleResult, which reads it) rather than lower
+  // down near the other field-derived values — React Compiler's
+  // memoization analysis can't preserve a useMemo that a same-scope
+  // function defined ABOVE it closes over, even though the forward
+  // reference is perfectly valid JS (handleResult is only ever invoked
+  // later, after this line has already run).
+  const errors = useMemo<FieldErrors>(() => validateDirectDeposit(data, associatedProof), [data, associatedProof]);
+
   function handleResult(result: SaveStepResult): SubmitOutcome {
     if (result.status === 'saved') {
       setIsDirty(false);
@@ -145,6 +154,10 @@ export function useDirectDepositForm() {
         latestProof: readStoredProof(result.latestSession.formData),
       });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      setTouched(touchAll(ALL_FIELDS_TOUCH_SHAPE));
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };
@@ -250,7 +263,6 @@ export function useDirectDepositForm() {
     })();
   }
 
-  const errors = useMemo<FieldErrors>(() => validateDirectDeposit(data, associatedProof), [data, associatedProof]);
   const shownErrors = useMemo<FieldErrors>(() => revealTouched<TouchKey>(errors, touched), [errors, touched]);
 
   function setLastName(value: string): void { setData((d) => ({ ...d, lastName: value })); setIsDirty(true); }

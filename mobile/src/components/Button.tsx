@@ -9,13 +9,17 @@ interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   accessibilityHint?: string;
+  /** Overrides the accessible name when the visible label itself doesn't
+   * read well aloud (e.g. a punctuated phone number) — optional, defaults
+   * to `label`, so every existing call site is unaffected. */
+  accessibilityLabel?: string;
 }
 
 /** The one button component in the app. `loading` disables it AND shows a
  * spinner in place of the label — this is what item 16 ("do not allow
  * duplicate registration/login submissions from repeated taps") relies on:
  * every submit screen passes its own `isSubmitting` state in as `loading`. */
-export function Button({ label, onPress, variant = 'primary', loading = false, disabled = false, accessibilityHint }: ButtonProps) {
+export function Button({ label, onPress, variant = 'primary', loading = false, disabled = false, accessibilityHint, accessibilityLabel }: ButtonProps) {
   const theme = useTheme();
   const isDisabled = disabled || loading;
   // A second guard beyond the `disabled` prop: Pressable's onPress can still
@@ -48,7 +52,7 @@ export function Button({ label, onPress, variant = 'primary', loading = false, d
       onPress={handlePress}
       disabled={isDisabled}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled: isDisabled, busy: loading }}
       hitSlop={8}

@@ -101,6 +101,33 @@ describe('POST /api/sessions/:sessionId/submit — server-authoritative complete
     const res = await submit(accessToken, session.sessionId, session.revision);
     expect(res.status).toBe(201);
   });
+
+  it('rejects submission with a 6-digit personal_info phone number even though the step was (incorrectly) marked completed — the server never trusts the client\'s own completion flag (physical-UAT bug fix regression)', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('submit-bad-phone'));
+    const completed = await completePacketExceptReview(accessToken, 'icu_rn');
+
+    // Simulates a client that (like the pre-fix mobile app) let a 6-digit
+    // phone through as "valid" and marked personal_info completed anyway —
+    // stepStates is left untouched (still 'completed') to prove the server's
+    // own re-validation, not the client's flag, is what actually blocks this.
+    const before = await (await SELF.fetch(`${BASE}/api/sessions/${completed.sessionId}`, { headers: { Authorization: `Bearer ${accessToken}` } })).json() as TestSession;
+    const patched = await SELF.fetch(`${BASE}/api/sessions/${completed.sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({
+        revision: completed.revision,
+        formData: { ...before.formData, personalInfo: { ...(before.formData.personalInfo as Record<string, unknown>), phone: '123456' } },
+      }),
+    });
+    expect(patched.status).toBe(200);
+    const session = await patched.json() as TestSession;
+
+    const res = await submit(accessToken, session.sessionId, session.revision);
+    expect(res.status).toBe(422);
+    const body = await res.json() as { incompleteSteps: { id: string }[] };
+    expect(body.incompleteSteps.map((s) => s.id)).toEqual(['personal_info']);
+    expect(await countApplications('does-not-matter')).toBe(0);
+  });
 });
 
 describe('POST /api/sessions/:sessionId/submit — success, for every packet', () => {

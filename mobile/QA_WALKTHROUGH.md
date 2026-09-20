@@ -2,6 +2,8 @@
 
 A developer/tester script for the real end-to-end applicant journey. Uses the real Worker backend — no mock/fake state. Never paste a real invitation token, verification code, or access/refresh token into a shared doc, ticket, or chat; this file intentionally never shows one.
 
+**Running this as part of real-device UAT?** See `UAT_PLAN.md` for the UAT environment, synthetic test-data plan, device matrix, the structured pass/fail test matrix (which cites specific sections of this file by name), the defect template, and UAT exit criteria. This file stays the source of truth for the exact step-by-step script and expected copy; `UAT_PLAN.md` is the UAT-specific layer on top of it, not a replacement.
+
 ## Prerequisites
 
 - Worker running locally (`pnpm --filter worker run dev`) or pointed at a real dev environment, with `mobile/.env`'s `API_BASE_URL` matching it.

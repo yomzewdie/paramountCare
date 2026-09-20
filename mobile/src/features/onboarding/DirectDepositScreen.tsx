@@ -1,5 +1,6 @@
+import { useCallback, useRef } from 'react';
 import { useRouter } from 'expo-router';
-import { Image, Text, View } from 'react-native';
+import { Image, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { BankAccountType, DepositAllocationType } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
@@ -7,6 +8,7 @@ import { SensitiveField } from '../../components/SensitiveField';
 import { SelectField } from '../../components/SelectField';
 import { FormSection } from '../../components/FormSection';
 import { StepActionBar } from '../../components/StepActionBar';
+import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -33,6 +35,24 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Visual section order — used only to decide which section to scroll to on
+// a failed Complete attempt. SelectField/SensitiveField don't forward
+// onLayout the way TextField does (see I9Screen's own SelectField sections
+// for the same reason), so this tracks per-SECTION offsets rather than
+// per-field — still lands the applicant next to the actual problem, just
+// not on the exact input the way the plain-TextField screens can.
+type SectionKey = 'employee' | 'primary' | 'additional' | 'voidedCheck' | 'signature';
+const SECTION_ORDER: SectionKey[] = ['employee', 'primary', 'additional', 'voidedCheck', 'signature'];
+const ERROR_KEY_TO_SECTION: Record<string, SectionKey> = {
+  lastName: 'employee', firstName: 'employee',
+  primaryBankName: 'primary', primaryAccountType: 'primary', primaryRoutingNumber: 'primary',
+  primaryAccountNumber: 'primary', primaryDepositType: 'primary', primaryDepositAmount: 'primary',
+  additionalBankName: 'additional', additionalAccountType: 'additional', additionalRoutingNumber: 'additional',
+  additionalAccountNumber: 'additional', additionalDepositType: 'additional', additionalDepositAmount: 'additional',
+  directDepositProofDocument: 'voidedCheck',
+  typedSignature: 'signature', signedDate: 'signature',
+};
+
 export default function DirectDepositScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -40,6 +60,19 @@ export default function DirectDepositScreen() {
   const form = useDirectDepositForm();
 
   useUnsavedChangesGuard(form.isDirty);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionOffsets = useRef<Partial<Record<SectionKey, number>>>({});
+  const setSectionOffset = useCallback((section: SectionKey, e: LayoutChangeEvent) => {
+    sectionOffsets.current[section] = e.nativeEvent.layout.y;
+  }, []);
+
+  function scrollToFirstError() {
+    const errorKeys = Object.keys(form.errors);
+    const firstSection = SECTION_ORDER.find((section) => errorKeys.some((key) => ERROR_KEY_TO_SECTION[key] === section));
+    const y = firstSection ? sectionOffsets.current[firstSection] : undefined;
+    if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+  }
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
@@ -49,12 +82,28 @@ export default function DirectDepositScreen() {
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') router.back();
+    else if (outcome.kind === 'invalid') scrollToFirstError();
   }
 
   const { attachment, capture } = form;
 
   return (
-    <Screen>
+    <Screen
+      ref={scrollRef}
+      footer={
+        <>
+          <FormFooterStatus saveError={form.saveError} isConnected={isConnected} />
+          <StepActionBar
+            completeLabel={form.isCompleted ? 'Save' : 'Continue'}
+            onSaveProgress={handleSaveProgress}
+            onComplete={handleComplete}
+            isSaving={form.isSaving}
+            isCompleting={form.isCompleting}
+            disabled={!isConnected}
+          />
+        </>
+      }
+    >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Direct Deposit Authorization</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
         It can take one to two payroll periods to process your direct deposit request and for you to begin receiving direct deposits.
@@ -70,6 +119,7 @@ export default function DirectDepositScreen() {
         </View>
       ) : null}
 
+      <View onLayout={(e) => setSectionOffset('employee', e)}>
       <FormSection title="Employee Information">
         <TextField
           label="Last Name" required
@@ -94,7 +144,9 @@ export default function DirectDepositScreen() {
           returnKeyType="next"
         />
       </FormSection>
+      </View>
 
+      <View onLayout={(e) => setSectionOffset('primary', e)}>
       <FormSection title="Bank Information">
         <TextField
           label="Bank Name" required
@@ -135,7 +187,9 @@ export default function DirectDepositScreen() {
           keyboardType="decimal-pad"
         />
       </FormSection>
+      </View>
 
+      <View onLayout={(e) => setSectionOffset('additional', e)}>
       <FormSection title="Additional Bank Account (Optional)">
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
           Only fill this in if you want to split your paycheck across a second account.
@@ -177,7 +231,9 @@ export default function DirectDepositScreen() {
           keyboardType="decimal-pad"
         />
       </FormSection>
+      </View>
 
+      <View onLayout={(e) => setSectionOffset('voidedCheck', e)}>
       <FormSection title="Voided Check">
         <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>
           Attach a voided check for this agreement. Deposit slips are not accepted. The information on the check should match what you entered above.
@@ -265,7 +321,9 @@ export default function DirectDepositScreen() {
           </Text>
         ) : null}
       </FormSection>
+      </View>
 
+      <View onLayout={(e) => setSectionOffset('signature', e)}>
       <FormSection title="Authorization Agreement For Direct Deposit">
         <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.md }]}>{AUTHORIZATION_TEXT}</Text>
         <TextField
@@ -281,30 +339,8 @@ export default function DirectDepositScreen() {
           </Text>
         ) : null}
       </FormSection>
+      </View>
 
-      {form.saveError ? (
-        <View style={{ marginBottom: theme.spacing.md }}>
-          <ErrorState message={form.saveError} />
-        </View>
-      ) : null}
-
-      {!isConnected ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={[theme.typography.caption, { color: theme.colors.warning, textAlign: 'center', marginBottom: theme.spacing.sm }]}
-        >
-          You&rsquo;re offline — connect to the internet to save.
-        </Text>
-      ) : null}
-
-      <StepActionBar
-        completeLabel={form.isCompleted ? 'Save' : 'Continue'}
-        onSaveProgress={handleSaveProgress}
-        onComplete={handleComplete}
-        isSaving={form.isSaving}
-        isCompleting={form.isCompleting}
-        disabled={!isConnected}
-      />
     </Screen>
   );
 }

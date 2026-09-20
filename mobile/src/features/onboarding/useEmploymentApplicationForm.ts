@@ -3,6 +3,7 @@ import { defaultFormData, validateEmploymentApplication, type EmploymentApplicat
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
+import { isStepValidationRejection } from './serverValidationError';
 
 const STEP_ID = 'employment_application';
 const FORM_DATA_KEY = 'employmentApplication';
@@ -70,6 +71,10 @@ export function useEmploymentApplicationForm() {
     if (result.status === 'conflict') {
       setConflict({ latest: readStored(result.latestSession.formData) });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      setTouched(touchAll(defaultFormData.employmentApplication));
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };

@@ -3,6 +3,7 @@ import { defaultFormData, validateI9, type I9Data, type CitizenshipStatus, type 
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
+import { isStepValidationRejection } from './serverValidationError';
 
 const STEP_ID = 'i9';
 const FORM_DATA_KEY = 'i9Data';
@@ -164,6 +165,12 @@ export function useI9Form() {
     if (result.status === 'conflict') {
       setConflict({ latest: readStored(result.latestSession.formData) });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      // Same touchAll-plus-i9Signature shape as complete() below —
+      // 'i9Signature' isn't a real I9Data key (see that call site's comment).
+      setTouched({ ...touchAll(defaultFormData.i9Data), i9Signature: true });
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };

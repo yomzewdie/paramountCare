@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { validateSafety, type SafetyEducationData, type FieldErrors } from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
+import { isStepValidationRejection } from './serverValidationError';
 
 const STEP_ID = 'safety_acknowledgements';
 const FORM_DATA_KEY = 'safetyEducation';
@@ -126,6 +127,10 @@ export function useSafetyAcknowledgementsForm() {
     if (result.status === 'conflict') {
       setConflict({ latest: readStored(result.latestSession.formData) });
       return { kind: 'conflict' };
+    }
+    if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
+      setTouched(true);
+      return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };

@@ -36,9 +36,20 @@ import { createRefreshCoordinator, type RefreshOutcome } from '../features/auth/
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-async function timedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+// A plain JSON request (session PATCH, auth, etc.) that hasn't gotten a
+// response within 15s is reasonably treated as unreachable. A multipart
+// file upload (a multi-MB photo, especially a lossless PNG rather than a
+// JPEG of the same picture) can legitimately still be in flight at 15s on
+// a real, merely-slow connection — using the same short ceiling for both
+// was misclassifying a genuinely-still-uploading request as a dead
+// connection. Only uploadApi.ts's file POST opts into this longer timeout;
+// every other request keeps the short one so a truly dead connection still
+// fails fast.
+export const UPLOAD_TIMEOUT_MS = 60_000;
+
+async function timedFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
@@ -80,12 +91,17 @@ async function handleAuthExpired(): Promise<void> {
 
 export const publicFetch: typeof fetch = (input, init) => timedFetch(input, init);
 
-export const authenticatedFetch: typeof fetch = async (input, init) => {
+// Not typed as exactly `typeof fetch` (unlike publicFetch above) — the
+// optional third param lets uploadApi.ts's file upload opt into
+// UPLOAD_TIMEOUT_MS; every other existing call site (sessionApi.ts,
+// authApi.ts) omits it and gets the same REQUEST_TIMEOUT_MS default as
+// before, so this is purely additive.
+export const authenticatedFetch = async (input: RequestInfo | URL, init?: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> => {
   const attempt = (): Promise<Response> => {
     const headers = new Headers(init?.headers);
     const token = getAccessToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    return timedFetch(input, { ...init, headers });
+    return timedFetch(input, { ...init, headers }, timeoutMs);
   };
 
   const first = await attempt();

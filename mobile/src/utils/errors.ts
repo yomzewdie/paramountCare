@@ -55,9 +55,27 @@ export function appError(code: AppErrorCode, fieldIssues?: FieldIssue[]): AppErr
   return { code, message: GENERIC_MESSAGE[code], fieldIssues };
 }
 
-/** A request never completed at all — the fetch itself threw. */
+/**
+ * A request never completed at all — the fetch itself threw. Deliberately
+ * does NOT check `err instanceof DOMException`: React Native's real fetch
+ * implementation is the `whatwg-fetch` package (see
+ * react-native/Libraries/Network/fetch.js), which self-detects at load time
+ * whether the JS runtime's own global `DOMException` is usable
+ * (`try { new DOMException() } catch { ...build its own fallback class... }`
+ * — see whatwg-fetch's own source). On Hermes, that constructor probe can
+ * fail, so an aborted request's rejection value ends up being an instance
+ * of whatwg-fetch's own PRIVATE fallback class, not whatever `DOMException`
+ * this file's `instanceof` check would resolve to — the two are never the
+ * same constructor, so the check silently always returns false and every
+ * timeout was being reported as a generic "network" failure instead. Duck-
+ * typing on `.name === 'AbortError'` works regardless of which constructor
+ * produced the error, since both the real DOMException and whatwg-fetch's
+ * fallback set that same `name` property — this is the standard, portable
+ * way to detect an aborted fetch across environments for exactly this
+ * reason.
+ */
 export function networkFailureToAppError(err: unknown): AppError {
-  if (err instanceof DOMException && err.name === 'AbortError') return appError('timeout');
+  if (err && typeof err === 'object' && 'name' in err && err.name === 'AbortError') return appError('timeout');
   return appError('network');
 }
 

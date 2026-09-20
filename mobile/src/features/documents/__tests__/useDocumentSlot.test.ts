@@ -42,6 +42,7 @@ jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(),
   launchImageLibraryAsync: jest.fn(),
   launchCameraAsync: jest.fn(),
+  UIImagePickerPreferredAssetRepresentationMode: { Automatic: 'automatic', Compatible: 'compatible', Current: 'current' },
 }));
 
 jest.mock('expo-document-picker', () => ({
@@ -131,6 +132,21 @@ describe('useDocumentSlot', () => {
     await pickAndUpload(result);
 
     expect(associateDocument).toHaveBeenCalledWith('nursing_license', VALID_FILE.objectKey);
+  });
+
+  // Parity with Direct Deposit's own PNG coverage — Documents uses the
+  // exact same useDocumentCapture/useFileAttachment/uploadFile shared
+  // stack, confirmed directly rather than assumed.
+  it('a supported PNG credential photo uploads and associates through the same shared path as JPEG', async () => {
+    const pngFile = { ...VALID_FILE, type: 'image/png', name: 'license.png' };
+    const { associateDocument } = setupSession();
+    const { result } = renderHook(() => useDocumentSlot('nursing_license', null, CREDENTIAL_DOCUMENT_REQUIREMENT));
+
+    await pickAndUpload(result, pngFile);
+
+    expect(mockedUploadFile).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png', name: 'license.png' }));
+    expect(result.current.status).toBe('idle'); // association not yet re-derived into currentFile by the caller — matches the "never mirrors locally" test above
+    expect(associateDocument).toHaveBeenCalledWith('nursing_license', pngFile.objectKey);
   });
 
   it('a failed association surfaces an error and best-effort deletes the now-orphaned upload', async () => {
