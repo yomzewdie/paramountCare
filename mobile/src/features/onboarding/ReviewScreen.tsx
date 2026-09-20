@@ -302,7 +302,15 @@ export default function ReviewScreen() {
 
       <SectionCard title="Tax Forms / W-4" {...stepInfo('w4')} stepId="w4" onEdit={onEdit}>
         <FieldRow label="Name" value={[w4Data.firstNameMI, w4Data.lastName].filter(Boolean).join(' ')} />
-        <FieldRow label="Filing Status" value={w4Data.filingStatus ? (FILING_STATUS_LABELS[w4Data.filingStatus] ?? w4Data.filingStatus) : null} />
+        <FieldRow
+          label="Filing Status"
+          value={
+            w4Data.exemptFromWithholding
+              ? 'Not required — claiming exemption from withholding'
+              : w4Data.filingStatus ? (FILING_STATUS_LABELS[w4Data.filingStatus] ?? w4Data.filingStatus) : null
+          }
+        />
+        {w4Data.exemptFromWithholding ? <CheckRow label="Claiming exemption from withholding" checked /> : null}
         <CheckRow label="Signed electronically" checked={!!w4Data.typedSignature?.trim()} />
       </SectionCard>
 

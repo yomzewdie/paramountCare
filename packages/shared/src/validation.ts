@@ -274,7 +274,25 @@ export function validateSignature(data: SignatureData): FieldErrors {
 }
 
 // ── IRS W-4 ───────────────────────────────────────────────────────────────────
-
+//
+// Exempt-from-withholding handling (2026 form, W-4 template/version
+// follow-up): the form's own instructions say that to claim exemption, an
+// employee certifies both IRS conditions via the exemptFromWithholding
+// checkbox, then completes ONLY Steps 1(a), 1(b), and 5 — filingStatus
+// (Step 1(c)) is explicitly excluded from that list, so it is not required
+// here when exempt. Steps 2-4 were never required by this validator either
+// way (they're genuinely optional on the real form for every filer, exempt
+// or not), so exemptFromWithholding does not need to touch them. This
+// deliberately does NOT clear filingStatus or any Step 2-4 value when
+// exemptFromWithholding is toggled — matching this codebase's existing rule
+// for a field hidden/de-required by a conditional (see
+// useEmploymentApplicationForm.ts's own doc comment: a value is saved as
+// entered and never silently cleared just because its condition changed),
+// rather than the I9Screen citizenship-branch pattern of clearing a
+// no-longer-relevant field on switch — that pattern exists for I-9 branches
+// that are mutually exclusive identity claims, not for an optional
+// dollar-amount step whose values remain harmless (and instantly usable
+// again) if exemption is unchecked later.
 export function validateW4(data: W4Data): FieldErrors {
   const errors: FieldErrors = {};
   if (!data.firstNameMI.trim()) errors.firstNameMI = 'First name is required';
@@ -282,7 +300,9 @@ export function validateW4(data: W4Data): FieldErrors {
   if (!data.ssn.trim())        errors.ssn         = 'Social security number is required';
   if (!data.address.trim())    errors.address     = 'Address is required';
   if (!data.cityStateZip.trim()) errors.cityStateZip = 'City, state, and ZIP code are required';
-  if (!data.filingStatus)      errors.filingStatus = 'Please select your filing status';
+  if (!data.exemptFromWithholding && !data.filingStatus) {
+    errors.filingStatus = 'Please select your filing status';
+  }
   if (!data.typedSignature.trim()) errors.typedSignature = 'Your signature is required to certify the W-4';
   if (!data.signedDate.trim()) errors.signedDate  = 'Date is required';
   return errors;

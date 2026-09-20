@@ -8,7 +8,7 @@ import { SensitiveInput } from '@/components/ui/SensitiveInput';
 import type { W4Data, W4FilingStatus, PersonalInfo } from '@/types/onboarding';
 import type { FieldErrors } from '@/lib/validation';
 
-const W4_PDF_URL = '/forms/w4-2024.pdf';
+const W4_PDF_URL = '/forms/w4-2026.pdf';
 
 interface W4SectionProps {
   data: W4Data;
@@ -186,7 +186,7 @@ export function W4Section({ data, personalInfo, onChange, errors }: W4SectionPro
         >
           <div className="flex items-center gap-2.5">
             <FileText size={16} className="text-slate-500" />
-            <span className="text-sm font-semibold text-slate-700">IRS Form W-4 (2024) — Official Reference</span>
+            <span className="text-sm font-semibold text-slate-700">IRS Form W-4 (2026) — Official Reference</span>
           </div>
           {showPdf ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
         </button>
@@ -273,10 +273,11 @@ export function W4Section({ data, personalInfo, onChange, errors }: W4SectionPro
           {/* 1(c) Filing Status */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-slate-700">
-              Filing status <span className="text-red-500">*</span>
+              Filing status {!data.exemptFromWithholding && <span className="text-red-500">*</span>}
             </label>
             <p className="text-xs text-slate-500 mb-1">
               Check only one box. Use the <em>Head of household</em> option only if you are unmarried and pay more than half the costs of keeping up a home for yourself and a qualifying individual.
+              {data.exemptFromWithholding && ' Not required if you are claiming exemption from withholding below.'}
             </p>
             <div className="space-y-2">
               <FilingOption
@@ -308,29 +309,152 @@ export function W4Section({ data, personalInfo, onChange, errors }: W4SectionPro
         </div>
       </div>
 
-      {/* ── Step 2: Multiple Jobs or Spouse Works ──────────────────────────── */}
+      {!data.exemptFromWithholding ? (
+        <>
+          {/* ── Step 2: Multiple Jobs or Spouse Works ──────────────────────────── */}
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-5 pt-5 pb-1">
+              <StepHeader
+                stepNum="2"
+                title={<>Multiple Jobs or Spouse Works<OptionalBadge /></>}
+                subtitle="Complete this step only if you hold more than one job at a time or are married filing jointly and your spouse also works."
+              />
+            </div>
+            <div className="px-5 pb-5">
+              <button
+                type="button"
+                onClick={() => set('multipleJobs', !data.multipleJobs)}
+                className={`flex items-start gap-3 w-full text-left px-4 py-4 rounded-xl border transition-all ${
+                  data.multipleJobs
+                    ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-200'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className={`mt-0.5 w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                  data.multipleJobs ? 'border-blue-500 bg-blue-500' : 'border-slate-300'
+                }`}>
+                  {data.multipleJobs && (
+                    <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 8" fill="none">
+                      <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-800">
+                    Step 2(c): Multiple jobs or spouse works
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    If there are only two jobs total, check this box. Do the same on Form W-4 for the other job. This option is accurate for jobs with similar pay; otherwise, more tax than necessary may be withheld.
+                  </p>
+                </div>
+              </button>
+              <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                <strong>Note:</strong> For more accuracy, use the IRS Tax Withholding Estimator at{' '}
+                <span className="font-mono">www.irs.gov/W4App</span>, or complete the Multiple Jobs Worksheet on page 3 of the W-4 instructions.
+              </p>
+            </div>
+          </div>
+
+          {/* ── Step 3: Claim Dependent and Other Credits ──────────────────────── */}
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-5 pt-5 pb-1">
+              <StepHeader
+                stepNum="3"
+                title={<>Claim Dependent and Other Credits<OptionalBadge /></>}
+                subtitle="If your total income will be $200,000 or less ($400,000 or less if married filing jointly) complete the steps below."
+              />
+            </div>
+            <div className="px-5 pb-5 space-y-4">
+              <DollarInput
+                label="Qualifying children under age 17 — multiply the number of qualifying children by $2,200"
+                value={data.qualifyingChildren}
+                onChange={(v) => {
+                  const next = { ...data, qualifyingChildren: v };
+                  const total = (parseFloat(v || '0') || 0) + (parseFloat(data.otherDependents || '0') || 0);
+                  onChange({ ...next, totalDependents: total > 0 ? String(total) : '' });
+                }}
+                hint="Example: 2 qualifying children × $2,200 = enter 4400"
+              />
+              <DollarInput
+                label="Other dependents — multiply the number of other dependents by $500"
+                value={data.otherDependents}
+                onChange={(v) => {
+                  const next = { ...data, otherDependents: v };
+                  const total = (parseFloat(data.qualifyingChildren || '0') || 0) + (parseFloat(v || '0') || 0);
+                  onChange({ ...next, totalDependents: total > 0 ? String(total) : '' });
+                }}
+                hint="Example: 1 other dependent × $500 = enter 500"
+              />
+              <DollarInput
+                label="Add the amounts above — enter total here"
+                value={computedTotal > 0 ? String(computedTotal) : data.totalDependents}
+                onChange={(v) => set('totalDependents', v)}
+                hint="This amount reduces your withholding. Enters on line 3 of your W-4."
+              />
+            </div>
+          </div>
+
+          {/* ── Step 4: Other Adjustments ──────────────────────────────────────── */}
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-5 pt-5 pb-1">
+              <StepHeader
+                stepNum="4"
+                title={<>Other Adjustments<OptionalBadge /></>}
+              />
+            </div>
+            <div className="px-5 pb-5 space-y-4">
+              <DollarInput
+                label="(a) Other income — not from jobs (interest, dividends, retirement income, etc.)"
+                value={data.otherIncome}
+                onChange={(v) => set('otherIncome', v)}
+                hint="If you want tax withheld for other income expected this year, enter the amount."
+              />
+              <DollarInput
+                label="(b) Deductions — if claiming deductions other than the standard deduction"
+                value={data.deductions}
+                onChange={(v) => set('deductions', v)}
+                hint="Use the Deductions Worksheet on page 3 of the W-4 instructions to determine this amount."
+              />
+              <DollarInput
+                label="(c) Extra withholding — additional tax you want withheld each pay period"
+                value={data.extraWithholding}
+                onChange={(v) => set('extraWithholding', v)}
+                hint="Enter any additional tax you want withheld from each paycheck beyond what is calculated."
+              />
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Steps 2–4 (Multiple Jobs, Dependents, Other Adjustments) are not shown because you are claiming exemption from withholding below. Any values you already entered there are kept — unchecking exemption will bring them back.
+          </p>
+        </div>
+      )}
+
+      {/* ── Exempt From Withholding ──────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         <div className="px-5 pt-5 pb-1">
           <StepHeader
-            stepNum="2"
-            title={<>Multiple Jobs or Spouse Works<OptionalBadge /></>}
-            subtitle="Complete this step only if you hold more than one job at a time or are married filing jointly and your spouse also works."
+            stepNum="—"
+            title={<>Exempt From Withholding<OptionalBadge /></>}
+            subtitle="Check this box only if both apply: you had no federal income tax liability last year, and you expect none this year."
           />
         </div>
         <div className="px-5 pb-5">
           <button
             type="button"
-            onClick={() => set('multipleJobs', !data.multipleJobs)}
+            onClick={() => set('exemptFromWithholding', !data.exemptFromWithholding)}
             className={`flex items-start gap-3 w-full text-left px-4 py-4 rounded-xl border transition-all ${
-              data.multipleJobs
+              data.exemptFromWithholding
                 ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-200'
                 : 'bg-slate-50 border-slate-200 hover:border-slate-300'
             }`}
           >
             <div className={`mt-0.5 w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-              data.multipleJobs ? 'border-blue-500 bg-blue-500' : 'border-slate-300'
+              data.exemptFromWithholding ? 'border-blue-500 bg-blue-500' : 'border-slate-300'
             }`}>
-              {data.multipleJobs && (
+              {data.exemptFromWithholding && (
                 <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 8" fill="none">
                   <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -338,86 +462,13 @@ export function W4Section({ data, personalInfo, onChange, errors }: W4SectionPro
             </div>
             <div>
               <p className="text-sm font-medium text-slate-800">
-                Step 2(c): Multiple jobs or spouse works
+                I claim exemption from withholding for the current year
               </p>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                If there are only two jobs total, check this box. Do the same on Form W-4 for the other job. This option is accurate for jobs with similar pay; otherwise, more tax than necessary may be withheld.
+                I certify that I meet both of the conditions above. If exempt, only Steps 1(a), 1(b), and 5 are required — I understand I will need to submit a new Form W-4 next year to keep the exemption.
               </p>
             </div>
           </button>
-          <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-            <strong>Note:</strong> For more accuracy, use the IRS Tax Withholding Estimator at{' '}
-            <span className="font-mono">www.irs.gov/W4App</span>, or complete the Multiple Jobs Worksheet on page 3 of the W-4 instructions.
-          </p>
-        </div>
-      </div>
-
-      {/* ── Step 3: Claim Dependents ────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-        <div className="px-5 pt-5 pb-1">
-          <StepHeader
-            stepNum="3"
-            title={<>Claim Dependents<OptionalBadge /></>}
-            subtitle="If your total income will be $200,000 or less ($400,000 or less if married filing jointly) complete the steps below."
-          />
-        </div>
-        <div className="px-5 pb-5 space-y-4">
-          <DollarInput
-            label="Qualifying children under age 17 — multiply the number of qualifying children by $2,000"
-            value={data.qualifyingChildren}
-            onChange={(v) => {
-              const next = { ...data, qualifyingChildren: v };
-              const total = (parseFloat(v || '0') || 0) + (parseFloat(data.otherDependents || '0') || 0);
-              onChange({ ...next, totalDependents: total > 0 ? String(total) : '' });
-            }}
-            hint="Example: 2 qualifying children × $2,000 = enter 4000"
-          />
-          <DollarInput
-            label="Other dependents — multiply the number of other dependents by $500"
-            value={data.otherDependents}
-            onChange={(v) => {
-              const next = { ...data, otherDependents: v };
-              const total = (parseFloat(data.qualifyingChildren || '0') || 0) + (parseFloat(v || '0') || 0);
-              onChange({ ...next, totalDependents: total > 0 ? String(total) : '' });
-            }}
-            hint="Example: 1 other dependent × $500 = enter 500"
-          />
-          <DollarInput
-            label="Add the amounts above — enter total here"
-            value={computedTotal > 0 ? String(computedTotal) : data.totalDependents}
-            onChange={(v) => set('totalDependents', v)}
-            hint="This amount reduces your withholding. Enters on line 3 of your W-4."
-          />
-        </div>
-      </div>
-
-      {/* ── Step 4: Other Adjustments ──────────────────────────────────────── */}
-      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-        <div className="px-5 pt-5 pb-1">
-          <StepHeader
-            stepNum="4"
-            title={<>Other Adjustments<OptionalBadge /></>}
-          />
-        </div>
-        <div className="px-5 pb-5 space-y-4">
-          <DollarInput
-            label="(a) Other income — not from jobs (interest, dividends, retirement income, etc.)"
-            value={data.otherIncome}
-            onChange={(v) => set('otherIncome', v)}
-            hint="If you want tax withheld for other income expected this year, enter the amount."
-          />
-          <DollarInput
-            label="(b) Deductions — if claiming deductions other than the standard deduction"
-            value={data.deductions}
-            onChange={(v) => set('deductions', v)}
-            hint="Use the Deductions Worksheet on page 3 of the W-4 instructions to determine this amount."
-          />
-          <DollarInput
-            label="(c) Extra withholding — additional tax you want withheld each pay period"
-            value={data.extraWithholding}
-            onChange={(v) => set('extraWithholding', v)}
-            hint="Enter any additional tax you want withheld from each paycheck beyond what is calculated."
-          />
         </div>
       </div>
 

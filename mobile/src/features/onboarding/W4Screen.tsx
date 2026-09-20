@@ -195,10 +195,11 @@ export default function W4Screen() {
 
         <View onLayout={(e) => setFieldOffset('filingStatus', e)} style={{ marginTop: theme.spacing.sm }}>
           <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>
-            Filing status <Text style={{ color: theme.colors.danger }}>*</Text>
+            Filing status {!form.data.exemptFromWithholding ? <Text style={{ color: theme.colors.danger }}>*</Text> : null}
           </Text>
           <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
             Check only one box. Use the Head of household option only if you are unmarried and pay more than half the costs of keeping up a home for yourself and a qualifying individual.
+            {form.data.exemptFromWithholding ? ' Not required if you are claiming exemption from withholding below.' : ''}
           </Text>
           {FILING_OPTIONS.map((opt) => (
             <FilingOption key={opt.value} label={opt.label} desc={opt.desc} selected={form.data.filingStatus === opt.value} onSelect={() => form.setField('filingStatus', opt.value)} />
@@ -209,45 +210,66 @@ export default function W4Screen() {
         </View>
       </FormSection>
 
-      <FormSection title="Step 2 — Multiple Jobs or Spouse Works (Optional)">
+      {!form.data.exemptFromWithholding ? (
+        <>
+          <FormSection title="Step 2 — Multiple Jobs or Spouse Works (Optional)">
+            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
+              Complete this step only if you hold more than one job at a time or are married filing jointly and your spouse also works.
+            </Text>
+            <CheckboxField
+              label="Step 2(c): Multiple jobs or spouse works — if there are only two jobs total, check this box. Do the same on Form W-4 for the other job."
+              value={form.data.multipleJobs}
+              onChange={(v) => form.setField('multipleJobs', v)}
+            />
+          </FormSection>
+
+          <FormSection title="Step 3 — Claim Dependent and Other Credits (Optional)">
+            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
+              If your total income will be $200,000 or less ($400,000 or less if married filing jointly) complete the fields below.
+            </Text>
+            <DollarField
+              label="Qualifying children under age 17 — multiply the number of qualifying children by $2,200"
+              value={form.data.qualifyingChildren}
+              onChangeText={form.setQualifyingChildren}
+              hint="Example: 2 qualifying children × $2,200 = enter 4400"
+            />
+            <DollarField
+              label="Other dependents — multiply the number of other dependents by $500"
+              value={form.data.otherDependents}
+              onChangeText={form.setOtherDependents}
+              hint="Example: 1 other dependent × $500 = enter 500"
+            />
+            <DollarField
+              label="Add the amounts above — enter total here"
+              value={form.displayedTotalDependents}
+              onChangeText={(v) => form.setField('totalDependents', v)}
+              hint="This amount reduces your withholding."
+            />
+          </FormSection>
+
+          <FormSection title="Step 4 — Other Adjustments (Optional)">
+            <DollarField label="(a) Other income — not from jobs" value={form.data.otherIncome} onChangeText={(v) => form.setField('otherIncome', v)} hint="Interest, dividends, retirement income, etc." />
+            <DollarField label="(b) Deductions — if claiming deductions other than the standard deduction" value={form.data.deductions} onChangeText={(v) => form.setField('deductions', v)} />
+            <DollarField label="(c) Extra withholding — additional tax you want withheld each pay period" value={form.data.extraWithholding} onChangeText={(v) => form.setField('extraWithholding', v)} />
+          </FormSection>
+        </>
+      ) : (
+        <View style={[styles.notice, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, marginBottom: theme.spacing.md }]}>
+          <Text style={[theme.typography.caption, { color: theme.colors.textMuted }]}>
+            Steps 2–4 (Multiple Jobs, Dependents, Other Adjustments) are not shown because you are claiming exemption from withholding below. Any values you already entered there are kept — unchecking exemption will bring them back.
+          </Text>
+        </View>
+      )}
+
+      <FormSection title="Exempt From Withholding (Optional)">
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-          Complete this step only if you hold more than one job at a time or are married filing jointly and your spouse also works.
+          Check this box only if both apply: you had no federal income tax liability last year, and you expect none this year. If you claim exemption, you only need to complete Steps 1(a), 1(b), and Step 5 above — you must submit a new W-4 next year to keep the exemption.
         </Text>
         <CheckboxField
-          label="Step 2(c): Multiple jobs or spouse works — if there are only two jobs total, check this box. Do the same on Form W-4 for the other job."
-          value={form.data.multipleJobs}
-          onChange={(v) => form.setField('multipleJobs', v)}
+          label="I claim exemption from withholding for the current year, and I certify that I meet both of the conditions above."
+          value={form.data.exemptFromWithholding}
+          onChange={(v) => form.setField('exemptFromWithholding', v)}
         />
-      </FormSection>
-
-      <FormSection title="Step 3 — Claim Dependents (Optional)">
-        <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-          If your total income will be $200,000 or less ($400,000 or less if married filing jointly) complete the fields below.
-        </Text>
-        <DollarField
-          label="Qualifying children under age 17 — multiply the number of qualifying children by $2,000"
-          value={form.data.qualifyingChildren}
-          onChangeText={form.setQualifyingChildren}
-          hint="Example: 2 qualifying children × $2,000 = enter 4000"
-        />
-        <DollarField
-          label="Other dependents — multiply the number of other dependents by $500"
-          value={form.data.otherDependents}
-          onChangeText={form.setOtherDependents}
-          hint="Example: 1 other dependent × $500 = enter 500"
-        />
-        <DollarField
-          label="Add the amounts above — enter total here"
-          value={form.displayedTotalDependents}
-          onChangeText={(v) => form.setField('totalDependents', v)}
-          hint="This amount reduces your withholding."
-        />
-      </FormSection>
-
-      <FormSection title="Step 4 — Other Adjustments (Optional)">
-        <DollarField label="(a) Other income — not from jobs" value={form.data.otherIncome} onChangeText={(v) => form.setField('otherIncome', v)} hint="Interest, dividends, retirement income, etc." />
-        <DollarField label="(b) Deductions — if claiming deductions other than the standard deduction" value={form.data.deductions} onChangeText={(v) => form.setField('deductions', v)} />
-        <DollarField label="(c) Extra withholding — additional tax you want withheld each pay period" value={form.data.extraWithholding} onChangeText={(v) => form.setField('extraWithholding', v)} />
       </FormSection>
 
       <FormSection title="Step 5 — Sign Here">

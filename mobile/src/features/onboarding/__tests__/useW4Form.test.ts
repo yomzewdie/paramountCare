@@ -152,6 +152,89 @@ describe('useW4Form — validation', () => {
     expect(result.current.errors.filingStatus).toBeTruthy();
     expect(result.current.errors.typedSignature).toBeTruthy();
   });
+
+  it('requires filingStatus when NOT claiming exemption (regression guard)', () => {
+    setupSession(fakeSession({ formData: { w4Data: { ...VALID_W4, filingStatus: '', exemptFromWithholding: false } } }));
+    const { result } = renderHook(() => useW4Form());
+    act(() => result.current.blurField('filingStatus'));
+    expect(result.current.errors.filingStatus).toBeTruthy();
+  });
+});
+
+// 2026 Form W-4's "Exempt from withholding" declaration: per the form's own
+// instructions, claiming exemption means completing ONLY Steps 1(a), 1(b),
+// and 5 — filingStatus (Step 1(c)) is excluded from that list. Steps 2-4
+// were already optional either way.
+describe('useW4Form — Exempt from withholding', () => {
+  const VALID_W4_EXEMPT = { ...VALID_W4, filingStatus: '' as const, exemptFromWithholding: true };
+
+  it('does not require filingStatus when exemptFromWithholding is true', () => {
+    setupSession(fakeSession({ formData: { w4Data: VALID_W4_EXEMPT } }));
+    const { result } = renderHook(() => useW4Form());
+    act(() => result.current.blurField('filingStatus'));
+    expect(result.current.errors.filingStatus).toBeUndefined();
+  });
+
+  it('still requires the Step 1(a)/1(b) identity fields and Step 5 signature/date when exempt', async () => {
+    setupSession(fakeSession({
+      formData: { w4Data: { ...defaultW4Data, exemptFromWithholding: true } },
+    }));
+    const { result } = renderHook(() => useW4Form());
+
+    // complete() reveals every field's error (touchAll), same mechanism the
+    // "complete() blocks..." test above relies on — result.current.errors is
+    // otherwise gated to only-touched fields.
+    await act(async () => { await result.current.complete(); });
+
+    expect(result.current.errors.firstNameMI).toBeTruthy();
+    expect(result.current.errors.lastName).toBeTruthy();
+    expect(result.current.errors.ssn).toBeTruthy();
+    expect(result.current.errors.address).toBeTruthy();
+    expect(result.current.errors.cityStateZip).toBeTruthy();
+    expect(result.current.errors.typedSignature).toBeTruthy();
+    expect(result.current.errors.signedDate).toBeTruthy();
+    expect(result.current.errors.signedDate).toBeTruthy();
+    // The one field exemption specifically excuses:
+    expect(result.current.errors.filingStatus).toBeUndefined();
+  });
+
+  it('complete() succeeds for an exempt submission with no filing status and no Step 2-4 data', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { w4Data: VALID_W4_EXEMPT } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useW4Form());
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.complete();
+    });
+
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', stepData: VALID_W4_EXEMPT }));
+  });
+
+  it('toggling exemptFromWithholding on does NOT clear previously entered Step 2-4 or filingStatus values', () => {
+    setupSession(fakeSession({ formData: { w4Data: { ...VALID_W4, qualifyingChildren: '2200', extraWithholding: '50' } } }));
+    const { result } = renderHook(() => useW4Form());
+
+    act(() => result.current.setField('exemptFromWithholding', true));
+
+    expect(result.current.data.exemptFromWithholding).toBe(true);
+    expect(result.current.data.filingStatus).toBe('single_mfs');
+    expect(result.current.data.qualifyingChildren).toBe('2200');
+    expect(result.current.data.extraWithholding).toBe('50');
+  });
+
+  it('toggling exemptFromWithholding back off restores the (never-deleted) filingStatus requirement', () => {
+    setupSession(fakeSession({ formData: { w4Data: VALID_W4_EXEMPT } }));
+    const { result } = renderHook(() => useW4Form());
+
+    act(() => result.current.setField('exemptFromWithholding', false));
+    act(() => result.current.blurField('filingStatus'));
+
+    expect(result.current.errors.filingStatus).toBeTruthy();
+  });
 });
 
 describe('useW4Form — dependents auto-calculation (matches existing web behavior exactly)', () => {

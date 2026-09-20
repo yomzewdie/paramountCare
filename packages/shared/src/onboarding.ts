@@ -173,10 +173,15 @@ export interface UploadedDocuments {
   cprCertification: UploadedFile | null;
 }
 
-// ── IRS W-4 (2024) ────────────────────────────────────────────────────────────
+// ── IRS W-4 (2026) ────────────────────────────────────────────────────────────
 // Employee's Withholding Certificate — employee-filled sections only.
 // Employer sections (name/address, EIN, first date of employment) are
 // completed by Paramount Care Staffing and are NOT collected here.
+// Verified against the bundled `frontend/public/forms/w4-2026.pdf` template
+// (Official Forms Audit, W-4 template/version follow-up): the file's own
+// printed text, embedded metadata, and AcroForm field set all confirm this
+// is the genuine 2026 revision (Cat. No. 10220Q), not the 2024 revision the
+// old filename implied.
 export type W4FilingStatus = 'single_mfs' | 'mfj_qss' | 'hoh' | '';
 
 export interface W4Data {
@@ -186,13 +191,15 @@ export interface W4Data {
   ssn: string;             // Social security number
   address: string;         // Home address (number and street or rural route)
   cityStateZip: string;    // City or town, state, and ZIP code
-  filingStatus: W4FilingStatus;  // Step 1(c) checkbox selection
+  // Step 1(c) checkbox selection — required UNLESS exemptFromWithholding is
+  // true, per the form's own instructions (see that field's doc comment).
+  filingStatus: W4FilingStatus;
 
   // Step 2 — Multiple Jobs or Spouse Works (optional)
   multipleJobs: boolean;   // Box 2(c): checked when this step applies
 
-  // Step 3 — Claim Dependents (optional, dollar amounts)
-  qualifyingChildren: string;  // $ — qualifying children under 17 × $2,000
+  // Step 3 — Claim Dependent and Other Credits (optional, dollar amounts)
+  qualifyingChildren: string;  // $ — qualifying children under 17 × $2,200 (2026 amount; was $2,000 through the 2024 revision)
   otherDependents: string;     // $ — other dependents × $500
   totalDependents: string;     // $ — add the amounts above
 
@@ -200,6 +207,16 @@ export interface W4Data {
   otherIncome: string;         // 4(a) — other income not from jobs
   deductions: string;          // 4(b) — deductions (if exceeding standard deduction)
   extraWithholding: string;    // 4(c) — extra withholding each pay period
+
+  // "Exempt from withholding" declaration (AcroForm field c1_3[0], printed
+  // directly below Step 4 and above Step 5 on the real form). Per the form's
+  // own instructions: to claim exemption, certify both IRS conditions by
+  // checking this box, then complete ONLY Steps 1(a), 1(b), and 5 — Step
+  // 1(c) (filingStatus) and Steps 2-4 are not required in that case (see
+  // validateW4 in validation.ts). Checking this box does not itself clear
+  // any previously entered Step 2-4 or filingStatus values — see
+  // validateW4's own doc comment for why.
+  exemptFromWithholding: boolean;
 
   // Step 5 — Sign Here
   typedSignature: string;      // Employee's electronic typed signature
@@ -220,6 +237,7 @@ export const defaultW4Data: W4Data = {
   otherIncome: '',
   deductions: '',
   extraWithholding: '',
+  exemptFromWithholding: false,
   typedSignature: '',
   signedDate: '',
 };

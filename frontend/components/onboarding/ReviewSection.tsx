@@ -229,15 +229,25 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
           </ReviewGroup>
 
           {/* 4. W-4 */}
-          <ReviewGroup title="IRS Form W-4 (2024)" icon={<FileText size={15} />} step="w4" isComplete={stepValid.w4} onEdit={onEditStep}>
+          <ReviewGroup title="IRS Form W-4 (2026)" icon={<FileText size={15} />} step="w4" isComplete={stepValid.w4} onEdit={onEditStep}>
             <Row label="Name" value={[data.w4Data.firstNameMI, data.w4Data.lastName].filter(Boolean).join(' ') || null} />
             <Row label="Address" value={[data.w4Data.address, data.w4Data.cityStateZip].filter(Boolean).join(', ') || null} />
-            <Row label="Filing Status" value={data.w4Data.filingStatus ? (FILING_STATUS_LABELS[data.w4Data.filingStatus] ?? data.w4Data.filingStatus) : null} />
-            {data.w4Data.multipleJobs && <Row label="Step 2(c)" value="Multiple jobs or spouse works — checked" />}
-            {(data.w4Data.totalDependents || data.w4Data.qualifyingChildren || data.w4Data.otherDependents) && (
+            <Row
+              label="Filing Status"
+              value={
+                data.w4Data.exemptFromWithholding
+                  ? 'Not required — claiming exemption from withholding'
+                  : data.w4Data.filingStatus
+                    ? (FILING_STATUS_LABELS[data.w4Data.filingStatus] ?? data.w4Data.filingStatus)
+                    : null
+              }
+            />
+            {data.w4Data.exemptFromWithholding && <BoolRow label="Claiming exemption from withholding" checked />}
+            {!data.w4Data.exemptFromWithholding && data.w4Data.multipleJobs && <Row label="Step 2(c)" value="Multiple jobs or spouse works — checked" />}
+            {!data.w4Data.exemptFromWithholding && (data.w4Data.totalDependents || data.w4Data.qualifyingChildren || data.w4Data.otherDependents) && (
               <Row label="Dependents Total" value={`$${data.w4Data.totalDependents || '0'}`} />
             )}
-            {data.w4Data.extraWithholding && <Row label="Extra Withholding" value={`$${data.w4Data.extraWithholding} / pay period`} />}
+            {!data.w4Data.exemptFromWithholding && data.w4Data.extraWithholding && <Row label="Extra Withholding" value={`$${data.w4Data.extraWithholding} / pay period`} />}
             <BoolRow
               label="W-4 signed electronically (under penalty of perjury)"
               checked={!!data.w4Data.typedSignature.trim()}
