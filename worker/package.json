@@ -8,7 +8,7 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.config.node.mts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "cf-typegen": "wrangler types"
@@ -18,6 +18,7 @@
     "@eslint/js": "^9",
     "@types/node": "^25.9.1",
     "eslint": "^9",
+    "pdfjs-dist": "^5.7.284",
     "typescript": "^5.5.2",
     "typescript-eslint": "^8",
     "vitest": "~3.2.0",

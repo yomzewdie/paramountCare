@@ -111,6 +111,30 @@ admin.get('/application/:id/i9-pdf', async (c) => {
   return new Response(obj.body, { headers });
 });
 
+// ── GET /api/admin/application/:id/w4-pdf ─────────────────────────────────────
+//
+// Mirrors the I-9 download route exactly — same auth (router-level
+// requireAuth + requireRole above), same deterministic R2 key derivation
+// (never a client-supplied key), same private/no-store streaming, no public
+// R2 URL anywhere. The generated W-4 PDF contains the applicant's full SSN
+// (see services/w4pdf.ts's own doc comment on why that's correct for this
+// form, unlike I-9's masked one) — this route is the only way to retrieve
+// it, gated the same as every other PII-bearing admin route.
+admin.get('/application/:id/w4-pdf', async (c) => {
+  const id        = c.req.param('id');
+  const objectKey = `w4/${id}/w4-2026-signed.pdf`;
+
+  const obj = await c.env.UPLOADS_BUCKET.get(objectKey);
+  if (!obj) return c.json({ error: 'Signed W-4 PDF not found for this application' }, 404);
+
+  const headers = new Headers();
+  headers.set('Content-Type',        'application/pdf');
+  headers.set('Content-Disposition', `attachment; filename="W4-${id}.pdf"`);
+  headers.set('Cache-Control',       'private, no-store');
+
+  return new Response(obj.body, { headers });
+});
+
 // ── GET /api/admin/application/:id/documents/:documentId/download ────────────
 //
 // Official Forms Audit finding: the voided check, vaccine-proof uploads, and

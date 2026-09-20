@@ -237,11 +237,12 @@ describe('POST /api/sessions/:sessionId/submit — document promotion', () => {
 
     // icu_rn's real required uploads: direct_deposit voided check, list_a
     // (i9Uploads), nursing_license, cpr_cert — 4 promoted live uploads,
-    // plus the generated I-9 PDF (5th, session_id/doc_type both null since
-    // it's server-generated, not a promoted applicant upload — see the
-    // dedicated "I-9 PDF generation" tests below for that one).
+    // plus the generated I-9 and W-4 PDFs (5th and 6th; both have
+    // session_id/doc_type null since they're server-generated, not promoted
+    // applicant uploads — see the dedicated I-9/W-4 PDF generation tests
+    // in i9Finalization.spec.ts / w4Finalization.spec.ts for those).
     const docCount = await countApplicationDocuments(body.applicationId);
-    expect(docCount).toBe(5);
+    expect(docCount).toBe(6);
 
     const rows = await env.DB.prepare('SELECT object_key, doc_type, session_id FROM application_documents WHERE application_id = ? AND doc_type IS NOT NULL')
       .bind(body.applicationId).all<{ object_key: string; doc_type: string; session_id: string }>();

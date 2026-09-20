@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { beforeAll } from 'vitest';
 import { hashPassword } from '../src/services/auth';
+import { W4_2026_TEMPLATE_BASE64 } from './fixtures/w4TemplateFixture';
 
 // Credentials for the seeded admin user used by tests that need an
 // authenticated session (see test/index.spec.ts `loginAsAdmin()`).
@@ -232,4 +233,17 @@ beforeAll(async () => {
   await db.prepare(
     `CREATE INDEX IF NOT EXISTS idx_uploaded_documents_session_doctype ON uploaded_documents(session_id, doc_type)`,
   ).run();
+
+  // W-4 PDF generation (see services/w4pdf.ts / services/submission.ts's
+  // renderW4Pdf) has no fallback layout the way I-9's does — a missing
+  // `templates/w4-2026.pdf` R2 object is a hard preflight failure, by
+  // design (see the W-4 PDF-generation task's own requirements). Every
+  // OTHER test in this suite submits real packets expecting success, so
+  // the template is provisioned here globally, exactly mirroring how a
+  // real deployment provisions it once via `wrangler r2 object put` before
+  // any applicant ever submits. The one test that specifically exercises
+  // "template not yet provisioned" (test/w4Finalization.spec.ts's own
+  // preflight-failure describe block) deletes it first.
+  const w4TemplateBytes = Uint8Array.from(atob(W4_2026_TEMPLATE_BASE64), (c) => c.charCodeAt(0));
+  await env.UPLOADS_BUCKET.put('templates/w4-2026.pdf', w4TemplateBytes);
 });

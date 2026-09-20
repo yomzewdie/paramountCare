@@ -206,6 +206,7 @@ export default async function ApplicationDetailPage({
   const app = await fetchApplicationDetail(applicationId);
   // Proxy route forwards admin_token cookie server-side to the worker.
   const i9PdfUrl = `/api/admin/i9-pdf/${applicationId}`;
+  const w4PdfUrl = `/api/admin/w4-pdf/${applicationId}`;
 
   if (!app) notFound();
 
@@ -299,6 +300,26 @@ export default async function ApplicationDetailPage({
                 </a>
                 <p className="text-xs text-slate-400">
                   PDF is generated at time of submission and stored securely. If unavailable, the applicant may not have completed their I-9 signature step.
+                </p>
+              </div>
+            </Section>
+
+            {/* W-4 Signed PDF */}
+            <Section title="Signed W-4 PDF" icon={ShieldCheck}>
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Employee&apos;s Withholding Certificate (2026) — electronically signed by the applicant during onboarding. Contains the applicant&apos;s full SSN; handle accordingly.
+                </p>
+                <a
+                  href={w4PdfUrl}
+                  download={`W4-${applicationId}.pdf`}
+                  className="flex items-center gap-2.5 w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  <Download size={15} />
+                  Download Signed W-4
+                </a>
+                <p className="text-xs text-slate-400">
+                  PDF is generated at time of submission and stored securely. If unavailable, the applicant may not have completed their W-4 signature step.
                 </p>
               </div>
             </Section>

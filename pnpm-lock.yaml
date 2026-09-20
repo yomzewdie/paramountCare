@@ -249,6 +249,9 @@ importers:
       eslint:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)
+      pdfjs-dist:
+        specifier: ^5.7.284
+        version: 5.7.284
       typescript:
         specifier: ^5.5.2
         version: 5.9.3

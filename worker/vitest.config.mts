@@ -3,6 +3,18 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 export default defineWorkersConfig({
 	test: {
 		setupFiles: ['./test/setup.ts'],
+		// test/node/** runs under vitest.config.node.mts's plain-Node project
+		// instead (see that file's own doc comment for why) — excluded here so
+		// it is never picked up by the default include glob and run under the
+		// Workers pool by mistake. Vitest's own default exclude list is
+		// repeated explicitly alongside it, since supplying `exclude` at all
+		// replaces (not merges with) that default.
+		exclude: [
+			'**/node_modules/**', '**/dist/**', '**/cypress/**',
+			'**/.{idea,git,cache,output,temp}/**',
+			'**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
+			'test/node/**',
+		],
 		poolOptions: {
 			workers: {
 				wrangler: { configPath: "./wrangler.jsonc" },

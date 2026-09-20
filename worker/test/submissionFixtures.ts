@@ -109,6 +109,7 @@ const VALID_W4 = {
   firstNameMI: 'Jane', lastName: 'Doe', ssn: '123-45-6789',
   address: '123 Main St', cityStateZip: 'Los Angeles, CA 90001', filingStatus: 'single_mfs',
   multipleJobs: false, qualifyingChildren: '', otherDependents: '', totalDependents: '', otherIncome: '', deductions: '', extraWithholding: '',
+  exemptFromWithholding: false,
   typedSignature: 'Jane Doe', signedDate: '01/01/2026',
 };
 

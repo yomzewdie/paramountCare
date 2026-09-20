@@ -8,6 +8,7 @@ import {
 } from '@pcs/shared';
 import { generateApplicationId } from '../utils/applicationId';
 import { generateI9Pdf, type I9PdfInput } from '../services/i9pdf';
+import { generateW4Pdf, type W4PdfInput } from '../services/w4pdf';
 import { findSessionById, type OnboardingSessionRow } from '../db/queries/onboardingSessions';
 import { findLiveUploadsForSession, type UploadedDocumentRow } from '../db/queries/uploadedDocuments';
 import { findApplicationById } from '../db/queries/applications';
@@ -274,6 +275,181 @@ async function ensureI9PdfGenerated(env: SubmissionEnv, ctx: I9GenerationContext
   return persistI9Pdf(env, { applicationId: ctx.applicationId, pdfBytes, effectiveFormData: ctx.effectiveFormData, now: ctx.now });
 }
 
+// ── W-4 finalization ─────────────────────────────────────────────────────────
+//
+// Mirrors the I-9 finalization functions above exactly in shape and
+// invariants (deterministic preflight render / transient persist / race-safe
+// idempotent repair) — see each I-9 function's own doc comment for the
+// reasoning, which applies here unchanged. Kept as fully separate functions
+// and its own context type (rather than reusing I9GenerationContext) so this
+// addition never has to modify any I-9 code.
+//
+// One deliberate difference from I-9: generateW4Pdf has no fallback layout
+// and no safe/silent field setters — a missing template or a renamed/
+// removed AcroForm field throws immediately (see services/w4pdf.ts's own
+// doc comment). renderW4Pdf does not swallow a missing template into a
+// null the way renderI9Pdf's own template fetch does; it surfaces the
+// R2 miss as a real error instead.
+interface W4GenerationContext {
+  applicationId: string;
+  effectiveFormData: OnboardingFormData;
+  now: string;
+}
+
+function toW4PdfInput(data: OnboardingFormData, applicationId: string, now: string): W4PdfInput {
+  const w4 = data.w4Data;
+  return {
+    firstNameMI: w4.firstNameMI,
+    lastName: w4.lastName,
+    ssn: w4.ssn,
+    address: w4.address,
+    cityStateZip: w4.cityStateZip,
+    filingStatus: w4.filingStatus,
+    multipleJobs: w4.multipleJobs,
+    qualifyingChildren: w4.qualifyingChildren,
+    otherDependents: w4.otherDependents,
+    totalDependents: w4.totalDependents,
+    otherIncome: w4.otherIncome,
+    deductions: w4.deductions,
+    extraWithholding: w4.extraWithholding,
+    exemptFromWithholding: w4.exemptFromWithholding,
+    typedSignature: w4.typedSignature,
+    signedDate: w4.signedDate,
+    applicationId,
+    generatedAt: new Date(now).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC',
+  };
+}
+
+/** Renders W-4 PDF bytes only — no D1/R2 writes. See renderI9Pdf's own doc
+ * comment for why a pure rendering step is safe to use as both a preflight
+ * check and a later repair attempt. Reuses the SAME `fonts/i9-unicode.ttf`
+ * R2 asset I-9 already reads — it is a generic Unicode-capable font for
+ * rendering applicant-entered names, not something I-9-specific despite its
+ * key name, and provisioning a second identical font under a different key
+ * would be pure ops overhead for no benefit. */
+async function renderW4Pdf(env: SubmissionEnv, ctx: W4GenerationContext): Promise<Uint8Array> {
+  const templateObj = await env.UPLOADS_BUCKET.get('templates/w4-2026.pdf');
+  if (!templateObj) {
+    throw new Error('W-4 template (templates/w4-2026.pdf) is not present in R2 — cannot generate the official W-4 PDF.');
+  }
+  const templateBytes = new Uint8Array(await templateObj.arrayBuffer());
+
+  let unicodeFontBytes: Uint8Array | null = null;
+  try {
+    const fontObj = await env.UPLOADS_BUCKET.get('fonts/i9-unicode.ttf');
+    if (fontObj) unicodeFontBytes = new Uint8Array(await fontObj.arrayBuffer());
+  } catch { /* falls back to WinAnsi standard fonts */ }
+
+  return generateW4Pdf(toW4PdfInput(ctx.effectiveFormData, ctx.applicationId, ctx.now), templateBytes, unicodeFontBytes);
+}
+
+export type PersistW4PdfResult = PersistI9PdfResult;
+
+/** Persists already-rendered W-4 PDF bytes. See persistI9Pdf's own doc
+ * comment for the race-safety argument (a single conditional
+ * `INSERT ... WHERE NOT EXISTS`) — identical here, just against the W-4
+ * object key. */
+async function persistW4Pdf(
+  env: SubmissionEnv,
+  p: { applicationId: string; pdfBytes: Uint8Array; now: string },
+): Promise<PersistW4PdfResult> {
+  const w4ObjectKey = `w4/${p.applicationId}/w4-2026-signed.pdf`;
+  try {
+    const existingDocs = await findDocumentsByApplicationId(env.DB, p.applicationId);
+    if (existingDocs.some((d) => d.object_key === w4ObjectKey)) return { ok: true, changed: false };
+
+    await env.UPLOADS_BUCKET.put(w4ObjectKey, p.pdfBytes, { httpMetadata: { contentType: 'application/pdf' } });
+
+    const insertResult = await insertDocumentIfNotExistsStmt(env.DB, {
+      applicationId: p.applicationId,
+      objectKey: w4ObjectKey,
+      fileName: `W4-${p.applicationId}.pdf`,
+      fileSize: p.pdfBytes.byteLength,
+      uploadedAt: p.now,
+    }).run();
+
+    const won = (insertResult.meta.changes ?? 0) > 0;
+    if (won) {
+      try {
+        await insertAuditLogStmt(env.DB, {
+          applicationId: p.applicationId,
+          action: 'w4_pdf_generated',
+          metadataJson: JSON.stringify({ objectKey: w4ObjectKey }),
+          createdAt: p.now,
+        }).run();
+      } catch (e) {
+        console.error('[submission] W-4 PDF audit log insert failed (non-fatal):', e);
+      }
+    }
+    return { ok: true, changed: won };
+  } catch (e) {
+    console.error('[submission] W-4 PDF persistence failed (transient storage failure — application already submitted, a retry will repair):', e);
+    return { ok: false, changed: false };
+  }
+}
+
+export type EnsureW4PdfResult = PersistW4PdfResult;
+
+/** Repair path for a session that is ALREADY 'submitted' — see
+ * ensureI9PdfGenerated's own doc comment for the full reasoning (identical
+ * here): checks R2 object existence and the DB record independently, since
+ * either can exist without the other after a partial prior failure, and
+ * only re-renders/re-persists whichever half is actually missing. */
+async function ensureW4PdfGenerated(env: SubmissionEnv, ctx: W4GenerationContext): Promise<EnsureW4PdfResult> {
+  const w4ObjectKey = `w4/${ctx.applicationId}/w4-2026-signed.pdf`;
+
+  let objectExists = false;
+  try {
+    objectExists = (await env.UPLOADS_BUCKET.head(w4ObjectKey)) !== null;
+  } catch (e) {
+    console.error('[submission] W-4 PDF R2 existence check failed (will still attempt generation):', e);
+  }
+  const existingDocs = await findDocumentsByApplicationId(env.DB, ctx.applicationId);
+  const recordExists = existingDocs.some((d) => d.object_key === w4ObjectKey);
+
+  if (objectExists && recordExists) return { ok: true, changed: false };
+
+  let pdfBytes: Uint8Array;
+  if (objectExists) {
+    try {
+      const obj = await env.UPLOADS_BUCKET.get(w4ObjectKey);
+      if (!obj) throw new Error('W-4 PDF object reported present by head() but get() returned null');
+      pdfBytes = new Uint8Array(await obj.arrayBuffer());
+    } catch (e) {
+      console.error('[submission] W-4 PDF re-read for DB-only repair failed:', e);
+      return { ok: false, changed: false };
+    }
+  } else {
+    try {
+      pdfBytes = await renderW4Pdf(env, ctx);
+    } catch (e) {
+      console.error('[submission] W-4 PDF rendering failed on repair attempt:', e);
+      return { ok: false, changed: false };
+    }
+  }
+
+  return persistW4Pdf(env, { applicationId: ctx.applicationId, pdfBytes, now: ctx.now });
+}
+
+/** Runs both I-9's and W-4's self-healing repair together — used by every
+ * "already submitted" code path in submitSession (the idempotent-retry
+ * branch and the race-loser branch), so the two are never repaired by two
+ * separately-maintained call sites that could drift out of sync. Reports
+ * failure if EITHER artifact's repair fails; reports changed if EITHER one
+ * actually did the repairing (submitSession uses this to decide whether
+ * this is the first moment the application is genuinely complete, and
+ * therefore when confirmation emails should go out). */
+async function ensureAllPdfsGenerated(
+  env: SubmissionEnv,
+  ctx: { applicationId: string; effectiveFormData: OnboardingFormData; now: string },
+): Promise<{ ok: boolean; changed: boolean }> {
+  const i9Result = await ensureI9PdfGenerated(env, ctx);
+  if (!i9Result.ok) return { ok: false, changed: false };
+  const w4Result = await ensureW4PdfGenerated(env, ctx);
+  if (!w4Result.ok) return { ok: false, changed: false };
+  return { ok: true, changed: i9Result.changed || w4Result.changed };
+}
+
 /** Best-effort, non-fatal, exactly-once-per-application email dispatch —
  * factored out so both the winning-submission path and the
  * already-submitted repair path (which only reaches this once, the
@@ -401,7 +577,7 @@ export async function submitSession(
       return { kind: 'error', message: 'Session is marked submitted but has no application reference.' };
     }
     const applicationId = session.application_id;
-    const result = await ensureI9PdfGenerated(env, { applicationId, effectiveFormData, now: new Date().toISOString() });
+    const result = await ensureAllPdfsGenerated(env, { applicationId, effectiveFormData, now: new Date().toISOString() });
     if (!result.ok) {
       return { kind: 'error', message: 'Your application was received but could not be fully finalized. Please try submitting again.' };
     }
@@ -464,6 +640,22 @@ export async function submitSession(
     return {
       kind: 'error',
       message: 'We could not generate your I-9 form with the information provided. Please contact your onboarding coordinator for help completing this step.',
+    };
+  }
+
+  // Same preflight discipline as I-9, immediately above: a W-4 rendering
+  // failure (a missing/renamed AcroForm field, or the template itself
+  // missing from R2 — see services/w4pdf.ts and renderW4Pdf's own doc
+  // comments) must be caught here, before anything is committed, never
+  // after the session becomes submitted and immutable.
+  let w4PdfBytes: Uint8Array;
+  try {
+    w4PdfBytes = await renderW4Pdf(env, { applicationId, effectiveFormData, now });
+  } catch (e) {
+    console.error('[submission] W-4 PDF preflight rendering failed — nothing was committed, session remains active:', e);
+    return {
+      kind: 'error',
+      message: 'We could not generate your W-4 form with the information provided. Please contact your onboarding coordinator for help completing this step.',
     };
   }
 
@@ -534,7 +726,7 @@ export async function submitSession(
       // never-silently-succeed-while-incomplete invariant applies here
       // too, not only on a request made after a visible response.
       const raceApplicationId = current.application_id;
-      const result = await ensureI9PdfGenerated(env, { applicationId: raceApplicationId, effectiveFormData, now });
+      const result = await ensureAllPdfsGenerated(env, { applicationId: raceApplicationId, effectiveFormData, now });
       if (!result.ok) {
         return { kind: 'error', message: 'Your application was received but could not be fully finalized. Please try submitting again.' };
       }
@@ -558,6 +750,11 @@ export async function submitSession(
   // the DB submission itself is untouched either way.
   const persistResult = await persistI9Pdf(env, { applicationId, pdfBytes: i9PdfBytes, effectiveFormData, now });
   if (!persistResult.ok) {
+    return { kind: 'error', message: 'Your application was received but could not be fully finalized. Please try submitting again.' };
+  }
+
+  const w4PersistResult = await persistW4Pdf(env, { applicationId, pdfBytes: w4PdfBytes, now });
+  if (!w4PersistResult.ok) {
     return { kind: 'error', message: 'Your application was received but could not be fully finalized. Please try submitting again.' };
   }
 
