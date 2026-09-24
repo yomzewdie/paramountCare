@@ -1,7 +1,9 @@
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
-// Resend requires a verified sender domain — update this to match your verified domain.
-const FROM_ADDRESS = 'onboarding@resend.dev';
+// Sender for every transactional email (invitation, submission confirmation,
+// admin notification, verification code). Must be on a domain verified in
+// Resend.
+const TRANSACTIONAL_FROM_ADDRESS = 'Paramount Care Staffing <noreply@paramountcarestaffing.com>';
 
 interface ResendPayload {
   from: string;
@@ -79,7 +81,7 @@ export async function sendApplicantConfirmation(
   ].join('\n');
 
   await sendEmail(apiKey, {
-    from: FROM_ADDRESS,
+    from: TRANSACTIONAL_FROM_ADDRESS,
     to: data.to,
     subject: 'Application Received — Paramount Care Staffing',
     text,
@@ -110,7 +112,7 @@ export async function sendAdminNotification(
   ].join('\n');
 
   await sendEmail(apiKey, {
-    from: FROM_ADDRESS,
+    from: TRANSACTIONAL_FROM_ADDRESS,
     to: adminEmail,
     subject: 'New Onboarding Application Submitted',
     text,
@@ -149,7 +151,7 @@ export async function sendApplicantInvitation(
   ].join('\n');
 
   await sendEmail(apiKey, {
-    from: FROM_ADDRESS,
+    from: TRANSACTIONAL_FROM_ADDRESS,
     to: data.to,
     subject: "You're invited to onboard with Paramount Care Staffing",
     text,
@@ -172,7 +174,7 @@ export async function sendEmailVerificationCode(
   ].join('\n');
 
   await sendEmail(apiKey, {
-    from: FROM_ADDRESS,
+    from: TRANSACTIONAL_FROM_ADDRESS,
     to: data.to,
     subject: 'Your verification code',
     text,

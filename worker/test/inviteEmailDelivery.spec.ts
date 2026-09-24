@@ -113,6 +113,21 @@ describe('invitation email delivery feedback — create', () => {
   });
 });
 
+describe('invitation email sender', () => {
+  it('sends from the verified paramountcarestaffing.com sender, on create and resend', async () => {
+    const cookie = await loginAsAdmin();
+    mockResend(200);
+    const created = await createInvite(cookie, uniqueEmail('sender'));
+    mockResend(200);
+    await resendInvite(cookie, created.body.id);
+
+    expect(captured).toHaveLength(2);
+    for (const payload of captured) {
+      expect((JSON.parse(payload) as { from: string }).from).toBe('Paramount Care Staffing <noreply@paramountcarestaffing.com>');
+    }
+  });
+});
+
 describe('invitation email delivery feedback — resend', () => {
   it('reports "sent" on a successful resend and the emailed code differs from the original', async () => {
     const cookie = await loginAsAdmin();
