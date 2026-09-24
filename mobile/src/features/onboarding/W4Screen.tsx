@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import type { W4Data, W4FilingStatus } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
+import { useKeyboardScroll } from '../../components/keyboard/KeyboardScrollContext';
 import { TextField } from '../../components/TextField';
 import { SensitiveField } from '../../components/SensitiveField';
 import { CheckboxField } from '../../components/CheckboxField';
@@ -62,6 +63,7 @@ function FilingOption({ label, desc, selected, onSelect }: { label: string; desc
 
 function DollarField({ label, value, onChangeText, hint }: { label: string; value: string; onChangeText: (v: string) => void; hint?: string }) {
   const theme = useTheme();
+  const { ensureFocusedInputVisible } = useKeyboardScroll();
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
       <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{label}</Text>
@@ -70,6 +72,7 @@ function DollarField({ label, value, onChangeText, hint }: { label: string; valu
         <TextInput
           value={value}
           onChangeText={onChangeText}
+          onFocus={ensureFocusedInputVisible}
           keyboardType="decimal-pad"
           placeholder="0"
           placeholderTextColor={theme.colors.textMuted}

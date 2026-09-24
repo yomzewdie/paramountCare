@@ -144,3 +144,21 @@ export function deriveCurrentIdentityPath(data: UploadedDocuments): IdentityPath
   if (data.listB && data.listC) return 'list_b_c';
   return null;
 }
+
+// ── Vaccination proof ───────────────────────────────────────────────────────
+//
+// One slot per vaccine step, keyed by the step's own `config.vaccineType`
+// (packets.ts). `docType` values are the server-recognized ones in
+// worker/src/routes/sessions.ts's DOC_TYPE_APPLIERS — never invented here —
+// and are what application_documents.doc_type (and so the admin portal)
+// carries. Labels are what the admin portal also shows for the same doc.
+export interface VaccineProofSlot {
+  docType: string;
+  label: string;
+}
+
+export const VACCINE_PROOF_SLOT_BY_TYPE: Record<string, VaccineProofSlot> = {
+  hep_b: { docType: 'hep_b_vaccination_proof', label: 'Hepatitis B vaccination proof' },
+  tdap: { docType: 'tdap_vaccination_proof', label: 'Tdap vaccination proof' },
+  flu: { docType: 'flu_vaccination_proof', label: 'Influenza vaccination proof' },
+};

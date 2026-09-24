@@ -78,6 +78,7 @@ admin.get('/application/:id', async (c) => {
     payload,
     documents: docs.map((d) => ({
       id:         d.id,
+      docType:    d.doc_type ?? null,
       objectKey:  d.object_key,
       fileName:   d.file_name,
       fileSize:   d.file_size,

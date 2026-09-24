@@ -152,6 +152,18 @@ describe('Application detail', () => {
     expect(html).toContain('Download Signed I-9');
     expect(html).toContain('Direct deposit — voided check');
   });
+  it('shows vaccination evidence only for documents the application actually contains (a declined vaccine has none)', () => {
+    const withProof = renderToStaticMarkup(
+      <ApplicationDetailView app={{ ...app, documents: [{ id: 9, label: 'Hepatitis B vaccination proof', fileName: 'hepb.pdf', fileSize: 10, uploadedAt: '2026-09-26T14:00:00.000Z' }] }} />,
+    );
+    expect(withProof).toContain('Hepatitis B vaccination proof');
+    expect(withProof).toContain('href="/api/admin/documents/APP-123/9"');
+
+    // Final answer was a declination: the Worker did not promote any proof, so none is listed.
+    const declined = renderToStaticMarkup(<ApplicationDetailView app={{ ...app, documents: [] }} />);
+    expect(declined).not.toContain('vaccination proof');
+    expect(declined).toContain('No documents uploaded.');
+  });
   it('never renders SSNs, bank/routing numbers, data URLs, or storage keys', () => {
     for (const s of ['123-45-6789', '9988776655', '021000021', 'data:image', 'AAAA', 'BBBB', 'uploads/', 'objectKey', 'object_key']) {
       expect(html).not.toContain(s);

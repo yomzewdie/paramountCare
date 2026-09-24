@@ -103,25 +103,50 @@ export async function fetchApplications(
 
 interface WorkerDocumentRecord {
   id: number;
+  /** Slot the applicant uploaded it for (application_documents.doc_type); null on legacy rows. */
+  docType?: string | null;
   objectKey: string;
   fileName: string;
   fileSize: number;
   uploadedAt: string;
 }
 
+// Authoritative labels, keyed by the doc_type the Worker records for each
+// upload slot (worker/src/routes/sessions.ts DOC_TYPE_APPLIERS). Vaccination
+// proof is identified per vaccine.
+export const DOC_TYPE_LABELS: Record<string, string> = {
+  hep_b_vaccination_proof: 'Hepatitis B vaccination proof',
+  tdap_vaccination_proof: 'Tdap vaccination proof',
+  flu_vaccination_proof: 'Influenza vaccination proof',
+  direct_deposit_voided_check: 'Direct deposit — voided check',
+  list_a: 'I-9 List A document',
+  list_b: 'I-9 List B document',
+  list_c: 'I-9 List C document',
+  nursing_license: 'Nursing license',
+  cpr_cert: 'CPR / BLS certification',
+};
+
 const UPLOADED_DOCUMENT_LABELS: Record<string, string> = {
-  listA: 'I-9 List A document',
-  listB: 'I-9 List B document',
-  listC: 'I-9 List C document',
-  nursingLicense: 'Nursing license',
-  cprCertification: 'CPR certification',
+  listA: DOC_TYPE_LABELS.list_a,
+  listB: DOC_TYPE_LABELS.list_b,
+  listC: DOC_TYPE_LABELS.list_c,
+  nursingLicense: DOC_TYPE_LABELS.nursing_license,
+  cprCertification: DOC_TYPE_LABELS.cpr_cert,
+};
+
+const VACCINE_STEP_LABELS: Record<string, string> = {
+  hep_b_declination: DOC_TYPE_LABELS.hep_b_vaccination_proof,
+  tdap_declination: DOC_TYPE_LABELS.tdap_vaccination_proof,
+  flu_declination: DOC_TYPE_LABELS.flu_vaccination_proof,
 };
 
 /**
- * Human label for an uploaded document, derived from where the applicant's
- * submitted payload references its R2 key. Purely presentational — the key
- * itself is never returned. A document the payload doesn't reference simply
- * has no label (the page falls back to its file name).
+ * Human label for an uploaded document. Primary source is the recorded
+ * `docType` (authoritative — set server-side only by the ownership-verified
+ * association route); for older rows without one, falls back to where the
+ * applicant's submitted payload references the document. Purely
+ * presentational — the storage key is never returned. A document neither
+ * source identifies simply has no label (the page shows its file name).
  */
 export function labelDocuments(
   docs: WorkerDocumentRecord[],
@@ -134,11 +159,11 @@ export function labelDocuments(
   };
 
   if (payload) {
-    ref(payload.directDepositProofDocument, 'Direct deposit — voided check');
+    ref(payload.directDepositProofDocument, DOC_TYPE_LABELS.direct_deposit_voided_check);
     const vaccines = payload.vaccineProofDocuments;
     if (vaccines && typeof vaccines === 'object') {
       for (const [step, file] of Object.entries(vaccines as Record<string, unknown>)) {
-        ref(file, `Vaccination proof (${step.replace(/_/g, ' ')})`);
+        ref(file, VACCINE_STEP_LABELS[step] ?? 'Vaccination proof');
       }
     }
     const uploaded = payload.uploadedDocuments;
@@ -151,7 +176,7 @@ export function labelDocuments(
 
   return docs.map((d) => ({
     id: d.id,
-    label: labelByKey.get(d.objectKey) ?? null,
+    label: (d.docType ? DOC_TYPE_LABELS[d.docType] : undefined) ?? labelByKey.get(d.objectKey) ?? null,
     fileName: d.fileName,
     fileSize: d.fileSize,
     uploadedAt: d.uploadedAt,

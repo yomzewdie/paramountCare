@@ -11,6 +11,7 @@ import { generateI9Pdf, type I9PdfInput } from '../services/i9pdf';
 import { generateW4Pdf, type W4PdfInput } from '../services/w4pdf';
 import { findSessionById, type OnboardingSessionRow } from '../db/queries/onboardingSessions';
 import { findLiveUploadsForSession, type UploadedDocumentRow } from '../db/queries/uploadedDocuments';
+import { isDocumentActiveForSubmission, activeVaccineProofDocuments } from './vaccineProof';
 import { findApplicationById } from '../db/queries/applications';
 import { insertDocumentIfNotExistsStmt, findDocumentsByApplicationId } from '../db/queries/documents';
 import { insertAuditLogStmt } from '../db/queries/auditLogs';
@@ -66,6 +67,8 @@ function redactSensitiveFormData(data: OnboardingFormData): Record<string, unkno
 
   return {
     ...data,
+    // Same rule as document promotion: no vaccination-proof reference for a vaccine whose final answer is a declination.
+    vaccineProofDocuments: activeVaccineProofDocuments(data.vaccineProofDocuments, data.acknowledgements),
     i9Data: {
       ...data.i9Data,
       ssn: data.i9Data.ssn ? '[redacted]' : '',
@@ -659,10 +662,16 @@ export async function submitSession(
     };
   }
 
-  const liveUploads: UploadedDocumentRow[] = await findLiveUploadsForSession(env.DB, {
-    sessionId: p.sessionId,
-    userId: p.ownerUserId,
-  });
+  // Only documents that are still "active" for the applicant's FINAL answers
+  // are promoted: a vaccination proof uploaded before the applicant switched
+  // that vaccine to a declination stays on the (now-submitted) session but
+  // never becomes part of the application's documents.
+  const liveUploads: UploadedDocumentRow[] = (
+    await findLiveUploadsForSession(env.DB, {
+      sessionId: p.sessionId,
+      userId: p.ownerUserId,
+    })
+  ).filter((doc) => isDocumentActiveForSubmission(doc.doc_type, effectiveFormData.acknowledgements));
 
   const stmts: D1PreparedStatement[] = [
     insertApplicationIfEligibleStmt(env.DB, {

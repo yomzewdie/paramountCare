@@ -82,3 +82,19 @@ export const CREDENTIAL_DOCUMENT_REQUIREMENT: DocumentRequirement = {
   maxSizeBytes: SERVER_MAX_SIZE_BYTES,
   allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
 };
+
+/** Vaccination evidence (Hep B / Tdap / influenza proof) — an immunization
+ * record, vaccination card, pharmacy receipt, or titer report. Same
+ * file-type/size ceiling the Worker enforces; the resolution floor is as
+ * generous as the other card/letter-size credentials. */
+export const VACCINATION_PROOF_REQUIREMENT: DocumentRequirement = {
+  label: 'Vaccination Proof',
+  scannerAllowed: true,
+  cameraAllowed: true,
+  existingPhotoAllowed: true,
+  pdfAllowed: true,
+  minWidthPx: 500,
+  minHeightPx: 300,
+  maxSizeBytes: SERVER_MAX_SIZE_BYTES,
+  allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
+};

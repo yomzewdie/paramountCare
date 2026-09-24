@@ -5,6 +5,8 @@ export interface DocumentRow {
   file_name: string;
   file_size: number;
   uploaded_at: string;
+  /** Slot the document was uploaded for (e.g. 'hep_b_vaccination_proof'); NULL for legacy rows. */
+  doc_type: string | null;
 }
 
 export interface InsertDocumentParams {

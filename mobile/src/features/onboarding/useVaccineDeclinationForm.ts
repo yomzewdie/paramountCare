@@ -1,13 +1,28 @@
 import { useMemo, useState } from 'react';
-import { getPacket, validateVaccineDeclination, type AcknowledgementEntry, type FieldErrors } from '@pcs/shared';
+import { getPacket, validateVaccineDeclination, type AcknowledgementEntry, type FieldErrors, type UploadedFile } from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
 import { isStepValidationRejection } from './serverValidationError';
+import { useDocumentSlot } from '../documents/useDocumentSlot';
+import { VACCINE_PROOF_SLOT_BY_TYPE } from '../documents/documentSlots';
+import { VACCINATION_PROOF_REQUIREMENT } from '../documents/documentRequirements';
 
 const FORM_DATA_KEY = 'acknowledgements';
 
 const EMPTY_ENTRY: AcknowledgementEntry = { checked: false, typedSignature: '', signedAt: '', decision: null };
+
+// `vaccineProofDocument` is not a field of AcknowledgementEntry (the proof
+// lives in formData.vaccineProofDocuments[stepId], written only by the
+// ownership-verified document-association route) but is a validation key,
+// so it participates in touched-gating like any other field.
+const TOUCH_SHAPE = { ...EMPTY_ENTRY, vaccineProofDocument: null };
+type TouchKey = keyof typeof TOUCH_SHAPE;
+
+function readStoredProof(formData: Record<string, unknown> | undefined, stepId: string): UploadedFile | null {
+  const proofs = (formData?.vaccineProofDocuments ?? {}) as Record<string, UploadedFile | null | undefined>;
+  return proofs[stepId] ?? null;
+}
 
 export type SubmitOutcome =
   | { kind: 'saved' }
@@ -46,7 +61,7 @@ export function useVaccineDeclinationForm(stepId: string) {
   const requiresSignature = step?.config?.requiresSignature ?? false;
 
   const [data, setData] = useState<AcknowledgementEntry>(() => readStored(session?.formData, stepId));
-  const [touched, setTouched] = useState<Partial<Record<keyof AcknowledgementEntry, boolean>>>({});
+  const [touched, setTouched] = useState<Partial<Record<TouchKey, boolean>>>({});
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -55,7 +70,17 @@ export function useVaccineDeclinationForm(stepId: string) {
 
   const isCompleted = session?.stepStates[stepId] === 'completed';
 
-  const errors = useMemo<FieldErrors>(() => validateVaccineDeclination(data, requiresSignature), [data, requiresSignature]);
+  // The proof slot reuses the SAME secure upload lifecycle as every other
+  // document (capture → upload → ownership-verified association). Its
+  // current file is read straight from the live session, so it is always
+  // whatever the server actually has. Called unconditionally (Rules of
+  // Hooks); it is only RENDERED, and only REQUIRED, on the providing-proof
+  // path.
+  const proofSlotDef = VACCINE_PROOF_SLOT_BY_TYPE[vaccineType] ?? { docType: `${vaccineType}_vaccination_proof`, label: 'Vaccination proof' };
+  const proofFile = readStoredProof(session?.formData, stepId);
+  const proofSlot = useDocumentSlot(proofSlotDef.docType, proofFile, VACCINATION_PROOF_REQUIREMENT);
+
+  const errors = useMemo<FieldErrors>(() => validateVaccineDeclination(data, requiresSignature, proofFile), [data, requiresSignature, proofFile]);
   const shownErrors = useMemo<FieldErrors>(() => revealTouched(errors, touched), [errors, touched]);
 
   /** Choosing a decision — matches the existing web
@@ -90,7 +115,7 @@ export function useVaccineDeclinationForm(stepId: string) {
     setIsDirty(true);
   }
 
-  function blurField(field: keyof AcknowledgementEntry): void {
+  function blurField(field: TouchKey): void {
     setTouched((t) => ({ ...t, [field]: true }));
   }
 
@@ -112,7 +137,7 @@ export function useVaccineDeclinationForm(stepId: string) {
       return { kind: 'conflict' };
     }
     if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
-      setTouched(touchAll(EMPTY_ENTRY));
+      setTouched(touchAll(TOUCH_SHAPE));
       return { kind: 'invalid' };
     }
     setSaveError(result.error.message);
@@ -137,11 +162,11 @@ export function useVaccineDeclinationForm(stepId: string) {
 
   /** Reveals every error and blocks completion if no decision was made,
    * or (for the declining path only) the checkbox/signature are missing —
-   * matches `validateVaccineDeclination()` exactly, including that
-   * choosing "providing_proof" requires nothing further at this step (no
-   * upload is required here — see ADR-025). */
+   * matches `validateVaccineDeclination()` exactly: "providing_proof"
+   * REQUIRES the uploaded evidence (and nothing else); a declination
+   * requires the checkbox + signature and never a document. */
   async function complete(): Promise<SubmitOutcome> {
-    setTouched(touchAll(EMPTY_ENTRY));
+    setTouched(touchAll(TOUCH_SHAPE));
     if (Object.keys(errors).length > 0) return { kind: 'invalid' };
 
     setIsCompleting(true);
@@ -180,6 +205,8 @@ export function useVaccineDeclinationForm(stepId: string) {
     saveError,
     conflict,
     isCompleted,
+    proofSlot,
+    proofSlotDef,
     saveProgress,
     complete,
     keepMyChanges,

@@ -1,6 +1,7 @@
 import { forwardRef } from 'react';
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { useKeyboardScroll } from './keyboard/KeyboardScrollContext';
 
 interface TextFieldProps extends TextInputProps {
   label: string;
@@ -18,6 +19,7 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
   ref,
 ) {
   const theme = useTheme();
+  const { ensureFocusedInputVisible } = useKeyboardScroll();
 
   return (
     <View style={{ marginBottom: theme.spacing.md }}>
@@ -41,6 +43,15 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
           style,
         ]}
         {...rest}
+        onFocus={(e) => {
+          rest.onFocus?.(e);
+          ensureFocusedInputVisible();
+        }}
+        // A multiline field grows as the applicant types; keep the caret line above the keyboard/footer.
+        onContentSizeChange={(e) => {
+          rest.onContentSizeChange?.(e);
+          if (rest.multiline) ensureFocusedInputVisible();
+        }}
       />
       {error ? (
         // A live region so screen readers announce the error the moment it

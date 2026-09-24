@@ -22,6 +22,7 @@ import {
 import { findOwnedUpload, findCurrentSlotDocument, associateUploadToSlot } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
 import { submitSession } from '../services/submission';
+import { VACCINE_PROOF_STEP_BY_DOC_TYPE } from '../services/vaccineProof';
 
 // computeOverallCompletion/isStepValid are written against a fully-shaped
 // OnboardingFormData (acknowledgements, employmentReferences, etc. always
@@ -328,6 +329,17 @@ function applyUploadedDocumentsField(
   return { ...formData, uploadedDocuments: { ...existing, [field]: file } };
 }
 
+// Vaccination evidence: one slot per vaccine step, stored under
+// `formData.vaccineProofDocuments[stepId]` (the field @pcs/shared already
+// defines for exactly this). docType -> stepId is an explicit allow-list
+// (services/vaccineProof.ts) — the client never names a formData key.
+function applyVaccineProof(stepId: string) {
+  return (formData: Record<string, unknown>, file: DocumentFileMeta | null): Record<string, unknown> => {
+    const existing = (formData.vaccineProofDocuments as Record<string, unknown> | undefined) ?? {};
+    return { ...formData, vaccineProofDocuments: { ...existing, [stepId]: file } };
+  };
+}
+
 const DOC_TYPE_APPLIERS: Record<
   string,
   (formData: Record<string, unknown>, file: DocumentFileMeta | null) => Record<string, unknown>
@@ -338,6 +350,9 @@ const DOC_TYPE_APPLIERS: Record<
   list_c:           (formData, file) => applyUploadedDocumentsField(formData, 'listC', file),
   nursing_license:  (formData, file) => applyUploadedDocumentsField(formData, 'nursingLicense', file),
   cpr_cert:         (formData, file) => applyUploadedDocumentsField(formData, 'cprCertification', file),
+  ...Object.fromEntries(
+    Object.entries(VACCINE_PROOF_STEP_BY_DOC_TYPE).map(([docType, stepId]) => [docType, applyVaccineProof(stepId)]),
+  ),
 };
 
 function toFileMeta(row: { file_name: string; file_size: number; content_type: string; object_key: string; uploaded_at: string }): DocumentFileMeta {

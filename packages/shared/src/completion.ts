@@ -168,7 +168,9 @@ function acknowledgementsCompletion(
   if (hasDeclination) {
     if (!entry?.decision) return { step: stepId, completed: 0, total: 1, percent: 0 };
     if (entry.decision === 'providing_proof') {
-      return { step: stepId, completed: 1, total: 1, percent: 100 };
+      // Providing proof is only complete once the evidence is uploaded.
+      const uploaded = data.vaccineProofDocuments?.[stepId] ? 1 : 0;
+      return { step: stepId, completed: uploaded, total: 1, percent: pct(uploaded, 1) };
     }
     // Declining path — same requirements as a regular signed acknowledgement
     let completed = 0;

@@ -391,9 +391,18 @@ export function validateDirectDeposit(
 
 // ── Vaccine Declination ───────────────────────────────────────────────────────
 
+/**
+ * `proofDocument` is this vaccine step's uploaded evidence
+ * (`vaccineProofDocuments[stepId]`). It is REQUIRED only when the applicant
+ * says they are providing proof; a true declination needs the statement +
+ * signature and never a document. An already-uploaded document is simply
+ * ignored (not an error, not deleted) if the applicant switches to
+ * declining.
+ */
 export function validateVaccineDeclination(
   entry: AcknowledgementEntry | undefined,
   requiresSignature: boolean,
+  proofDocument: UploadedFile | null,
 ): FieldErrors {
   const errors: FieldErrors = {};
 
@@ -409,6 +418,10 @@ export function validateVaccineDeclination(
     if (requiresSignature && !entry.typedSignature?.trim()) {
       errors.typedSignature = 'Your electronic signature is required to complete the declination';
     }
+  }
+
+  if (entry.decision === 'providing_proof' && !proofDocument) {
+    errors.vaccineProofDocument = 'Please upload your proof of vaccination to continue';
   }
 
   return errors;
@@ -473,6 +486,7 @@ export function validateStep(
           return validateVaccineDeclination(
             data.acknowledgements[step.id],
             step.config?.requiresSignature ?? true,
+            data.vaccineProofDocuments?.[step.id] ?? null,
           );
         }
         if (step.config?.acknowledgementId === 'safety_acknowledgements') {
@@ -508,7 +522,7 @@ export function validateStep(
     case 'employment_ref_3': return validateEmploymentReference(data.employmentReferences?.[stepId] ?? defaultEmploymentReference);
     case 'hep_b_declination':
     case 'tdap_declination':
-    case 'flu_declination':  return validateVaccineDeclination(data.acknowledgements[stepId], true);
+    case 'flu_declination':  return validateVaccineDeclination(data.acknowledgements[stepId], true, data.vaccineProofDocuments?.[stepId] ?? null);
     case 'safety_acknowledgements': return validateSafety(data.safetyEducation);
     case 'documents':        return validateDocuments(data.uploadedDocuments);
     case 'review':           return {};

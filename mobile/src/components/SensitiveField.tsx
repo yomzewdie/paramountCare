@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { useKeyboardScroll } from './keyboard/KeyboardScrollContext';
 
 /**
  * Masks a value except its last 4 digits when not focused/revealed — the
@@ -65,6 +66,7 @@ export function SensitiveField({
   variant = 'ssn', maxLength, placeholder,
 }: SensitiveFieldProps) {
   const theme = useTheme();
+  const { ensureFocusedInputVisible } = useKeyboardScroll();
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
@@ -85,7 +87,7 @@ export function SensitiveField({
         <TextInput
           value={displayValue}
           onChangeText={(t) => onChangeText(format(t))}
-          onFocus={() => { setFocused(true); setRevealed(false); }}
+          onFocus={() => { setFocused(true); setRevealed(false); ensureFocusedInputVisible(); }}
           onBlur={() => setFocused(false)}
           keyboardType="number-pad"
           autoComplete="off"

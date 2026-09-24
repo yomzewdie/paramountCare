@@ -1,5 +1,6 @@
 import { StyleSheet, TextInput } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { useKeyboardScroll } from './keyboard/KeyboardScrollContext';
 
 interface CodeInputProps {
   value: string;
@@ -19,6 +20,7 @@ interface CodeInputProps {
  */
 export function CodeInput({ value, onChangeText, autoFocus }: CodeInputProps) {
   const theme = useTheme();
+  const { ensureFocusedInputVisible } = useKeyboardScroll();
 
   return (
     <TextInput
@@ -29,6 +31,7 @@ export function CodeInput({ value, onChangeText, autoFocus }: CodeInputProps) {
       autoComplete="one-time-code"
       maxLength={6}
       autoFocus={autoFocus}
+      onFocus={ensureFocusedInputVisible}
       accessibilityLabel="6-digit verification code"
       accessibilityHint="Enter the 6-digit code sent to your email"
       placeholder="000000"

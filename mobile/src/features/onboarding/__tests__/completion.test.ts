@@ -56,6 +56,8 @@ const FULLY_COMPLETE_FORM_DATA: OnboardingFormData = {
     tdap_declination: { checked: false, typedSignature: '', signedAt: '', decision: 'providing_proof' },
     flu_declination: { checked: false, typedSignature: '', signedAt: '', decision: 'providing_proof' },
   },
+  // "Providing proof" is only complete once the evidence is uploaded.
+  vaccineProofDocuments: { hep_b_declination: VALID_UPLOAD, tdap_declination: VALID_UPLOAD, flu_declination: VALID_UPLOAD },
   // M13: direct_deposit has its own dedicated completion model (a bank
   // account + signature + voided-check proof) — no longer a generic
   // acknowledgement entry. See packages/shared/src/completion.ts.

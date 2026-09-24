@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import { Screen } from '../../components/Screen';
+import { DocumentSlotCard } from '../../components/DocumentSlotCard';
 import { TextField } from '../../components/TextField';
 import { CheckboxField } from '../../components/CheckboxField';
 import { FormSection } from '../../components/FormSection';
@@ -19,9 +20,9 @@ import { useVaccineDeclinationForm } from './useVaccineDeclinationForm';
 // (not invented here). hep_b_declination (M13), tdap_declination (M14),
 // and flu_declination (M15) are all structurally identical in the source —
 // same decision values, same checkbox+signature declining path, same
-// optional (not step-blocking) proof-upload note on the providing-proof
-// path — confirmed by direct comparison each time, not assumed from all
-// three being vaccine declinations. Only their copy differs. The fallback
+// REQUIRED proof-upload on the providing-proof path — confirmed by direct
+// comparison each time, not assumed from all three being vaccine
+// declinations. Only their copy differs. The fallback
 // below (matching web's own fallback shape) keeps the screen functional if
 // any future vaccine step is registered before its own metadata is added
 // here.
@@ -84,6 +85,11 @@ export default function VaccineDeclinationScreen() {
 
   const scrollRef = useRef<ScrollView>(null);
   const signatureRef = useRef<TextInput>(null);
+  const proofOffset = useRef<number | undefined>(undefined);
+
+  function scrollToProofError() {
+    if (proofOffset.current !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, proofOffset.current - 24), animated: true });
+  }
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
@@ -93,6 +99,7 @@ export default function VaccineDeclinationScreen() {
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') router.back();
+    else if (outcome.kind === 'invalid' && form.data.decision === 'providing_proof') scrollToProofError();
   }
 
   return (
@@ -207,15 +214,20 @@ export default function VaccineDeclinationScreen() {
       ) : null}
 
       {form.data.decision === 'providing_proof' ? (
-        <FormSection title="Vaccination Proof">
-          <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{meta.proofInstructions}</Text>
-          <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-            Acceptable documents: {meta.acceptableDocs}. Originals or certified copies may be requested at the time of your orientation or first assignment.
-          </Text>
-          <Text style={[theme.typography.caption, { color: theme.colors.textMuted, fontStyle: 'italic' }]}>
-            Document upload is optional right now — you may submit proof directly to your onboarding coordinator.
-          </Text>
-        </FormSection>
+        <View onLayout={(e: LayoutChangeEvent) => { proofOffset.current = e.nativeEvent.layout.y; }}>
+          <FormSection title="Vaccination Proof">
+            <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{meta.proofInstructions}</Text>
+            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.md }]}>
+              Acceptable documents: {meta.acceptableDocs}. Originals or certified copies may be requested at the time of your orientation or first assignment.
+            </Text>
+            <DocumentSlotCard
+              slot={{ label: 'Upload vaccination proof' }}
+              hook={form.proofSlot}
+              required
+              error={form.errors.vaccineProofDocument}
+            />
+          </FormSection>
+        </View>
       ) : null}
 
     </Screen>
