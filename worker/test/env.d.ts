@@ -6,6 +6,7 @@ declare module "cloudflare:test" {
 	interface ProvidedEnv extends Env {
 		ADMIN_JWT_SECRET: string;
 		EMAIL_VERIFICATION_SECRET: string;
+		INVITE_CODE_SECRET: string;
 		RESEND_API_KEY: string;
 		ADMIN_NOTIFICATION_EMAIL: string;
 		ENVIRONMENT: string;
