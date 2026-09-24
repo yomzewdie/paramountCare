@@ -16,6 +16,7 @@
     "uat": {
       "distribution": "internal",
       "channel": "uat",
+      "environment": "preview",
       "pnpm": "9.15.9",
       "env": {
         "APP_ENV": "uat",
