@@ -24,6 +24,19 @@
         "API_BASE_URL": "https://worker-uat.yomzewdie.workers.dev"
       }
     },
+    "uat-testflight": {
+      "extends": "uat",
+      "distribution": "store",
+      "autoIncrement": true
+    },
+    "uat-android": {
+      "extends": "uat",
+      "distribution": "internal",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "production": {
       "distribution": "store",
       "channel": "production",
@@ -36,6 +49,7 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "uat-testflight": {}
   }
 }

@@ -79,6 +79,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV]}`,
     supportsTablet: false,
     icon: './assets/branding/app-icon-mark.png',
+    config: {
+      // Export compliance: the app's only encryption is the operating
+      // system's own HTTPS/TLS (fetch) and Keychain/Keystore storage
+      // (expo-secure-store) — no custom or bundled cryptography (audited:
+      // no crypto dependency or use anywhere in the client; server-side
+      // HMAC/JWT/PBKDF2 does not ship in the app). That is exempt, so the
+      // App Store Connect "Missing Compliance" prompt is not needed.
+      // Re-audit before adding any client-side crypto library.
+      usesNonExemptEncryption: false,
+    },
   },
   android: {
     package: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV].replace(/\./g, '_')}`,
@@ -108,6 +118,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         // the native document scanner below.
         photosPermission: 'Paramount Care needs access to your photos so you can attach a document from your library.',
         cameraPermission: 'Paramount Care needs access to your camera so you can scan a document.',
+        // Photos and documents only — no audio/video recording anywhere in
+        // the app, so do not request the microphone (Android RECORD_AUDIO /
+        // iOS NSMicrophoneUsageDescription).
+        microphonePermission: false,
       },
     ],
     [
