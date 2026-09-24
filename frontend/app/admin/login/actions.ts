@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { loginAdmin } from '@/lib/auth';
+import { safeRedirectTarget } from '@/lib/safe-redirect';
 
 export async function loginAction(formData: FormData): Promise<void> {
   const email    = (formData.get('email')    as string | null) ?? '';
@@ -34,7 +35,5 @@ export async function loginAction(formData: FormData): Promise<void> {
     });
   }
 
-  // Validate redirect target to prevent open redirect.
-  const safe = redirectTo.startsWith('/') ? redirectTo : '/admin';
-  redirect(safe);
+  redirect(safeRedirectTarget(redirectTo));
 }

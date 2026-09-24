@@ -4,8 +4,11 @@
 
 import { cookies } from 'next/headers';
 
+import { getWorkerBaseUrl } from './server-config';
+import type { InvitesPage } from './invitations';
+
 function getApiBase(): string {
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
+  return getWorkerBaseUrl();
 }
 
 async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -43,9 +46,13 @@ export interface ApplicationsPage {
   };
 }
 
+// The Worker's detail response includes each document's R2 `objectKey`; it is
+// used here only to label the document (see labelDocuments) and is then
+// dropped — it never reaches a rendered page. Downloads go through
+// /api/admin/documents/<applicationId>/<documentId>, by numeric id only.
 export interface DocumentRecord {
   id: number;
-  objectKey: string;
+  label: string | null;
   fileName: string;
   fileSize: number;
   uploadedAt: string;
@@ -94,11 +101,78 @@ export async function fetchApplications(
   return res.json() as Promise<ApplicationsPage>;
 }
 
+interface WorkerDocumentRecord {
+  id: number;
+  objectKey: string;
+  fileName: string;
+  fileSize: number;
+  uploadedAt: string;
+}
+
+const UPLOADED_DOCUMENT_LABELS: Record<string, string> = {
+  listA: 'I-9 List A document',
+  listB: 'I-9 List B document',
+  listC: 'I-9 List C document',
+  nursingLicense: 'Nursing license',
+  cprCertification: 'CPR certification',
+};
+
+/**
+ * Human label for an uploaded document, derived from where the applicant's
+ * submitted payload references its R2 key. Purely presentational — the key
+ * itself is never returned. A document the payload doesn't reference simply
+ * has no label (the page falls back to its file name).
+ */
+export function labelDocuments(
+  docs: WorkerDocumentRecord[],
+  payload: Record<string, unknown> | null,
+): DocumentRecord[] {
+  const labelByKey = new Map<string, string>();
+  const ref = (file: unknown, label: string) => {
+    const key = file && typeof file === 'object' ? (file as { objectKey?: unknown }).objectKey : undefined;
+    if (typeof key === 'string' && key) labelByKey.set(key, label);
+  };
+
+  if (payload) {
+    ref(payload.directDepositProofDocument, 'Direct deposit — voided check');
+    const vaccines = payload.vaccineProofDocuments;
+    if (vaccines && typeof vaccines === 'object') {
+      for (const [step, file] of Object.entries(vaccines as Record<string, unknown>)) {
+        ref(file, `Vaccination proof (${step.replace(/_/g, ' ')})`);
+      }
+    }
+    const uploaded = payload.uploadedDocuments;
+    if (uploaded && typeof uploaded === 'object') {
+      for (const [slot, file] of Object.entries(uploaded as Record<string, unknown>)) {
+        ref(file, UPLOADED_DOCUMENT_LABELS[slot] ?? slot);
+      }
+    }
+  }
+
+  return docs.map((d) => ({
+    id: d.id,
+    label: labelByKey.get(d.objectKey) ?? null,
+    fileName: d.fileName,
+    fileSize: d.fileSize,
+    uploadedAt: d.uploadedAt,
+  }));
+}
+
 export async function fetchApplicationDetail(
   applicationId: string,
 ): Promise<ApplicationDetail | null> {
-  const res = await adminFetch(`/api/admin/application/${applicationId}`);
+  const res = await adminFetch(`/api/admin/application/${encodeURIComponent(applicationId)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to fetch application: ${res.status}`);
-  return res.json() as Promise<ApplicationDetail>;
+  const raw = (await res.json()) as Omit<ApplicationDetail, 'documents'> & { documents: WorkerDocumentRecord[] };
+  return { ...raw, documents: labelDocuments(raw.documents ?? [], raw.payload) };
+}
+
+export async function fetchInvites(params: { page?: number; pageSize?: number } = {}): Promise<InvitesPage> {
+  const qs = new URLSearchParams();
+  if (params.page) qs.set('page', String(params.page));
+  if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+  const res = await adminFetch(`/api/admin/invites?${qs.toString()}`);
+  if (!res.ok) throw new Error(`Failed to fetch invitations: ${res.status}`);
+  return res.json() as Promise<InvitesPage>;
 }

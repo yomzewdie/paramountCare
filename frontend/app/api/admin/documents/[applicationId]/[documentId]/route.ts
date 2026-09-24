@@ -1,40 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { NextRequest } from 'next/server';
+import { jsonError, proxyAdminDownload } from '@/lib/admin-proxy';
 
 // Generic proxy for any applicant-uploaded document (voided check, vaccine
-// proof, identity/credential documents) — mirrors the existing
-// app/api/admin/i9-pdf/[applicationId]/route.ts proxy pattern exactly, but
-// forwards the Worker's own Content-Type/Content-Disposition instead of a
-// hardcoded PDF-only pair, since documents here can be PDF, JPEG, or PNG.
+// proof, identity/credential documents). The browser supplies only the
+// application id and a numeric document id — never a storage key — and the
+// Worker enforces that the document belongs to that application. The
+// Worker's own Content-Type/Content-Disposition (already sanitized and
+// allowlisted there) are forwarded as-is.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ applicationId: string; documentId: string }> },
 ) {
   const { applicationId, documentId } = await params;
-  const cookieStore = await cookies();
-  const token = cookieStore.get('admin_token')?.value ?? '';
+  if (!/^\d+$/.test(documentId)) return jsonError('Invalid document id', 400);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8787';
-  const upstream = await fetch(
-    `${apiBase}/api/admin/application/${applicationId}/documents/${documentId}/download`,
-    {
-      headers: { cookie: `admin_token=${token}` },
-      cache: 'no-store',
-    },
+  return proxyAdminDownload(
+    `/api/admin/application/${encodeURIComponent(applicationId)}/documents/${documentId}/download`,
+    null,
   );
-
-  if (!upstream.ok) {
-    const body = await upstream.text().catch(() => 'Unknown error');
-    return NextResponse.json({ error: body }, { status: upstream.status });
-  }
-
-  const fileBytes = await upstream.arrayBuffer();
-  return new NextResponse(fileBytes, {
-    headers: {
-      'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
-      'Content-Disposition': upstream.headers.get('content-disposition') ?? 'attachment',
-      'Cache-Control': 'private, no-store',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
 }

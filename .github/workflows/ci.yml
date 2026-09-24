@@ -41,6 +41,9 @@ jobs:
       - name: Worker tests
         run: pnpm --filter worker run test
 
+      - name: Frontend tests
+        run: pnpm --filter frontend run test
+
       - name: Frontend build
         run: pnpm --filter frontend run build
 
