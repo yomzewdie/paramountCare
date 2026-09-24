@@ -6,6 +6,10 @@
 // requireRole is still the authoritative check on every API call; this
 // keeps an applicant token from even reaching the admin page shell.)
 
+// The portal's own session cookie. Set by the login Server Action, read by
+// middleware.ts — one constant so they cannot drift apart.
+export const ADMIN_COOKIE_NAME = 'admin_token';
+
 const ALG = { name: 'HMAC', hash: 'SHA-256' } as const;
 export const ADMIN_ROLES = ['admin', 'super_admin'] as const;
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminToken } from '@/lib/admin-token';
+import { ADMIN_COOKIE_NAME, verifyAdminToken } from '@/lib/admin-token';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -11,7 +11,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get('admin_token')?.value;
+  const token = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
   const secret = process.env.ADMIN_JWT_SECRET ?? '';
 
   if (!token || !secret || !(await verifyAdminToken(token, secret))) {
