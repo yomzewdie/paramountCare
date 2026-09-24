@@ -27,7 +27,7 @@ interface AdminEmailData {
 
 interface InvitationEmailData {
   to: string;
-  inviteUrl: string;
+  code: string;
   expiresAt: string;
 }
 
@@ -128,12 +128,19 @@ export async function sendApplicantInvitation(
   });
 
   const text = [
-    "You've been invited to complete onboarding with Paramount Care Staffing.",
+    'Paramount Care Staffing',
     '',
-    'Use the link below to create your account and get started:',
-    data.inviteUrl,
+    "You've been invited to complete your onboarding.",
     '',
-    `This invitation expires ${expires} UTC.`,
+    'Invitation Code',
+    data.code,
+    '',
+    '1. Open the Paramount Care app.',
+    '2. Tap "I have an invitation code."',
+    '3. Enter the code above.',
+    '4. Create your password.',
+    '',
+    `This code expires ${expires} UTC.`,
     '',
     'If you were not expecting this invitation, you can safely ignore this email.',
     '',

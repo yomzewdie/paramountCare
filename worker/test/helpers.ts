@@ -1,7 +1,8 @@
 import { SELF, env } from 'cloudflare:test';
 import { TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, TEST_ADMIN_ID } from './setup';
-import { generateOpaqueToken, hashOpaqueToken } from '../src/services/opaqueTokens';
+import { generateInviteCode, normalizeInviteCode, hashInviteCode } from '../src/services/inviteCode';
 import { hashVerificationCode } from '../src/services/emailVerification';
+import { hashPassword } from '../src/services/auth';
 
 export const BASE = 'http://example.com';
 
@@ -43,31 +44,33 @@ export function getRawSetCookieHeaders(res: Response): string[] {
 }
 
 /**
- * Test seam for observing invite/verification-code raw values without
- * weakening the production implementation: these are hashed with the SAME
- * exported production hash function (hashOpaqueToken), so a test can
- * construct a known raw value, compute its hash itself, and seed the row
- * directly via env.DB — exactly equivalent to "an admin created this invite
- * and the applicant received the real email" without needing the real
- * Resend call (which the production code path still exercises independently
- * and non-fatally, exactly as it does today for other emails). Production
- * route handlers are completely unaware of and unaffected by this — there is
- * no test-only branch anywhere in routes/invites.ts or routes/auth.ts.
+ * Test seam for observing invite raw values without weakening the
+ * production implementation: hashed with the SAME exported production hash
+ * function (hashInviteCode, keyed with the same test-environment
+ * INVITE_CODE_SECRET every route handler reads from env — see
+ * vitest.config.mts), so a test can construct a known raw code, compute its
+ * hash itself, and seed the row directly via env.DB — exactly equivalent to
+ * "an admin created this invite and the applicant received the real email"
+ * without needing the real Resend call (which the production code path
+ * still exercises independently and non-fatally, exactly as it does today
+ * for other emails). Production route handlers are completely unaware of
+ * and unaffected by this — there is no test-only branch anywhere in
+ * routes/invites.ts or routes/auth.ts.
  */
 export async function seedInvite(email: string, createdBy: number = TEST_ADMIN_ID): Promise<string> {
-  const rawToken = generateOpaqueToken();
-  const tokenHash = await hashOpaqueToken(rawToken);
+  const rawCode = generateInviteCode();
+  const tokenHash = await hashInviteCode(normalizeInviteCode(rawCode), env.INVITE_CODE_SECRET);
   await env.DB.prepare(
     `INSERT INTO onboarding_invites (email, token_hash, expires_at, created_by) VALUES (?, ?, datetime('now', '+7 days'), ?)`,
   ).bind(email, tokenHash, createdBy).run();
-  return rawToken;
+  return rawCode;
 }
 
-export async function registerViaInvite(inviteToken: string, password = 'Test-Passw0rd!'): Promise<Response> {
+export async function registerViaInvite(inviteCode: string, password = 'Test-Passw0rd!'): Promise<Response> {
   return SELF.fetch(`${BASE}/api/auth/applicant/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inviteToken, password }),
+    body: JSON.stringify({ inviteCode, password }),
   });
 }
 
@@ -96,29 +99,43 @@ export async function seedVerificationCode(email: string, code: string, expiresI
   ).bind(user.id, codeHash, expiresAt, createdAt).run();
 }
 
-/** Full chain: seed an invite, register through the real endpoint, mark
- * verified directly (bypassing the code-verification step, which is tested
- * separately), and log in through the real endpoint. Returns usable tokens —
- * the drop-in replacement for the old anonymous-registration test helper. */
+/**
+ * Seed an invite and register through the real endpoint. Since the
+ * invitation-code redesign, POST /api/auth/applicant/register itself
+ * atomically claims the invite, creates the account, marks it verified, and
+ * issues a real token pair — so this no longer needs the separate
+ * mark-verified-then-login round trip the old two-step flow required. Kept
+ * as its own helper (rather than inlining registerViaInvite everywhere)
+ * purely so ~100 call sites across the suite didn't need to change when the
+ * registration contract did.
+ */
 export async function registerVerifyAndLoginApplicant(
   email: string,
   password = 'Test-Passw0rd!',
-  deviceLabel?: string,
 ): Promise<{ accessToken: string; refreshToken: string; email: string; role: string }> {
-  const rawToken = await seedInvite(email);
-  const registerRes = await registerViaInvite(rawToken, password);
+  const rawCode = await seedInvite(email);
+  const registerRes = await registerViaInvite(rawCode, password);
   if (registerRes.status !== 201) {
     throw new Error(`registerVerifyAndLoginApplicant: register failed (${registerRes.status}): ${await registerRes.text()}`);
   }
-  await markVerifiedDirectly(email);
+  return registerRes.json();
+}
 
-  const loginRes = await SELF.fetch(`${BASE}/api/auth/applicant/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, deviceLabel }),
-  });
-  if (loginRes.status !== 200) {
-    throw new Error(`registerVerifyAndLoginApplicant: login failed (${loginRes.status}): ${await loginRes.text()}`);
-  }
-  return loginRes.json();
+/**
+ * Directly inserts an unverified `users` row (real PBKDF2 password hash),
+ * bypassing invite/registration entirely. Needed because, post-redesign,
+ * EVERY invite-based registration auto-verifies — there is no longer any
+ * real code path that produces an unverified account, so the legacy
+ * verify-email/resend-verification infrastructure (kept fully functional
+ * for other/future flows — see the invitation-code-flow design notes) has
+ * no other way to be exercised in isolation.
+ */
+export async function seedUnverifiedUser(email: string, password = 'Test-Passw0rd!'): Promise<{ id: number }> {
+  const passwordHash = await hashPassword(password);
+  const row = await env.DB
+    .prepare(`INSERT INTO users (email, password_hash) VALUES (?, ?) RETURNING id`)
+    .bind(email, passwordHash)
+    .first<{ id: number }>();
+  if (!row) throw new Error('seedUnverifiedUser: insert returned no row');
+  return row;
 }

@@ -21,8 +21,7 @@
         "APP_ENV": "uat",
         "EAS_PROJECT_ID": "760d3c4c-d127-415f-b7b2-22c4bbc2dad8",
         "EAS_OWNER": "yomzewdie",
-        "API_BASE_URL": "https://worker-uat.yomzewdie.workers.dev",
-        "INVITE_BASE_URL": "https://worker-uat.yomzewdie.workers.dev/register"
+        "API_BASE_URL": "https://worker-uat.yomzewdie.workers.dev"
       }
     },
     "production": {

@@ -60,13 +60,17 @@
 					"migrations_dir": "migrations"
 				}
 			],
-			// Real, deployed worker-uat URL. No HTML page is served at this
-			// path — UAT invite testing deliberately does not depend on
-			// tapping the emailed link (Universal Links/App Links are out
-			// of scope this phase); testers copy the raw token out of the
-			// real invitation email itself and paste it into the app's
-			// existing manual invite-token field on Create Account.
-			"vars": { "ENVIRONMENT": "uat", "APPLICANT_INVITE_BASE_URL": "https://worker-uat.yomzewdie.workers.dev/register" }
+			// Invitation-code redesign: applicants never receive a link at all
+			// (deep links / Universal Links / App Links / browser registration
+			// are explicitly out of scope) — the invitation email shows a
+			// short human-readable code (services/inviteCode.ts) which the
+			// applicant types into the app's own "I have an invitation code"
+			// entry screen. No base-URL config is needed for this anymore.
+			// INVITE_CODE_SECRET is a Wrangler secret, not a var here — set it
+			// with `wrangler secret put INVITE_CODE_SECRET --env uat` (never
+			// committed). See services/inviteCode.ts for why it must stay
+			// stable across deployments once set.
+			"vars": { "ENVIRONMENT": "uat" }
 		}
 	}
 	/**

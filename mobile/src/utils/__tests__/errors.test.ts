@@ -28,6 +28,18 @@ describe('toAppError', () => {
     expect(err.code).toBe('email_not_verified');
   });
 
+  it('maps a 404 during invitation-code validation to invite_invalid, without mentioning "link"', () => {
+    const err = toAppError(404, { error: 'INVITE_CODE_INVALID', message: "We couldn't find that invitation code." }, 'validateInviteCode');
+    expect(err.code).toBe('invite_invalid');
+    expect(err.message.toLowerCase()).not.toContain('link');
+  });
+
+  it('maps a 429 to rate_limited regardless of context (Cloudflare edge rate limiting returns no JSON body)', () => {
+    expect(toAppError(429, undefined, 'validateInviteCode').code).toBe('rate_limited');
+    expect(toAppError(429, undefined, 'register').code).toBe('rate_limited');
+    expect(toAppError(429, undefined, 'login').code).toBe('rate_limited');
+  });
+
   it('maps a 409 during register to account_exists', () => {
     const err = toAppError(409, { error: 'An account with this email already exists' }, 'register');
     expect(err.code).toBe('account_exists');

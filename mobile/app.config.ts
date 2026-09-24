@@ -17,16 +17,15 @@ function resolveAppEnv(): AppEnv {
   return 'development';
 }
 
-// No production API/invite URL is invented here — an unset value in a
+// No production API URL is invented here — an unset value in a
 // non-development environment is a build-time misconfiguration, not
-// something to silently default past (mirrors the same fail-safe reasoning
-// as the Worker's APPLICANT_INVITE_BASE_URL / ENVIRONMENT handling — see
-// worker/src/routes/invites.ts and docs/ARCHITECTURE_DECISION_RECORDS.md
-// ADR-015 §11 / the M2 security-hardening pass).
+// something to silently default past (see
+// docs/ARCHITECTURE_DECISION_RECORDS.md ADR-015 §11 / the M2
+// security-hardening pass).
 // Takes the already-read value (not the env var name) — dynamic
 // `process.env[name]` access defeats Expo/Metro's static env-var analysis
 // (eslint: expo/no-dynamic-env-var) and is unnecessary here anyway since
-// there are only ever two call sites.
+// there is only ever one call site.
 function requireUrlUnlessDev(name: string, value: string | undefined, appEnv: AppEnv, devDefault: string): string {
   if (value) return value;
   if (appEnv === 'development') return devDefault;
@@ -52,18 +51,13 @@ const DISPLAY_NAME: Record<AppEnv, string> = {
   production: 'Paramount Care',
 };
 
-// Custom URL scheme for deep-linking in development/Expo Go/dev-client, where
-// no universal/associated domain can be verified yet. Suffixed per
-// environment for the same side-by-side-install reason as the bundle id.
+// Custom URL scheme — required by Expo Router itself (dev-client/Expo Go
+// launching, `Linking.createURL`, etc.) independent of any particular
+// feature; not tied to the invitation flow, which no longer uses links at
+// all (see the invitation-code redesign — applicants type a code instead).
+// Suffixed per environment for the same side-by-side-install reason as the
+// bundle id.
 const SCHEME = `paramountcare${IDENTIFIER_SUFFIX[APP_ENV] || ''}`;
-
-// Universal Links (iOS) / App Links (Android) require a real, DNS-verified
-// production domain (an apple-app-site-association / assetlinks.json file
-// served from it) — that domain has not been decided yet (see PRE-FLIGHT
-// instruction: "Do not invent the final production domain"). Left unset
-// until one exists; the app still works via the custom scheme above and via
-// Expo's own dev-client deep-link handling in the meantime.
-const ASSOCIATED_DOMAIN = process.env.APPLICANT_LINK_DOMAIN; // e.g. "apply.paramountcareexample.com" — intentionally not set anywhere yet
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -84,7 +78,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     bundleIdentifier: `com.paramountcare.applicant${IDENTIFIER_SUFFIX[APP_ENV]}`,
     supportsTablet: false,
-    associatedDomains: ASSOCIATED_DOMAIN ? [`applinks:${ASSOCIATED_DOMAIN}`] : [],
     icon: './assets/branding/app-icon-mark.png',
   },
   android: {
@@ -99,16 +92,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       foregroundImage: './assets/branding/adaptive-icon-foreground.png',
       backgroundColor: '#0E1116',
     },
-    intentFilters: ASSOCIATED_DOMAIN
-      ? [
-          {
-            action: 'VIEW',
-            autoVerify: true,
-            data: [{ scheme: 'https', host: ASSOCIATED_DOMAIN, pathPrefix: '/register' }],
-            category: ['BROWSABLE', 'DEFAULT'],
-          },
-        ]
-      : [],
   },
   plugins: [
     'expo-router',
@@ -159,13 +142,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   extra: {
     appEnv: APP_ENV,
-    // Client-safe: where to send API requests. Not a secret — the invite
-    // link itself is the credential, this is just an endpoint address.
+    // Client-safe: where to send API requests. Not a secret — the
+    // invitation code itself is the credential, this is just an endpoint
+    // address.
     apiBaseUrl: requireUrlUnlessDev('API_BASE_URL', process.env.API_BASE_URL, APP_ENV, 'http://localhost:8787'),
-    // Client-safe: mirrors the Worker's APPLICANT_INVITE_BASE_URL, used only
-    // to recognize/construct invite links for deep-link matching, never to
-    // authorize anything by itself.
-    inviteBaseUrl: requireUrlUnlessDev('INVITE_BASE_URL', process.env.INVITE_BASE_URL, APP_ENV, 'http://localhost:3000/register'),
     eas: {
       // Static fallback to the real, already-created EAS project
       // (`eas init --account yomzewdie`, @yomzewdie/paramount-care-mobile).

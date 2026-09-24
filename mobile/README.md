@@ -13,7 +13,7 @@ mobile/
     index.tsx             Redirects into (auth), which redirects onward if already signed in
     (auth)/                Unauthenticated group + its own guard (redirects to (app) if signed in)
       welcome.tsx
-      register.tsx        Create Account — invite token via deep link or manual entry
+      register.tsx        Create Account — two-step invitation-code entry (code, then password)
       verify-email.tsx
       sign-in.tsx
     (app)/                  Authenticated group + its own guard (redirects to (auth) if signed out)
@@ -29,7 +29,6 @@ mobile/
     services/             secureStore, tokenStore, apiClient (refresh interceptor), authApi
     features/
       auth/                AuthContext, useAuth, refreshCoordinator
-      invitations/          Deep-link token parsing
       onboarding/           sessionApi, ensureSession (get-or-create), SessionContext, steps (progress derivation)
     components/            Design-system primitives (Button, TextField, Card, CodeInput, ProgressBar, StepRow, status states)
     theme/                  Tokens + ThemeProvider (light/dark)
@@ -61,7 +60,7 @@ The root `_layout.tsx` keeps the splash screen up while `status === 'loading'` (
 
 ## Auth-state architecture
 
-`AuthContext` (`src/features/auth/AuthContext.tsx`) is a single React Context, not Redux or another state library — see "State management" below. It exposes `status: 'loading' | 'signedOut' | 'signedIn'`, the current `user`, and `register` / `verifyEmail` / `resendVerification` / `signIn` / `signOut` / `signOutEverywhere`, each a thin pass-through to `src/services/authApi.ts`.
+`AuthContext` (`src/features/auth/AuthContext.tsx`) is a single React Context, not Redux or another state library — see "State management" below. It exposes `status: 'loading' | 'signedOut' | 'signedIn'`, the current `user`, and `register` / `validateInviteCode` / `verifyEmail` / `resendVerification` / `signIn` / `signOut` / `signOutEverywhere`. `validateInviteCode` / `verifyEmail` / `resendVerification` are thin pass-throughs to `src/services/authApi.ts`; `register` and `signIn` additionally store the returned tokens and move `status` to `signedIn` on success — a successful invitation-code registration signs the applicant in directly, with no separate verification or sign-in step (see "Invitation-code registration" below).
 
 **Restoration on launch:** the access token never survives an app kill (see below), so on cold start the only signal is whatever refresh token `expo-secure-store` still has. `apiClient.ts`'s `restoreSession()` redeems it through the exact same refresh path as a normal 401 retry — there is only one way a refresh token is ever used in this app, not two parallel implementations that could drift.
 
@@ -71,7 +70,7 @@ The root `_layout.tsx` keeps the splash screen up while `status === 'loading'` (
 |---|---|---|
 | Access token | In-memory only (`src/services/tokenStore.ts`, a module-level variable) | Short-lived by design; gone on app kill is correct, not a bug — restoration re-derives it from the refresh token. |
 | Refresh token | `expo-secure-store` (`src/services/secureStore.ts`) | iOS Keychain / Android Keystore-backed. **Never** AsyncStorage, never a plain file. |
-| Invite token | Local component state only (`register.tsx`), for exactly as long as it takes to submit | Never persisted, never logged. |
+| Invitation code | Local component state only (`register.tsx`), for exactly as long as it takes to validate/submit | Never persisted, never logged. |
 
 **Biometric-gating seam (not implemented in M3):** `secureStore.ts` documents exactly where `requireAuthentication: true` would go on both `getItemAsync`/`setItemAsync` calls to require Face ID / Touch ID / Android biometric unlock before the refresh token can be read back — a client-side, non-breaking change to *when* the app is willing to use a token it already has, matching the same forward-compatible reasoning as `ARCHITECTURE_DECISION_RECORDS.md` ADR-008's "Future biometric login." Not enabled now: it would block CI/automated testing and hasn't been scoped for this milestone.
 
@@ -109,25 +108,17 @@ Confirmed `@pcs/api-client` is otherwise safe for React Native regardless of thi
 
 **Recommended follow-up (not scheduled, not blocking M3):** convert the Worker's route files to Hono's fluent chaining style in a dedicated, low-risk pass with full regression testing — at that point mobile (and any other RPC consumer) can drop the hand-typed interfaces for real inferred types, fully realizing ADR-012's original intent.
 
-## Invitation / deep-link handling
+## Invitation-code registration
 
-`scheme` in `app.config.ts` (`paramountcare[.dev|.uat]`) gives the app a custom URL scheme for development, where no DNS-verified universal/associated domain exists yet. `app/(auth)/register.tsx` sits at the route path `/register` (Expo Router excludes the `(auth)` group segment from the URL), matching the exact `?token=<raw>` shape the Worker already constructs (`worker/src/routes/invites.ts`) — Expo Router's built-in linking config automatically routes a matching incoming URL to that screen with `token` populated as a route param, no manual `Linking` event wiring needed.
+Deep links, Universal Links, App Links, and browser registration are explicitly out of scope — the invitation email (`worker/src/services/email.ts`) shows a short, human-typeable code (`worker/src/services/inviteCode.ts`: 10-character Crockford Base32, HMAC-SHA256-hashed at rest) instead of a link. `app/(auth)/register.tsx` is a two-step in-app flow: step 1 collects the code and validates it against the public, unauthenticated `POST /api/invites/validate` (returns only a masked email, e.g. `y***@gmail.com`, and never mutates the invite); step 2 shows that masked email and collects a password, then calls `POST /api/auth/applicant/register`, which atomically claims the invite, creates the account, marks it verified, and returns a real token pair in one call — `AuthContext.register` stores those tokens and moves `status` to `signedIn` immediately, so there is no separate email-verification screen or sign-in step after account creation.
 
-Production universal/associated-domain links (`https://<decided-domain>/register`) are **not configured** — `app.config.ts`'s `APPLICANT_LINK_DOMAIN` is unset everywhere on purpose, per the explicit instruction not to invent a production domain. Once one is chosen: set `APPLICANT_LINK_DOMAIN`, serve the required `apple-app-site-association` (iOS) / `assetlinks.json` (Android) files from it, and point the Worker's `APPLICANT_INVITE_BASE_URL` at it — three coordinated changes, none of which require touching this app's route structure.
+The code itself: never logged, never persisted beyond `register.tsx`'s own local state for the duration of validating/submitting it.
 
-The token itself: never logged, never persisted beyond the register screen's own local state for the duration of one submit.
-
-### Deep-link security boundary (custom scheme vs. Universal/App Links)
-
-**The custom URL scheme (`paramountcare[.dev|.uat]://`) used in development and UAT is a convenience for testing, not a production-safe delivery mechanism, and must not be treated as one.**
-
-Why the distinction is real, not just a formality: a custom URL scheme is an **unauthenticated, first-come OS-level registration** — any app installed on the device can declare it wants to handle the same scheme, and there is no domain-ownership or code-signing check involved. On iOS, if more than one installed app registers the same scheme, which one actually receives the link is undefined/OS-version-dependent; on Android, a malicious app declaring an overlapping intent filter can compete for the same links, sometimes via a disambiguation prompt a user can mis-tap. **Universal Links (iOS) and App Links (Android) close exactly this gap**: the OS fetches a signed, HTTPS-only association file (`apple-app-site-association` / `assetlinks.json`) from the domain the link claims to belong to, and only routes the link to an app that the domain's OWNER has explicitly authorized (by bundle identifier/package name and signing certificate) — interception requires controlling the domain itself, not just registering a string.
-
-This matters concretely for this app because **an invitation token is a real, redeemable credential** (a high-entropy, single-use, hashed-at-rest value that creates an account when presented — see ADR-015). The token's own cryptographic properties (random generation, server-side hashing, one-time use, expiry, revocability) protect it against *guessing* or *replay after use*, but they do nothing to prevent a *different app on the same device intercepting the link in transit* if the OS ever routes it there instead of this app — a transport-layer risk the token's own design cannot mitigate, only the delivery mechanism can. **Production must not ship on the custom-scheme mechanism** for this reason: once a real domain exists, that domain's Universal Link / App Link association is what makes the delivery mechanism itself trustworthy, not just the token it carries. Until then, `.env.example`'s development/UAT defaults are appropriate exactly because they're low-stakes, developer-controlled devices — not because the transport is actually safe at any scale.
+This removes the earlier custom-URL-scheme deep-link design (and its associated-domain/Universal-Link security caveats) entirely — there is no longer a redeemable credential traveling through OS-level link routing to defend. `app.config.ts`'s `scheme` still exists (Expo Router itself expects one, independent of this feature), but nothing reads an incoming URL for registration purposes anymore.
 
 ## Email verification UX
 
-`app/(auth)/verify-email.tsx` covers: registration success → code entry → resend (client-side 60s cooldown display, mirroring but not replacing the Worker's own authoritative cooldown) → invalid/expired/too-many-attempts (all surfaced through the same generic `verification_invalid` error code, matching the Worker's deliberately generic response) → success → redirect to sign-in (the Worker's `verify-email` issues no tokens, so there is nothing to sign the user in with directly).
+`app/(auth)/verify-email.tsx` covers: code entry → resend (client-side 60s cooldown display, mirroring but not replacing the Worker's own authoritative cooldown) → invalid/expired/too-many-attempts (all surfaced through the same generic `verification_invalid` error code, matching the Worker's deliberately generic response) → success → redirect to sign-in (the Worker's `verify-email` issues no tokens, so there is nothing to sign the user in with directly). Since the invitation-code redesign, invitation-based registration (`register.tsx`) auto-verifies the account as part of a successful `POST /api/auth/applicant/register` and never routes here; this screen is reached only from `sign-in.tsx`'s `email_not_verified` case, kept for that and any future non-invitation account path.
 
 ## My Onboarding dashboard
 
@@ -412,12 +403,12 @@ Three: `development`, `uat`, `production`, selected via `APP_ENV` (read in `app.
 | Value | Safe client-side? | Where it lives |
 |---|---|---|
 | `API_BASE_URL` | Yes — an endpoint address, not a credential | `app.config.ts` → `extra.apiBaseUrl` |
-| `INVITE_BASE_URL` | Yes — used only to recognize/construct invite links | `app.config.ts` → `extra.inviteBaseUrl` |
-| `APPLICANT_LINK_DOMAIN` | Yes (a public domain name) | Unset until a production domain is decided |
 | `EAS_PROJECT_ID` / `EAS_OWNER` | Yes (identifiers, not secrets) | Unset until `eas init` is actually run |
-| **Anything from `worker/.dev.vars`** (`ADMIN_JWT_SECRET`, `EMAIL_VERIFICATION_SECRET`, `RESEND_API_KEY`) | **No — never** | Server-only. None of these appear anywhere in this app, its config, or its bundle. |
+| **Anything from `worker/.dev.vars`** (`ADMIN_JWT_SECRET`, `EMAIL_VERIFICATION_SECRET`, `INVITE_CODE_SECRET`, `RESEND_API_KEY`) | **No — never** | Server-only, Cloudflare secrets (`wrangler secret put`). None of these appear anywhere in this app, its config, or its bundle. |
 
-`app.config.ts` **fails the build** (throws, does not silently fall back to a localhost default) if `API_BASE_URL` or `INVITE_BASE_URL` is unset while `APP_ENV` is `uat` or `production` — the same fail-safe reasoning as the Worker's own `APPLICANT_INVITE_BASE_URL`/`ENVIRONMENT` handling (`worker/src/routes/invites.ts`).
+`app.config.ts` **fails the build** (throws, does not silently fall back to a localhost default) if `API_BASE_URL` is unset while `APP_ENV` is `uat` or `production`.
+
+There is no invitation-related client-side config (`INVITE_BASE_URL`/`APPLICANT_LINK_DOMAIN`) anymore — the invitation-code flow (see "Invitation-code registration" above) needs no base URL or domain, since applicants type a code instead of following a link.
 
 ## EAS / build readiness
 
@@ -458,9 +449,9 @@ React Context + hooks (`AuthContext`), no Redux/Zustand/MobX. Justification: the
 |---|---|
 | Refresh token storage | `expo-secure-store` only (Keychain/Keystore-backed); never AsyncStorage, never a file. |
 | Access token | Memory-only; never persisted; cleared on sign-out and on a definitive refresh failure. |
-| Invite token | Local screen state only, never logged, never persisted past submission. |
+| Invitation code | Local screen state only (`register.tsx`), never logged, never persisted past validating/submitting it. |
 | Logging | Grepped `tokenStore.ts`, `secureStore.ts`, `authApi.ts`, `apiClient.ts`, `register.tsx` for `console.*` near any token/code variable — none found. |
-| Deep-link handling | Token read via `expo-linking`'s parser inside a `try`/`catch`, never `eval`'d or used to construct dynamic code; malformed links return `null` rather than throwing into the navigator. |
+| Deep-link handling | **Removed entirely** (invitation-code redesign) — deep links, Universal Links, App Links, and browser registration are out of scope; there is no `Linking`/URL-parsing code path or `params.token` route param anywhere in this app anymore. The invitation code is entered directly into a `TextField` and sent only to `POST /api/invites/validate`/`POST /api/auth/applicant/register` — see "Invitation-code registration" above. |
 | Navigation guards | Enforced per-group in each group's own `_layout.tsx`, not a single central check that could be bypassed by adding a new screen without remembering to wire it in. |
 | Auth bypass | Every authenticated API call goes through `authenticatedFetch`, which always reads the CURRENT token from `tokenStore` — there is no code path that calls a protected endpoint with a stale or hardcoded token. |
 | Stale auth state | A 401 on any authenticated call (not just at launch) triggers the same refresh-or-sign-out path via the auth-expired listener — a revoked-elsewhere session is caught on its next request, not only at app relaunch. |
@@ -469,7 +460,7 @@ React Context + hooks (`AuthContext`), no Redux/Zustand/MobX. Justification: the
 | Expo config secret exposure | `app.config.ts`'s `extra` block contains only the values in the "Environments" table above — audited to confirm no `worker/.dev.vars` value or equivalent appears anywhere in this file or its git history. |
 | Session ownership | Every session route requires the authenticated applicant's own token server-side (unchanged from M2/ADR-015) — mobile never sends or trusts a client-supplied user/session identifier; `GET/POST /api/sessions*` calls go through `authenticatedFetch` exactly like every other authenticated call. |
 | Session-creation idempotency | Single-flight per app instance (`ensureSession.ts`) prevents duplicate sessions from rerenders/Strict Mode/concurrent mounts/retries; a fresh ensurer per sign-in (not a module-level singleton) prevents cross-identity state leakage on sign-out→sign-back-in. Cross-device races closed at the database (`idx_sessions_user_id_unique`, ADR-018 §2) — see "Session data layer & idempotency." |
-| Invite token in error reporting/analytics | No error-reporting or analytics SDK is integrated in this milestone (none exists in the app at all) — there is nothing to leak the token to yet; when one is added, `register.tsx`'s local-only token handling must not change. |
+| Invitation code in error reporting/analytics | No error-reporting or analytics SDK is integrated in this milestone (none exists in the app at all) — there is nothing to leak the code to yet; when one is added, `register.tsx`'s local-only handling must not change. |
 | Personal Information field values | Grepped `usePersonalInfoForm.ts`, `PersonalInfoScreen.tsx`, `stepPatch.ts`, `sessionApi.ts`'s `updateSession` for `console.*` — none found. Form data lives only in React state and, once saved, the server; no `AsyncStorage`/`SecureStore` write of any form payload anywhere. |
 | Sensitive fields (SSN/DOB) | Confirmed absent from this step by reading `@pcs/shared`'s `PersonalInfo` type directly — both belong only to `I9Data`, a separate, not-yet-migrated step. The screen's own copy tells the applicant this explicitly, matching the existing web form's identical framing. |
 | Employment Reference field values | Grepped `useEmploymentReferenceForm.ts`, `EmploymentReferenceScreen.tsx` for `console.*` — none found. Same in-React-state-only, server-once-saved, no-local-persistence handling as every other step form. |
@@ -489,7 +480,7 @@ Biometrics are explicitly not implemented (see "Secure storage" above for the pr
 
 ## Testing
 
-`jest-expo` + `@testing-library/react-native`. M3 coverage (unchanged): `refreshCoordinator` (single-flight, no stampede, no stuck state after a failure), `apiClient`'s `authenticatedFetch` (401→refresh→retry-once, no stored token → no retry, refresh failure → clear + notify with no infinite loop, concurrent 401s coalesce into one refresh call), `AuthContext` (loading→restore→signedOut/signedIn, sign-in success/failure, a background auth-expired event moving a signed-in user back to signedOut, sign-out proceeding even if server revocation fails), `secureStore`'s wrapper, `inviteLink` parsing, `errors.ts`'s context-sensitive status-code mapping.
+`jest-expo` + `@testing-library/react-native`. M3 coverage (unchanged): `refreshCoordinator` (single-flight, no stampede, no stuck state after a failure), `apiClient`'s `authenticatedFetch` (401→refresh→retry-once, no stored token → no retry, refresh failure → clear + notify with no infinite loop, concurrent 401s coalesce into one refresh call), `AuthContext` (loading→restore→signedOut/signedIn, sign-in success/failure, a background auth-expired event moving a signed-in user back to signedOut, sign-out proceeding even if server revocation fails), `secureStore`'s wrapper, `errors.ts`'s context-sensitive status-code mapping. (`inviteLink` parsing was M3-era deep-link-token test coverage; both the module and its test were deleted along with the rest of the deep-link registration path in the invitation-code redesign — see "Invitation-code registration" above. `AuthContext` and `errors.ts` coverage was extended for that redesign: `register`/`validateInviteCode` success and failure paths, and the new `invite_invalid`/`rate_limited` status-code mappings.)
 
 **M4 adds:** `sessionApi` (404→`{ok:true, data:null}` treated as a signal not an error, 200/422/500/network mapping, correct request body), `ensureSession` (returns existing session without creating one, creates when none exists, propagates GET/CREATE failures distinctly, **coalesces concurrent `ensure()` calls into exactly one GET and one CREATE** — the core idempotency guarantee, directly tested — and starts fresh after a prior call fully resolves), `SessionContext` (loading→ready/error, preserves the exact server `revision` without modification, `refresh()` recovers from a prior error, and **creates a fresh ensurer on every mount so a sign-out→sign-back-in-as-someone-else never inherits stale in-flight state** — directly tested, not just asserted), `steps` (unknown packetId returns null rather than throwing, empty/partial/fully-completed `stepStates` all compute the right completed/remaining/next-step split, non-`'completed'` statuses are correctly treated as incomplete).
 

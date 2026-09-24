@@ -8,6 +8,7 @@ import { auth } from './routes/auth';
 import { admin } from './routes/admin';
 import { sessions } from './routes/sessions';
 import { invites } from './routes/invites';
+import { inviteValidation } from './routes/inviteValidation';
 
 // Routes are chained (rather than called as separate statements) so that
 // TypeScript can infer the merged route type below. Runtime registration
@@ -20,6 +21,7 @@ const app = new Hono<AppEnv>()
   .route('/api/auth', auth)
   .route('/api/admin', admin)
   .route('/api/admin/invites', invites)
+  .route('/api/invites', inviteValidation)
   .route('/api', onboarding)
   .route('/api/uploads', uploads)
   .route('/api/sessions', sessions);

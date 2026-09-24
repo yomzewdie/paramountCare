@@ -95,6 +95,41 @@ describe('AuthContext', () => {
     expect(result.current.user).toBeNull();
   });
 
+  it('register success moves status to signedIn and stores the user — no separate sign-in step', async () => {
+    mockedApiClient.restoreSession.mockResolvedValue({ status: 'signedOut' });
+    mockedAuthApi.register.mockResolvedValue({
+      ok: true,
+      data: { email: 'nurse@example.com', role: 'applicant', accessToken: 'at', refreshToken: 'rt', expiresIn: 900 },
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('signedOut'));
+
+    await act(async () => {
+      await result.current.register('ABCDEFGHJ2', 'Correct-Passw0rd!');
+    });
+
+    expect(result.current.status).toBe('signedIn');
+    expect(result.current.user).toEqual({ email: 'nurse@example.com', role: 'applicant' });
+  });
+
+  it('register failure (invalid invitation code) leaves status signedOut and surfaces the error', async () => {
+    mockedApiClient.restoreSession.mockResolvedValue({ status: 'signedOut' });
+    mockedAuthApi.register.mockResolvedValue({ ok: false, error: appError('invite_invalid') });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('signedOut'));
+
+    let outcome: Awaited<ReturnType<typeof result.current.register>> | undefined;
+    await act(async () => {
+      outcome = await result.current.register('BADCODE0000', 'Correct-Passw0rd!');
+    });
+
+    expect(outcome?.ok).toBe(false);
+    expect(result.current.status).toBe('signedOut');
+    expect(result.current.user).toBeNull();
+  });
+
   it('signOut clears state even if the server-side revocation call fails', async () => {
     mockedApiClient.restoreSession.mockResolvedValue({ status: 'signedIn', email: 'nurse@example.com', role: 'applicant' });
     mockedSecureStore.getStoredRefreshToken.mockResolvedValue('some-refresh-token');

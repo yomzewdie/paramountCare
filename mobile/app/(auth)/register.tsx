@@ -1,48 +1,60 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Screen } from '../../src/components/Screen';
 import { TextField } from '../../src/components/TextField';
 import { Button } from '../../src/components/Button';
 import { ErrorState } from '../../src/components/StatusStates';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useAuth } from '../../src/features/auth/AuthContext';
-import { appError, type AppError } from '../../src/utils/errors';
+import type { AppError } from '../../src/utils/errors';
 
-// The invite token arrives one of two ways: as a `token` route/query param
-// (Expo Router auto-populates this when the app is opened via a deep link
-// matching this screen's path — see README.md "Invitation / deep-link
-// handling"), or typed in manually here for the case of testing without a
-// live link. Either way it is held only in this screen's local state for as
-// long as it takes to submit the request, never persisted, never logged,
-// never sent to analytics or error reporting.
+// Two-step invitation-code flow (deep links / Universal Links / App Links /
+// browser registration are explicitly out of scope — see the
+// invitation-code-flow design notes). Step 1 collects and validates the
+// code; step 2 shows the invited (masked) email and collects a password.
+// A successful "Create account" both claims the invite AND signs the
+// applicant in (see AuthContext.register) — there is no separate
+// email-verification screen or sign-in step after this.
+type Step = 'code' | 'password';
+
 export default function Register() {
   const theme = useTheme();
   const router = useRouter();
-  const { register } = useAuth();
-  const params = useLocalSearchParams<{ token?: string }>();
+  const { register, validateInviteCode } = useAuth();
 
-  const [manualToken, setManualToken] = useState('');
+  const [step, setStep] = useState<Step>('code');
+  const [code, setCode] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
 
-  const tokenFromLink = typeof params.token === 'string' ? params.token : undefined;
-  const effectiveToken = (tokenFromLink ?? manualToken).trim();
-
   function fieldError(field: string): string | undefined {
     return error?.fieldIssues?.find((i) => i.field === field)?.message;
   }
 
-  async function handleSubmit() {
+  async function handleContinue() {
+    if (isSubmitting || !code.trim()) return;
+    setError(null);
+    setIsSubmitting(true);
+    const result = await validateInviteCode(code.trim());
+    setIsSubmitting(false);
+
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    setMaskedEmail(result.data.email);
+    setStep('password');
+  }
+
+  async function handleCreateAccount() {
     if (isSubmitting) return;
     setError(null);
 
-    if (!effectiveToken) {
-      setError(appError('invite_invalid'));
-      return;
-    }
     // Matches the Worker's actual rule exactly (registerSchema: min 8
     // characters, no other complexity requirement) — not a stricter
     // client-invented policy.
@@ -56,31 +68,59 @@ export default function Register() {
     }
 
     setIsSubmitting(true);
-    const result = await register(effectiveToken, password);
+    const result = await register(code.trim(), password);
     setIsSubmitting(false);
 
     if (!result.ok) {
       setError(result.error);
+      // A code that was valid moments ago but is now dead (used/revoked/
+      // expired in the interim) sends the applicant back to step 1 to enter
+      // a fresh one, rather than stranding them on a password form for a
+      // code that will never work.
+      if (result.error.code === 'invite_invalid') {
+        setStep('code');
+      }
       return;
     }
 
-    router.replace({ pathname: '/(auth)/verify-email', params: { email: result.data.email } });
+    // AuthContext.register already stored tokens and set status to
+    // 'signedIn' on success — the (auth) layout's own redirect takes it from
+    // here into onboarding. No navigation call needed.
   }
 
-  // A confirmed-dead invitation (invalid, expired, revoked, or already used
-  // — the Worker deliberately returns one generic signal for all four, to
-  // avoid revealing which reason applies to an unauthenticated caller) is a
-  // dead end for this screen, not a field to fix and resubmit. Replacing the
-  // form with a clear, actionable blocking state is more honest than
-  // leaving password fields visible above an error banner.
-  if (error?.code === 'invite_invalid' && effectiveToken) {
+  if (step === 'code') {
     return (
       <Screen>
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-          <ErrorState message={error.message} />
-          <View style={{ marginTop: theme.spacing.lg }}>
-            <Button label="Back to Sign In" variant="secondary" onPress={() => router.replace('/(auth)/sign-in')} />
+        <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '700', marginBottom: theme.spacing.xs }]}>
+          PARAMOUNT CARE
+        </Text>
+        <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>
+          Enter your invitation code
+        </Text>
+        <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
+          Check the email from Paramount Care Staffing for your invitation code.
+        </Text>
+
+        <TextField
+          label="Invitation code"
+          value={code}
+          onChangeText={setCode}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          placeholder="e.g. ABCD-EFGH-J2"
+          error={fieldError('code')}
+        />
+
+        {error && !error.fieldIssues ? (
+          <View style={{ marginBottom: theme.spacing.md }}>
+            <ErrorState message={error.message} />
           </View>
+        ) : null}
+
+        <Button label="Continue" onPress={handleContinue} loading={isSubmitting} disabled={!code.trim()} />
+
+        <View style={{ marginTop: theme.spacing.md, alignItems: 'center' }}>
+          <Button label="Already have an account? Sign in" variant="secondary" onPress={() => router.replace('/(auth)/sign-in')} />
         </View>
       </Screen>
     );
@@ -93,24 +133,11 @@ export default function Register() {
       </Text>
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>Create your account</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
-        {tokenFromLink
-          ? 'Paramount Care Staffing has invited you to complete your onboarding. Set a password to create your account and get started.'
-          : 'Enter the invitation code from your email, and set a password to create your account.'}
+        Setting up onboarding for {maskedEmail}. Create a password to finish creating your account.
       </Text>
 
-      {!tokenFromLink && (
-        <TextField
-          label="Invitation code"
-          value={manualToken}
-          onChangeText={setManualToken}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="Paste the code from your invitation email"
-        />
-      )}
-
       <TextField
-        label="Password"
+        label="Create password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
@@ -137,10 +164,10 @@ export default function Register() {
         </View>
       ) : null}
 
-      <Button label="Create account" onPress={handleSubmit} loading={isSubmitting} disabled={!effectiveToken || !password || !confirmPassword} />
+      <Button label="Create account" onPress={handleCreateAccount} loading={isSubmitting} disabled={!password || !confirmPassword} />
 
       <View style={{ marginTop: theme.spacing.md, alignItems: 'center' }}>
-        <Button label="Already have an account? Sign in" variant="secondary" onPress={() => router.replace('/(auth)/sign-in')} />
+        <Button label="Back" variant="secondary" onPress={() => setStep('code')} />
       </View>
     </Screen>
   );

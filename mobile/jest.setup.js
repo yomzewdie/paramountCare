@@ -68,7 +68,6 @@ jest.mock('expo-constants', () => ({
       extra: {
         appEnv: 'development',
         apiBaseUrl: 'https://test.invalid',
-        inviteBaseUrl: 'https://test.invalid/register',
         eas: {},
       },
     },

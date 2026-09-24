@@ -3,7 +3,8 @@ import type { AppEnv } from '../env';
 import { signJwt, DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS, type UserType } from '../utils/jwt';
 import { verifyPassword, hashPassword } from '../services/auth';
 import { generateRawRefreshToken, hashRefreshToken, generateFamilyId } from '../services/refreshTokens';
-import { hashOpaqueToken, constantTimeEqual } from '../services/opaqueTokens';
+import { constantTimeEqual } from '../services/opaqueTokens';
+import { normalizeInviteCode, hashInviteCode } from '../services/inviteCode';
 import {
   generateVerificationCode,
   hashVerificationCode,
@@ -218,9 +219,15 @@ auth.post('/login', async (c) => {
 //
 // Product decision: applicants cannot self-register. The email is always
 // derived from the invitation record, never from client input. Registration
-// does not issue tokens and does not create an onboarding session — the
-// account is created UNVERIFIED, a verification code is sent, and the
-// applicant must verify before they can sign in at all.
+// does not create an onboarding session (that happens lazily on first Home
+// load — see mobile's SessionContext/ensureSession.ts, unchanged).
+//
+// As of the invitation-code redesign: registration DOES issue tokens
+// immediately and marks the account verified as part of a successful claim —
+// no separate email-verification round trip. See markUserEmailVerified's
+// call site below for why that's sound: the invitation code itself is
+// delivered only to this exact email address, so successfully claiming it
+// already proves the same inbox access a second code would prove.
 
 async function issueAndSendVerificationCode(
   c: { env: { DB: D1Database; RESEND_API_KEY: string; EMAIL_VERIFICATION_SECRET: string } },
@@ -261,11 +268,13 @@ auth.post('/applicant/register', async (c) => {
 
   // A single generic response for every invitation-invalidity reason (not
   // found, expired, revoked, already used) — deliberately not distinguished,
-  // to avoid leaking anything about token validity structure to a caller
-  // who doesn't already hold a real invitation.
+  // to avoid leaking anything about code validity structure to a caller
+  // who doesn't already hold a real invitation. Matches
+  // routes/inviteValidation.ts's own generic response for the same reason.
   const invalidInvite = () => c.json({ error: 'Invalid or expired invitation' }, 401);
 
-  const tokenHash = await hashOpaqueToken(result.data.inviteToken);
+  const normalizedCode = normalizeInviteCode(result.data.inviteCode);
+  const tokenHash = await hashInviteCode(normalizedCode, c.env.INVITE_CODE_SECRET);
   const invite = await findOnboardingInviteByTokenHash(c.env.DB, tokenHash);
   if (!invite || invite.revoked_at || invite.used_at) return invalidInvite();
   if (new Date(invite.expires_at).getTime() < Date.now()) return invalidInvite();
@@ -283,7 +292,8 @@ auth.post('/applicant/register', async (c) => {
   // neither does. This is what makes two simultaneous registration attempts
   // against the same invite, and a user-creation failure after a would-be
   // claim, both safe — there is no window where the invite is burned but no
-  // account exists.
+  // account exists. Unchanged by the invitation-code redesign — this logic
+  // doesn't care what shape the invite's credential is.
   const passwordHash = await hashPassword(result.data.password);
   const claimResult = await claimInviteAndCreateUser(c.env.DB, invite, email, passwordHash);
   if (!claimResult.ok) {
@@ -294,10 +304,36 @@ auth.post('/applicant/register', async (c) => {
   }
   const user = claimResult.user;
 
-  await issueAndSendVerificationCode(c, user);
+  // Deliberately AFTER the atomic claim+create batch, not inside it: if
+  // this throws, the applicant already has a real, correctly-created
+  // account tied to the (now consumed) invite — they simply aren't verified
+  // yet, and can recover via the still-fully-functional
+  // resend-verification/verify-email endpoints. Nothing is duplicated or
+  // re-claimable either way.
+  await markUserEmailVerified(c.env.DB, user.id);
 
-  // No tokens, no onboarding session — verification comes next.
-  return c.json({ email: user.email, message: 'Verification code sent. Check your email to continue.' }, 201);
+  // Same reasoning for token issuance: if this throws, the account exists
+  // and is verified, but has no tokens yet — the applicant can simply sign
+  // in normally afterward via POST /api/auth/applicant/login, which needs
+  // no invite at all and works unconditionally once email_verified_at is set.
+  const tokens = await issueTokenPair(c, {
+    userType: 'applicant',
+    uid: user.id,
+    email: user.email,
+    role: 'applicant',
+    accessExpirySeconds: DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS,
+  });
+
+  return c.json(
+    {
+      email: tokens.email,
+      role: tokens.role,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.rawRefreshToken,
+      expiresIn: DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS,
+    },
+    201,
+  );
 });
 
 // ── Email verification ───────────────────────────────────────────────────────

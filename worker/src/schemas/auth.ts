@@ -8,7 +8,7 @@ import { z } from 'zod';
 // employment history) is collected at registration — only what's needed to
 // create the account.
 export const registerSchema = z.object({
-  inviteToken: z.string().min(1, 'inviteToken is required'),
+  inviteCode: z.string().min(1, 'inviteCode is required'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 export type RegisterPayload = z.infer<typeof registerSchema>;

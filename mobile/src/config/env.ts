@@ -9,7 +9,6 @@ export type AppEnvironment = 'development' | 'uat' | 'production';
 interface ExpoExtra {
   appEnv: AppEnvironment;
   apiBaseUrl: string;
-  inviteBaseUrl: string;
   eas?: { projectId?: string };
 }
 
@@ -27,9 +26,6 @@ export const env = {
   },
   get apiBaseUrl(): string {
     return readExtra().apiBaseUrl;
-  },
-  get inviteBaseUrl(): string {
-    return readExtra().inviteBaseUrl;
   },
   get isDevelopment(): boolean {
     return readExtra().appEnv === 'development';

@@ -19,19 +19,47 @@ async function postJson(fetchFn: typeof fetch, path: string, body: unknown): Pro
   });
 }
 
-interface RegisterResponse {
+// Invitation-code redesign: registration now claims the invite, creates the
+// account, marks it verified, and issues a real token pair all in one call —
+// so the response shape matches login's, not the old "pending verification"
+// message shape.
+export interface RegisterResponse {
   email: string;
-  message: string;
+  role: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
 }
 
-export async function register(inviteToken: string, password: string): Promise<ApiResult<RegisterResponse>> {
+export async function register(inviteCode: string, password: string): Promise<ApiResult<RegisterResponse>> {
   try {
-    const res = await postJson(publicFetch, '/api/auth/applicant/register', { inviteToken, password });
+    const res = await postJson(publicFetch, '/api/auth/applicant/register', { inviteCode, password });
     if (!res.ok) {
       const body = await res.json().catch(() => undefined);
       return { ok: false, error: toAppError(res.status, body, 'register') };
     }
     return { ok: true, data: (await res.json()) as RegisterResponse };
+  } catch (err) {
+    return { ok: false, error: networkFailureToAppError(err) };
+  }
+}
+
+interface ValidateInviteCodeResponse {
+  email: string;
+}
+
+// Public, unauthenticated — used by the first invitation-code entry screen
+// to preview the invited (masked) email before the applicant commits to
+// setting a password. Never mutates the invite; see
+// worker/src/routes/inviteValidation.ts.
+export async function validateInviteCode(code: string): Promise<ApiResult<ValidateInviteCodeResponse>> {
+  try {
+    const res = await postJson(publicFetch, '/api/invites/validate', { code });
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, error: toAppError(res.status, body, 'validateInviteCode') };
+    }
+    return { ok: true, data: (await res.json()) as ValidateInviteCodeResponse };
   } catch (err) {
     return { ok: false, error: networkFailureToAppError(err) };
   }

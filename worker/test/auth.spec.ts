@@ -12,25 +12,30 @@ import {
   registerViaInvite,
   markVerifiedDirectly,
   seedVerificationCode,
+  seedUnverifiedUser,
   registerVerifyAndLoginApplicant,
 } from './helpers';
 
 // ── Applicant registration (invite-only) ─────────────────────────────────────
 
 describe('POST /api/auth/applicant/register', () => {
-  it('creates an unverified account from a valid invitation, with no tokens and no onboarding session', async () => {
+  it('creates a verified account and issues tokens immediately, with no onboarding session yet', async () => {
     const email = uniqueEmail('register');
-    const rawToken = await seedInvite(email);
-    const res = await registerViaInvite(rawToken);
+    const rawCode = await seedInvite(email);
+    const res = await registerViaInvite(rawCode);
     expect(res.status).toBe(201);
     const body = await res.json() as Record<string, unknown>;
     expect(body.email).toBe(email);
-    // No tokens issued at registration — verification comes first.
-    expect(body.accessToken).toBeUndefined();
-    expect(body.refreshToken).toBeUndefined();
+    expect(body.role).toBe('applicant');
+    // The invitation code was delivered to the invited email, so possessing
+    // it already proves inbox access — registration verifies the account and
+    // signs the applicant in immediately, with no separate email-verification
+    // round trip.
+    expect(typeof body.accessToken).toBe('string');
+    expect(typeof body.refreshToken).toBe('string');
 
     const row = await env.DB.prepare('SELECT email_verified_at FROM users WHERE email = ?').bind(email).first<{ email_verified_at: string | null }>();
-    expect(row?.email_verified_at).toBeNull();
+    expect(row?.email_verified_at).not.toBeNull();
 
     const sessionRow = await env.DB.prepare('SELECT * FROM onboarding_sessions WHERE email = ?').bind(email).first();
     expect(sessionRow).toBeNull();
@@ -52,18 +57,12 @@ describe('POST /api/auth/applicant/register', () => {
 
   it('rejects an expired invitation', async () => {
     const email = uniqueEmail('expired-invite');
-    const rawToken = await seedInvite(email);
+    const rawCode = await seedInvite(email);
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    await env.DB.prepare(`UPDATE onboarding_invites SET expires_at = ? WHERE token_hash = ?`)
-      .bind(
-        oneDayAgo,
-        await (async () => {
-          const { hashOpaqueToken } = await import('../src/services/opaqueTokens');
-          return hashOpaqueToken(rawToken);
-        })(),
-      )
+    await env.DB.prepare(`UPDATE onboarding_invites SET expires_at = ? WHERE email = ?`)
+      .bind(oneDayAgo, email)
       .run();
-    const res = await registerViaInvite(rawToken);
+    const res = await registerViaInvite(rawCode);
     expect(res.status).toBe(401);
   });
 
@@ -87,13 +86,13 @@ describe('POST /api/auth/applicant/register', () => {
 
   it('derives the account email from the invitation, not from client-supplied input', async () => {
     const invitedEmail = uniqueEmail('invited');
-    const rawToken = await seedInvite(invitedEmail);
+    const rawCode = await seedInvite(invitedEmail);
     // Even if a client tries to smuggle a different email into the body, the
-    // schema has no such field for register — only inviteToken and password.
+    // schema has no such field for register — only inviteCode and password.
     const res = await SELF.fetch(`${BASE}/api/auth/applicant/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inviteToken: rawToken, password: 'Test-Passw0rd!', email: 'attacker-chosen@example.com' }),
+      body: JSON.stringify({ inviteCode: rawCode, password: 'Test-Passw0rd!', email: 'attacker-chosen@example.com' }),
     });
     expect(res.status).toBe(201);
     const body = await res.json() as { email: string };
@@ -146,11 +145,15 @@ describe('POST /api/auth/applicant/register', () => {
 // ── Email verification ───────────────────────────────────────────────────────
 
 describe('Email verification', () => {
+  // Post invitation-code redesign, every invite-based registration
+  // auto-verifies the account (the code's delivery to the invited inbox
+  // already proves access) — so there is no longer any real code path that
+  // produces an unverified account. This legacy infrastructure (kept
+  // available for other/future flows) is exercised here against a directly
+  // seeded unverified user instead.
   async function registerUnverified(label: string): Promise<string> {
     const email = uniqueEmail(label);
-    const rawToken = await seedInvite(email);
-    const res = await registerViaInvite(rawToken);
-    expect(res.status).toBe(201);
+    await seedUnverifiedUser(email);
     return email;
   }
 
@@ -333,8 +336,10 @@ describe('POST /api/auth/applicant/login', () => {
   it('rejects an unverified account with a machine-readable error, even with the correct password', async () => {
     const email = uniqueEmail('login-unverified');
     const password = 'Correct-Passw0rd!';
-    const rawToken = await seedInvite(email);
-    await registerViaInvite(rawToken, password);
+    // Invite-based registration now always auto-verifies, so an unverified
+    // account is seeded directly — see the "Email verification" describe
+    // block above for why this legacy path still needs its own coverage.
+    await seedUnverifiedUser(email, password);
 
     const res = await SELF.fetch(`${BASE}/api/auth/applicant/login`, {
       method: 'POST',

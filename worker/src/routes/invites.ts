@@ -3,7 +3,7 @@ import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
 import { requireRole } from '../middleware/requireRole';
 import { createInviteSchema } from '../schemas/invites';
-import { generateOpaqueToken, hashOpaqueToken } from '../services/opaqueTokens';
+import { generateInviteCode, normalizeInviteCode, hashInviteCode } from '../services/inviteCode';
 import { sendApplicantInvitation } from '../services/email';
 import { findUserByEmail } from '../db/queries/users';
 import {
@@ -49,42 +49,19 @@ function serializeInvite(row: OnboardingInviteRow) {
   };
 }
 
-/**
- * Resolves the base URL an invitation email links to. No hardcoded
- * production deep link — the Expo app doesn't exist yet (M3), so this is
- * configuration precisely so the eventual mobile universal/deep link (or a
- * web fallback) can be wired in without a code change here.
- *
- * The localhost default is a dev/test convenience, not something that should
- * ever reach a real applicant: if ENVIRONMENT is "production" and nobody set
- * APPLICANT_INVITE_BASE_URL, that is a deployment misconfiguration — fail
- * loudly rather than silently emailing a localhost link nobody outside the
- * office network can open.
- */
-export function resolveInviteBaseUrl(c: { env: { ENVIRONMENT: string; APPLICANT_INVITE_BASE_URL?: string } }): string {
-  if (c.env.APPLICANT_INVITE_BASE_URL) return c.env.APPLICANT_INVITE_BASE_URL;
-  if (c.env.ENVIRONMENT === 'production') {
-    throw new Error(
-      'APPLICANT_INVITE_BASE_URL is not configured in production — refusing to send an invitation email with a localhost link',
-    );
-  }
-  return 'http://localhost:3000/register';
-}
-
 async function sendInviteEmail(
-  c: { env: { RESEND_API_KEY: string; ENVIRONMENT: string; APPLICANT_INVITE_BASE_URL?: string } },
+  c: { env: { RESEND_API_KEY: string } },
   email: string,
-  rawToken: string,
+  code: string,
   expiresAt: string,
 ) {
   if (!c.env.RESEND_API_KEY) {
     console.warn('[invites] email skipped: RESEND_API_KEY not configured');
     return;
   }
-  const baseUrl = resolveInviteBaseUrl(c);
-  const inviteUrl = `${baseUrl}?token=${rawToken}`;
   try {
-    await sendApplicantInvitation(c.env.RESEND_API_KEY, { to: email, inviteUrl, expiresAt });
+    // The code, never a link — see services/email.ts's sendApplicantInvitation.
+    await sendApplicantInvitation(c.env.RESEND_API_KEY, { to: email, code, expiresAt });
   } catch (e) {
     // Non-fatal — the invite row already exists; the admin can use "resend"
     // if the applicant never receives it. Matches the existing non-fatal
@@ -122,8 +99,8 @@ invites.post('/', async (c) => {
     return c.json({ error: 'An outstanding invitation already exists for this email — use resend instead', inviteId: outstanding.id }, 409);
   }
 
-  const rawToken = generateOpaqueToken();
-  const tokenHash = await hashOpaqueToken(rawToken);
+  const rawCode = generateInviteCode();
+  const tokenHash = await hashInviteCode(normalizeInviteCode(rawCode), c.env.INVITE_CODE_SECRET);
   const expiresAt = isoInSeconds(INVITE_EXPIRY_SECONDS);
 
   const invite = await insertOnboardingInvite(c.env.DB, {
@@ -133,7 +110,7 @@ invites.post('/', async (c) => {
     createdBy: payload.uid,
   });
 
-  await sendInviteEmail(c, email, rawToken, expiresAt);
+  await sendInviteEmail(c, email, rawCode, expiresAt);
 
   return c.json(serializeInvite(invite), 201);
 });
@@ -162,8 +139,8 @@ invites.post('/:id/resend', async (c) => {
   const existing = await findOnboardingInviteById(c.env.DB, id);
   if (!existing) return c.json({ error: 'Invitation not found' }, 404);
 
-  const rawToken = generateOpaqueToken();
-  const tokenHash = await hashOpaqueToken(rawToken);
+  const rawCode = generateInviteCode();
+  const tokenHash = await hashInviteCode(normalizeInviteCode(rawCode), c.env.INVITE_CODE_SECRET);
   const expiresAt = isoInSeconds(INVITE_EXPIRY_SECONDS);
 
   const result = await rotateOnboardingInvite(c.env.DB, id, { tokenHash, expiresAt });
@@ -173,7 +150,7 @@ invites.post('/:id/resend', async (c) => {
     return c.json({ error: 'Invitation not found' }, 404);
   }
 
-  await sendInviteEmail(c, existing.email, rawToken, expiresAt);
+  await sendInviteEmail(c, existing.email, rawCode, expiresAt);
 
   const updated = await findOnboardingInviteById(c.env.DB, id);
   return c.json(serializeInvite(updated!));

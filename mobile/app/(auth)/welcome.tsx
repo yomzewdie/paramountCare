@@ -13,8 +13,7 @@ export default function Welcome() {
       <View style={{ flex: 1, justifyContent: 'center' }}>
         <Text style={[theme.typography.display, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>Paramount Care</Text>
         <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.xl }]}>
-          Applicant onboarding. Accounts are created from an invitation your Paramount Care coordinator sends you by email — open that
-          link on this device to get started.
+          Applicant onboarding. Accounts are created from an invitation code your Paramount Care coordinator sends you by email.
         </Text>
 
         <Button label="Sign In" onPress={() => router.push('/(auth)/sign-in')} />

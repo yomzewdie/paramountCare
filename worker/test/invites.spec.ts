@@ -1,7 +1,6 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, loginAsAdmin, registerVerifyAndLoginApplicant, registerViaInvite } from './helpers';
-import { resolveInviteBaseUrl } from '../src/routes/invites';
 
 async function createInvite(cookie: string, email: string) {
   const res = await SELF.fetch(`${BASE}/api/admin/invites`, {
@@ -208,32 +207,5 @@ describe('POST /api/admin/invites/:id/revoke', () => {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     expect(res.status).toBe(403);
-  });
-});
-
-// ── Invitation base URL fail-safe ────────────────────────────────────────────
-//
-// Unit-level, not HTTP-level: the running test worker's ENVIRONMENT binding
-// is fixed for the whole suite (vitest.config.mts), so this exercises the
-// exported resolver directly with fabricated env values instead.
-
-describe('resolveInviteBaseUrl (production fail-safe)', () => {
-  it('uses the localhost default in development when unset', () => {
-    const url = resolveInviteBaseUrl({ env: { ENVIRONMENT: 'development', APPLICANT_INVITE_BASE_URL: undefined } });
-    expect(url).toBe('http://localhost:3000/register');
-  });
-
-  it('uses the localhost default in test when unset', () => {
-    const url = resolveInviteBaseUrl({ env: { ENVIRONMENT: 'test', APPLICANT_INVITE_BASE_URL: undefined } });
-    expect(url).toBe('http://localhost:3000/register');
-  });
-
-  it('always prefers an explicitly configured base URL, in any environment', () => {
-    const url = resolveInviteBaseUrl({ env: { ENVIRONMENT: 'production', APPLICANT_INVITE_BASE_URL: 'https://apply.paramountcare.example' } });
-    expect(url).toBe('https://apply.paramountcare.example');
-  });
-
-  it('throws in production when no base URL is configured, instead of silently returning localhost', () => {
-    expect(() => resolveInviteBaseUrl({ env: { ENVIRONMENT: 'production', APPLICANT_INVITE_BASE_URL: undefined } })).toThrow();
   });
 });

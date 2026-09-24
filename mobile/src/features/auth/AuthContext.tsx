@@ -15,7 +15,8 @@ export interface AuthUser {
 interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
-  register: typeof authApi.register;
+  register: (inviteCode: string, password: string) => Promise<ApiResult<authApi.RegisterResponse>>;
+  validateInviteCode: typeof authApi.validateInviteCode;
   verifyEmail: typeof authApi.verifyEmail;
   resendVerification: typeof authApi.resendVerification;
   signIn: (email: string, password: string, deviceLabel?: string) => Promise<ApiResult<authApi.LoginResponse>>;
@@ -69,6 +70,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
+  // Registration now claims the invite and issues real tokens in the same
+  // call (see authApi.register's own doc comment) — so a successful
+  // registration signs the applicant in immediately, exactly like signIn,
+  // with no separate email-verification or sign-in step in between.
+  const register = useCallback(async (inviteCode: string, password: string) => {
+    const result = await authApi.register(inviteCode, password);
+    if (result.ok) {
+      setAccessToken(result.data.accessToken);
+      await setStoredRefreshToken(result.data.refreshToken);
+      setUser({ email: result.data.email, role: result.data.role });
+      setStatus('signedIn');
+    }
+    return result;
+  }, []);
+
   const signOut = useCallback(async () => {
     // Best-effort server-side revocation — sign-out proceeds locally
     // regardless of whether the network call succeeds, since the whole point
@@ -101,14 +117,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       user,
-      register: authApi.register,
+      register,
+      validateInviteCode: authApi.validateInviteCode,
       verifyEmail: authApi.verifyEmail,
       resendVerification: authApi.resendVerification,
       signIn,
       signOut,
       signOutEverywhere,
     }),
-    [status, user, signIn, signOut, signOutEverywhere],
+    [status, user, register, signIn, signOut, signOutEverywhere],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

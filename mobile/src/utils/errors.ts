@@ -20,6 +20,7 @@ export type AppErrorCode =
   | 'conflict'
   | 'upload_invalid_type'
   | 'upload_too_large'
+  | 'rate_limited'
   | 'server_error'
   | 'unknown';
 
@@ -41,12 +42,13 @@ const GENERIC_MESSAGE: Record<AppErrorCode, string> = {
   auth_expired: 'Your session has expired. Please sign in again.',
   invalid_credentials: 'That email or password is incorrect.',
   email_not_verified: 'Please verify your email before signing in.',
-  invite_invalid: 'This invitation link is invalid or has expired. Contact your Paramount Care coordinator for a new one.',
+  invite_invalid: 'We couldn’t find that invitation code. Please check and try again, or contact your Paramount Care coordinator for a new one.',
   account_exists: 'An account with this email already exists. Try signing in instead.',
   verification_invalid: 'That code is incorrect or has expired.',
   conflict: 'This was updated elsewhere. Refreshing the latest version.',
   upload_invalid_type: 'That file type isn’t supported. Please attach a PDF, JPG, or PNG.',
   upload_too_large: 'That file is too large. Please attach a file under 10 MB.',
+  rate_limited: 'Too many attempts. Please wait a moment and try again.',
   server_error: 'Something went wrong on our end. Please try again shortly.',
   unknown: 'Something went wrong. Please try again.',
 };
@@ -79,7 +81,7 @@ export function networkFailureToAppError(err: unknown): AppError {
   return appError('network');
 }
 
-export type ErrorContext = 'register' | 'login' | 'verifyEmail' | 'resendVerification' | 'refresh' | 'authenticatedRequest' | 'upload' | 'generic';
+export type ErrorContext = 'register' | 'validateInviteCode' | 'login' | 'verifyEmail' | 'resendVerification' | 'refresh' | 'authenticatedRequest' | 'upload' | 'generic';
 
 interface BackendErrorBody {
   error?: string;
@@ -95,6 +97,13 @@ interface BackendErrorBody {
  * exact contracts this mirrors.
  */
 export function toAppError(status: number, body: BackendErrorBody | undefined, context: ErrorContext): AppError {
+  // Applies uniformly across every context — Cloudflare's edge rate limiter
+  // (see worker/src/routes/inviteValidation.ts's doc comment for the exact
+  // rule this maps to) returns a bare 429 with no JSON body to key off.
+  if (status === 429) {
+    return appError('rate_limited');
+  }
+
   if (status === 422) {
     return appError('validation', body?.issues);
   }
@@ -105,6 +114,10 @@ export function toAppError(status: number, body: BackendErrorBody | undefined, c
     if (context === 'verifyEmail') return appError('verification_invalid');
     if (context === 'refresh') return appError('auth_expired');
     return appError('auth_expired'); // authenticatedRequest / generic
+  }
+
+  if (status === 404 && context === 'validateInviteCode') {
+    return appError('invite_invalid');
   }
 
   if (status === 403 && body?.error === 'EMAIL_NOT_VERIFIED') {

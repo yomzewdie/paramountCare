@@ -33,9 +33,12 @@ export default defineWorkersConfig({
 						// reused) — same domain-separation reasoning as production, see
 						// worker/src/env.ts.
 						EMAIL_VERIFICATION_SECRET: 'test-only-email-verification-hmac-secret-not-for-production-use',
+						// Deliberately a different string from both secrets above — same
+						// domain-separation reasoning, see worker/src/env.ts and
+						// services/inviteCode.ts.
+						INVITE_CODE_SECRET: 'test-only-invite-code-hmac-secret-not-for-production-use',
 						RESEND_API_KEY: 'test-only-placeholder-resend-key',
 						ADMIN_NOTIFICATION_EMAIL: 'admin-notifications-test@example.com',
-						APPLICANT_INVITE_BASE_URL: 'http://localhost:3000/register',
 					},
 				},
 			},
