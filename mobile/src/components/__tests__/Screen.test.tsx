@@ -89,7 +89,7 @@ describe('Screen — scroll/tap/dismiss configuration (inherited by every screen
 });
 
 describe.each(['ios', 'android'] as const)('Screen — keyboard-safe layout (%s)', (os) => {
-  it('short form: the pinned footer is lifted above the keyboard by the measured overlap', () => {
+  it('short form: the container (scroll viewport) is padded by exactly the measured keyboard overlap', () => {
     stubKeyboard(os);
     stubContainerFrame(103, 715); // window bottom 818
     renderScreen(<Screen footer={<Button label="Continue" onPress={() => {}} />}><Text>short form</Text></Screen>);
@@ -105,7 +105,7 @@ describe.each(['ios', 'android'] as const)('Screen — keyboard-safe layout (%s)
     );
   });
 
-  it('padding is removed when the keyboard hides (footer returns to the bottom / tab-bar area)', () => {
+  it('padding is removed when the keyboard hides', () => {
     stubKeyboard(os);
     stubContainerFrame(103, 715);
     renderScreen(<Screen footer={<Button label="Continue" onPress={() => {}} />}><Text>form</Text></Screen>);
@@ -127,21 +127,6 @@ describe.each(['ios', 'android'] as const)('Screen — keyboard-safe layout (%s)
     );
   });
 
-  it('Continue works on the first tap while the keyboard is open (footer is outside the scroll view and untouched by keyboard handling)', () => {
-    stubKeyboard(os);
-    stubContainerFrame(103, 715);
-    const onContinue = jest.fn();
-    renderScreen(<Screen footer={<Button label="Continue" onPress={onContinue} />}><Text>form</Text></Screen>);
-    showKeyboard(os, 516, 336);
-
-    fireEvent.press(screen.getByText('Continue'));
-    expect(onContinue).toHaveBeenCalledTimes(1);
-
-    // Structural guarantee behind "first tap": the footer is NOT inside the
-    // ScrollView (whose default would swallow the first tap to dismiss).
-    const scroll = screen.UNSAFE_getByType(ScrollView);
-    expect(scroll.findAllByProps({ children: 'Continue' }).length).toBe(0);
-  });
 });
 
 describe('Screen — focused input is scrolled into view', () => {
@@ -219,5 +204,132 @@ describe('Screen — focused input is scrolled into view', () => {
 
     fireEvent(screen.getByPlaceholderText('n'), 'contentSizeChange', { nativeEvent: { contentSize: { width: 300, height: 48 } } });
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(['ios', 'android'] as const)('Screen — footer modes (%s)', (os) => {
+  const footer = (onContinue: () => void = () => {}) => (
+    <>
+      <Button label="Continue" onPress={onContinue} />
+      <Button label="Save Progress" variant="secondary" onPress={() => {}} />
+    </>
+  );
+
+  function setup(onContinue?: () => void, props: { scroll?: boolean } = {}) {
+    stubKeyboard(os);
+    stubContainerFrame(103, 715);
+    return renderScreen(
+      <Screen footer={footer(onContinue)} {...props}>
+        <Text>form</Text>
+      </Screen>,
+    );
+  }
+  const scrollNode = () => screen.UNSAFE_getByType(ScrollView);
+  const inlineIn = (node: ReturnType<typeof scrollNode>) => node.findAllByProps({ testID: 'screen-footer-inline' });
+
+  it('keyboard hidden: the footer is PINNED (outside the scroll view), not inline', () => {
+    setup();
+    expect(screen.getByTestId('screen-footer-pinned')).toBeTruthy();
+    expect(screen.queryByTestId('screen-footer-inline')).toBeNull();
+    expect(inlineIn(scrollNode())).toHaveLength(0);
+  });
+
+  it('keyboard visible: the footer is NOT pinned any more', () => {
+    setup();
+    showKeyboard(os, 516, 336);
+    expect(screen.queryByTestId('screen-footer-pinned')).toBeNull();
+  });
+
+  it('keyboard visible: the footer lives INSIDE the scrollable content, after the form', () => {
+    setup();
+    showKeyboard(os, 516, 336);
+    const inline = screen.getByTestId('screen-footer-inline');
+    expect(inlineIn(scrollNode()).length).toBeGreaterThan(0);
+    // ...at the END of the scroll content (after the form's own content)
+    const content = inline.parent!;
+    expect(content.children[content.children.length - 1]).toBe(inline);
+  });
+
+  it('never renders two copies of the footer, in either mode or across transitions', () => {
+    setup();
+    expect(screen.getAllByText('Continue')).toHaveLength(1);
+    showKeyboard(os, 516, 336);
+    expect(screen.getAllByText('Continue')).toHaveLength(1);
+    expect(screen.getAllByText('Save Progress')).toHaveLength(1);
+    act(() => listeners[os === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide']({ duration: 0 } as KeyboardEvent));
+    expect(screen.getAllByText('Continue')).toHaveLength(1);
+  });
+
+  it('keyboard closes: the footer returns to the pinned position automatically', () => {
+    setup();
+    showKeyboard(os, 516, 336);
+    expect(screen.queryByTestId('screen-footer-pinned')).toBeNull();
+    act(() => listeners[os === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide']({ duration: 0 } as KeyboardEvent));
+    expect(screen.getByTestId('screen-footer-pinned')).toBeTruthy();
+    expect(screen.queryByTestId('screen-footer-inline')).toBeNull();
+  });
+
+  it('the scroll viewport still gets the measured keyboard overlap (form uses the space above the keyboard) — and no footer height is added on top', () => {
+    setup();
+    showKeyboard(os, os === 'ios' ? 516 : 900, 336);
+    const expected = os === 'ios' ? 302 : 818 - (900 - 336 - 34);
+    expect(screen.getByTestId('screen-keyboard-container').props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ paddingBottom: expected })]),
+    );
+  });
+
+  it('Continue works on the FIRST tap while the keyboard is open (inline footer, keyboardShouldPersistTaps="handled")', () => {
+    const onContinue = jest.fn();
+    setup(onContinue);
+    showKeyboard(os, 516, 336);
+
+    expect(scrollNode().props.keyboardShouldPersistTaps).toBe('handled');
+    fireEvent.press(screen.getByText('Continue'));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('Continue also works on the first tap in the pinned (keyboard closed) mode', () => {
+    const onContinue = jest.fn();
+    setup(onContinue);
+    fireEvent.press(screen.getByText('Continue'));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-scrolling screen has nowhere to put an inline footer, so it stays pinned even with the keyboard open', () => {
+    setup(undefined, { scroll: false });
+    showKeyboard(os, 516, 336);
+    expect(screen.getByTestId('screen-footer-pinned')).toBeTruthy();
+    expect(screen.queryByTestId('screen-footer-inline')).toBeNull();
+  });
+
+  it('a screen with no footer renders neither footer element', () => {
+    stubKeyboard(os);
+    stubContainerFrame(103, 715);
+    renderScreen(<Screen><Text>form</Text></Screen>);
+    showKeyboard(os, 516, 336);
+    expect(screen.queryByTestId('screen-footer-pinned')).toBeNull();
+    expect(screen.queryByTestId('screen-footer-inline')).toBeNull();
+  });
+
+  it('a focused field is still scrolled into view when the footer switches to inline', async () => {
+    stubKeyboard(os);
+    stubContainerFrame(103, 715);
+    jest.spyOn(ScrollView.prototype as unknown as { getNativeScrollRef: () => unknown }, 'getNativeScrollRef').mockReturnValue({
+      measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(0, 103, 400, 500), // bigger viewport: no footer eating it
+    });
+    jest.spyOn(TextInput.State, 'currentlyFocusedInput').mockReturnValue({
+      measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(0, 640, 300, 48),
+    } as never);
+    const ref = createRef<ScrollView>();
+    renderScreen(
+      <Screen ref={ref as never} footer={footer()}>
+        <TextField label="Last field" />
+      </Screen>,
+    );
+    const scrollTo = spyScrollTo(ref);
+
+    showKeyboard(os, 516, 336);
+    // viewport bottom 603; input bottom 688 -> must sit MARGIN above 603
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ y: 688 - (603 - MARGIN), animated: true }));
   });
 });

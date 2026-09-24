@@ -8,15 +8,17 @@ import { computeScrollDelta } from './keyboard/keyboardMath';
 
 interface ScreenProps extends ViewProps {
   scroll?: boolean;
-  /** Rendered OUTSIDE the scrollable area, pinned to the bottom of the
-   * screen — for a screen's primary action(s) (StepActionBar, a lone
-   * Submit button). This is the app's deliberate shared design (the save-
-   * error banner and offline notice live in it, right next to the action).
-   * It is keyboard-safe because the pinned footer and the scroll area are
-   * siblings inside ONE container that this component pads by exactly the
-   * amount the keyboard covers it — so the footer is lifted above the
-   * keyboard and the scroll area shrinks to what is left, on every screen,
-   * with no per-screen code. */
+  /** A screen's primary action(s) (StepActionBar, a lone Submit button, the
+   * save-error banner and offline notice). Two modes, switched here for
+   * every screen with no per-screen code:
+   *  - keyboard CLOSED: pinned to the bottom, outside the scroll area (the
+   *    app's deliberate shared design — always reachable on a long form).
+   *  - keyboard OPEN: NOT pinned. It moves to the end of the scrollable
+   *    content, so the form gets essentially all of the space above the
+   *    keyboard (a pinned footer lifted above the keyboard was measured on
+   *    a real iPhone to take over half the screen together with the
+   *    keyboard) while Continue/Save remain reachable by scrolling.
+   * Exactly one copy is ever rendered. */
   footer?: ReactNode;
 }
 
@@ -27,6 +29,8 @@ interface ScreenProps extends ViewProps {
  * field on failed validation without duplicating this layout.
  *
  * Keyboard behavior (the single place it lives):
+ *  - The footer is pinned while the keyboard is closed and becomes part of
+ *    the scrollable content while it is open (see `footer`).
  *  - The keyboard's overlap is MEASURED in window coordinates
  *    (useKeyboardOverlap) rather than using KeyboardAvoidingView, which
  *    mixes a parent-relative frame with a window-relative keyboard position
@@ -52,6 +56,10 @@ export const Screen = forwardRef<ScrollView | View, ScreenProps>(function Screen
   const { overlap, keyboardVisible } = useKeyboardOverlap(containerRef, insets.bottom);
   const keyboardVisibleRef = useRef(keyboardVisible);
   keyboardVisibleRef.current = keyboardVisible;
+
+  // Footer mode: pinned unless the keyboard is up AND there is a scroll
+  // area to hold it (a non-scrolling screen has nowhere to put it inline).
+  const footerInline = !!footer && scroll && keyboardVisible;
 
   const setContentRef = useCallback(
     (node: ScrollView | View | null) => {
@@ -118,9 +126,20 @@ export const Screen = forwardRef<ScrollView | View, ScreenProps>(function Screen
         <View ref={containerRef} testID="screen-keyboard-container" style={[styles.flex, { paddingBottom: overlap }]}>
           <Content ref={setContentRef as never} {...scrollProps} {...rest} onLayout={handleContentLayout} style={[!scroll && scrollProps.style, style]}>
             {children}
+            {footerInline ? (
+              <View
+                testID="screen-footer-inline"
+                style={{ marginTop: theme.spacing.lg, paddingTop: theme.spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border }}
+              >
+                {footer}
+              </View>
+            ) : null}
           </Content>
-          {footer ? (
-            <View style={[styles.footer, { backgroundColor: theme.colors.background, borderTopColor: theme.colors.border, padding: theme.spacing.lg }]}>
+          {footer && !footerInline ? (
+            <View
+              testID="screen-footer-pinned"
+              style={[styles.footer, { backgroundColor: theme.colors.background, borderTopColor: theme.colors.border, padding: theme.spacing.lg }]}
+            >
               {footer}
             </View>
           ) : null}
