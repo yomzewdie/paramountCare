@@ -1,5 +1,18 @@
 // Display-safety helpers for the admin application-detail page.
 
+import {
+  CLINICAL_UNIT_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  LEGACY_EMPLOYMENT_TYPE_LABELS,
+  LEGACY_SHIFT_PREFERENCE_LABELS,
+  POSITION_OPTIONS,
+  POSITION_WITHOUT_UNIT_PREFERENCE,
+  SHIFT_PREFERENCE_OPTIONS,
+  formatOptionValues,
+  formatPrimarySpecialty,
+  isoDateToDisplay,
+} from '@pcs/shared';
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso.includes('T') || iso.endsWith('Z') ? iso : iso.replace(' ', 'T') + 'Z');
@@ -57,4 +70,58 @@ export function flattenForDisplay(obj: Record<string, unknown> | undefined | nul
     }
   }
   return rows;
+}
+
+// ── Employment application (curated) ─────────────────────────────────────────
+//
+// Fixed-choice fields are stored as codes ('per_diem_assignment', ['icu',
+// 'l_and_d']) — rendered here with the shared option labels, never as raw
+// codes or keys. Submissions made before the UAT field changes hold the old
+// shapes (free text, single strings, legacy codes) and are rendered as-is via
+// the same helpers; they are never rewritten.
+
+const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app: Record<string, unknown>) => string }[] = [
+  { key: 'positionApplied', label: 'Position Applied For', format: (a) => formatOptionValues(a.positionApplied, POSITION_OPTIONS) },
+  {
+    key: 'specialtyPreference',
+    label: 'Unit Preferences',
+    format: (a) => {
+      const units = formatOptionValues(a.specialtyPreference, CLINICAL_UNIT_OPTIONS);
+      if (units) return units;
+      return a.positionApplied === POSITION_WITHOUT_UNIT_PREFERENCE ? 'Not asked (CNA)' : '';
+    },
+  },
+  { key: 'employmentType', label: 'Employment Type', format: (a) => formatOptionValues(a.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) },
+  { key: 'shiftPreference', label: 'Shift Preferences', format: (a) => formatOptionValues(a.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) },
+  { key: 'availableStartDate', label: 'Available Start Date', format: (a) => (typeof a.availableStartDate === 'string' ? isoDateToDisplay(a.availableStartDate) : '') },
+  { key: 'licenseType', label: 'License Type', format: (a) => displayValue('licenseType', a.licenseType) },
+  { key: 'licenseNumber', label: 'License Number', format: (a) => displayValue('licenseNumber', a.licenseNumber) },
+  { key: 'licenseState', label: 'License State', format: (a) => displayValue('licenseState', a.licenseState) },
+  { key: 'licenseExpiration', label: 'License Expiration Date', format: (a) => (typeof a.licenseExpiration === 'string' ? isoDateToDisplay(a.licenseExpiration) : '') },
+  { key: 'primarySpecialty', label: 'Primary Clinical Specialty', format: (a) => formatPrimarySpecialty(a.primarySpecialty, a.primarySpecialtyOther) },
+];
+
+/** Rendered by its owning row (Primary Clinical Specialty), never on its own. */
+const EMPLOYMENT_APPLICATION_CONSUMED_KEYS = new Set(['primarySpecialtyOther']);
+
+/** Curated rows for the employment application: known fields first, with
+ * human labels and values; any other field falls back to the generic rows. */
+export function employmentApplicationRows(app: Record<string, unknown> | undefined | null): [string, string][] {
+  if (!app) return [];
+  const known = new Set(EMPLOYMENT_APPLICATION_FIELDS.map((f) => f.key));
+  const curated = EMPLOYMENT_APPLICATION_FIELDS.map(({ label, format }): [string, string] => [label, format(app) || '—']);
+  const rest = Object.fromEntries(
+    Object.entries(app).filter(([k]) => !known.has(k) && !EMPLOYMENT_APPLICATION_CONSUMED_KEYS.has(k)),
+  );
+  return [...curated, ...flattenForDisplay(rest)];
+}
+
+/** Employment reference rows. `reasonForLeaving` is no longer collected
+ * (replaced by Supervisor Title) — a historical value is still shown, an
+ * empty leftover key is not. */
+export function employmentReferenceRows(ref: Record<string, unknown> | undefined | null): [string, string][] {
+  if (!ref) return [];
+  const { reasonForLeaving, ...rest } = ref;
+  const hasReason = typeof reasonForLeaving === 'string' && reasonForLeaving.trim().length > 0;
+  return flattenForDisplay(hasReason ? { ...rest, reasonForLeaving } : rest);
 }

@@ -11,9 +11,9 @@ import { computeOverallCompletion, computeStepCompletion, defaultFormData, getPa
 
 const VALID_APPLICATION = {
   ...defaultFormData.employmentApplication,
-  positionApplied: 'RN', specialtyPreference: 'Med-Surg', shiftPreference: 'day', employmentType: 'full_time',
+  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
   licenseType: 'RN', licenseNumber: 'RN123', licenseState: 'CA', licenseExpiration: '2027-01-01',
-  yearsExperience: '3-5', primarySpecialty: 'Med-Surg',
+  yearsExperience: '3-5', primarySpecialty: 'med_surg',
   authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
   emergencyContactName: 'Jane Smith', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',
 };
@@ -21,8 +21,8 @@ const VALID_APPLICATION = {
 const VALID_REFERENCE = {
   positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
   employerName: 'Test Hospital', employerCity: 'Test City', employerState: 'CA',
-  supervisorName: 'Test Supervisor', supervisorPhone: '555-000-1111',
-  permissionGranted: true, reasonForLeaving: 'Contract ended', eligibleForRehire: true,
+  supervisorName: 'Test Supervisor', supervisorPhone: '555-000-1111', supervisorTitle: 'Charge RN',
+  permissionGranted: true, eligibleForRehire: true,
   rehireDetails: '', comments: '',
 };
 

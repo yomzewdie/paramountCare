@@ -9,7 +9,7 @@
  * anything about a specific document.
  */
 export interface DocumentRequirement {
-  /** Shown in capture UI copy — e.g. "Voided Check". */
+  /** Shown in capture UI copy — e.g. "Bank Document". */
   label: string;
   /** The native full-frame document scanner (VisionKit/ML Kit) — the
    * primary capture path when true. */
@@ -36,12 +36,15 @@ const SERVER_MAX_SIZE_BYTES = 10 * 1024 * 1024;
 const SERVER_ALLOWED_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 
 /** Source: Paramount's Direct Deposit Authorization form ("Attach a
- * voided check with this agreement"). A voided check is a small, simple,
- * high-contrast document — the resolution floor here is generous, not a
- * tight fit, since the real constraint is legibility of printed routing/
- * account numbers, not a specific paper size. */
+ * voided check with this agreement"), broadened by UAT feedback to any bank
+ * document or banking-app screenshot showing the routing and account
+ * numbers (the intent is verifying the account). Same capture paths, file
+ * types, and size ceiling as before. The resolution floor here is generous,
+ * not a tight fit — the real constraint is legibility of the routing/
+ * account numbers, not a specific paper size (a phone screenshot clears it
+ * easily). */
 export const VOIDED_CHECK_REQUIREMENT: DocumentRequirement = {
-  label: 'Voided Check',
+  label: 'Bank Document',
   scannerAllowed: true,
   cameraAllowed: true,
   existingPhotoAllowed: true,

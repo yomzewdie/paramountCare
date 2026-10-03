@@ -34,16 +34,16 @@ function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse 
 
 const VALID_APPLICATION = {
   ...defaultFormData.employmentApplication,
-  positionApplied: 'RN — Med/Surg',
-  specialtyPreference: 'Med-Surg',
-  shiftPreference: 'day',
-  employmentType: 'full_time',
+  positionApplied: 'RN',
+  specialtyPreference: ['med_surg'],
+  shiftPreference: ['am'],
+  employmentType: 'per_diem_assignment',
   licenseType: 'RN',
   licenseNumber: 'RN123456',
   licenseState: 'CA',
   licenseExpiration: '2027-01-01',
   yearsExperience: '3-5',
-  primarySpecialty: 'Med-Surg',
+  primarySpecialty: 'med_surg',
   authorizedToWork: true,
   hasConviction: false,
   hasLicenseDiscipline: false,
@@ -303,5 +303,146 @@ describe('useEmploymentApplicationForm — server validation rejection (defense-
 
     expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
     expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
+  });
+});
+
+describe('useEmploymentApplicationForm — UAT feedback fields', () => {
+  function savedOk() {
+    return jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult);
+  }
+
+  it.each(['CNA', 'LVN', 'RN', 'NP'])('completes with position %s', async (position) => {
+    const saveStep = setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: position } } }), savedOk());
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
+  });
+
+  it('toggleSelection adds and removes units and shifts, stored as arrays', () => {
+    setupSession(fakeSession({ formData: {} }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.toggleSelection('specialtyPreference', 'icu'));
+    act(() => result.current.toggleSelection('specialtyPreference', 'er'));
+    act(() => result.current.toggleSelection('specialtyPreference', 'icu'));
+    expect(result.current.data.specialtyPreference).toEqual(['er']);
+    act(() => result.current.toggleSelection('shiftPreference', 'am'));
+    act(() => result.current.toggleSelection('shiftPreference', 'mid'));
+    act(() => result.current.toggleSelection('shiftPreference', 'pm'));
+    expect(result.current.data.shiftPreference).toEqual(['am', 'mid', 'pm']);
+    expect(result.current.isDirty).toBe(true);
+  });
+
+  it('RN → CNA: hidden unit selections are preserved but never block completion', async () => {
+    const saveStep = setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, specialtyPreference: ['icu', 'er'] } } }), savedOk());
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+
+    act(() => result.current.setField('positionApplied', 'CNA'));
+    expect(result.current.data.specialtyPreference).toEqual(['icu', 'er']);
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(result.current.errors.specialtyPreference).toBeUndefined();
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
+  });
+
+  it('CNA with no units completes; CNA → RN restores prior selections or requires one', async () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: 'CNA', specialtyPreference: [] } } }), savedOk());
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+
+    act(() => result.current.setField('positionApplied', 'RN'));
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(result.current.errors.specialtyPreference).toBe('Select at least one unit preference');
+
+    act(() => result.current.toggleSelection('specialtyPreference', 'pacu'));
+    expect(result.current.errors.specialtyPreference).toBeUndefined();
+  });
+
+  it('CNA → RN restores the selections made before switching', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, specialtyPreference: ['gi_lab'] } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.setField('positionApplied', 'CNA'));
+    act(() => result.current.setField('positionApplied', 'NP'));
+    expect(result.current.data.specialtyPreference).toEqual(['gi_lab']);
+    expect(result.current.errors.specialtyPreference).toBeUndefined();
+  });
+
+  it('requires at least one shift preference', async () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, shiftPreference: [] } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    await act(async () => { await result.current.complete(); });
+    expect(result.current.errors.shiftPreference).toBe('Select at least one shift preference');
+  });
+
+  it('license expiration is typed as MM-DD-YYYY and stored as YYYY-MM-DD', () => {
+    setupSession(fakeSession({ formData: {} }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+
+    act(() => result.current.setLicenseExpirationInput('0315'));
+    expect(result.current.licenseExpirationDisplay).toBe('03-15');
+    act(() => result.current.setLicenseExpirationInput('03152028'));
+    expect(result.current.data.licenseExpiration).toBe('2028-03-15');
+    expect(result.current.licenseExpirationDisplay).toBe('03-15-2028');
+  });
+
+  it('an impossible license expiration date is rejected and kept as typed', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: VALID_APPLICATION } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.setLicenseExpirationInput('02-30-2028'));
+    act(() => result.current.blurField('licenseExpiration'));
+    expect(result.current.data.licenseExpiration).toBe('02-30-2028');
+    expect(result.current.errors.licenseExpiration).toBe('Enter a valid date (MM-DD-YYYY)');
+  });
+
+  it('Primary specialty "Other" requires text; switching away removes the requirement but keeps the text', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: VALID_APPLICATION } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+
+    act(() => result.current.setField('primarySpecialty', 'other'));
+    act(() => result.current.blurField('primarySpecialtyOther'));
+    expect(result.current.errors.primarySpecialtyOther).toBe('Please specify your primary specialty');
+
+    act(() => result.current.setField('primarySpecialtyOther', 'Pediatrics'));
+    expect(result.current.errors.primarySpecialtyOther).toBeUndefined();
+
+    act(() => result.current.setField('primarySpecialtyOther', ''));
+    act(() => result.current.setField('primarySpecialty', 'icu'));
+    expect(result.current.errors.primarySpecialtyOther).toBeUndefined();
+    expect(result.current.errors.primarySpecialty).toBeUndefined();
+
+    act(() => result.current.setField('primarySpecialtyOther', 'Pediatrics'));
+    act(() => result.current.setField('primarySpecialty', 'other'));
+    expect(result.current.data.primarySpecialtyOther).toBe('Pediatrics'); // restored on switching back
+  });
+
+  it('loads a pre-UAT session safely: string unit/shift become arrays, free-text specialty becomes Other', () => {
+    setupSession(fakeSession({
+      formData: {
+        employmentApplication: {
+          ...VALID_APPLICATION,
+          specialtyPreference: 'ICU, Med/Surg, Pediatrics', shiftPreference: 'day',
+          employmentType: 'full_time', primarySpecialty: 'Critical Care',
+        },
+      },
+    }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    expect(result.current.data.specialtyPreference).toEqual(['icu', 'med_surg']);
+    expect(result.current.data.shiftPreference).toEqual([]);
+    expect(result.current.data.employmentType).toBe('full_time');
+    expect(result.current.data.primarySpecialty).toBe('other');
+    expect(result.current.data.primarySpecialtyOther).toBe('Critical Care');
+
+    act(() => result.current.blurField('employmentType'));
+    expect(result.current.errors.employmentType).toBe('Select Per-Diem Assignment or Travel Assignment');
+  });
+
+  it('drops multi-select values that are not current options on load (they could never be deselected)', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, specialtyPreference: ['icu', 'retired_unit'], shiftPreference: ['am', 'swing'] } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    expect(result.current.data.specialtyPreference).toEqual(['icu']);
+    expect(result.current.data.shiftPreference).toEqual(['am']);
   });
 });

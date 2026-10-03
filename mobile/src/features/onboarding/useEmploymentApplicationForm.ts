@@ -1,5 +1,15 @@
 import { useMemo, useState } from 'react';
-import { defaultFormData, validateEmploymentApplication, type EmploymentApplicationData, type FieldErrors } from '@pcs/shared';
+import {
+  defaultFormData,
+  displayDateToIso,
+  dropUnknownSelections,
+  isoDateToDisplay,
+  maskDisplayDateInput,
+  normalizeEmploymentApplication,
+  validateEmploymentApplication,
+  type EmploymentApplicationData,
+  type FieldErrors,
+} from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
@@ -14,9 +24,17 @@ export type SubmitOutcome =
   | { kind: 'invalid' }
   | { kind: 'error'; message: string };
 
+/** Multi-select fields in this form. */
+export type MultiSelectKey = 'specialtyPreference' | 'shiftPreference';
+
+/** Reads this step's stored data through the shared normalizer, so a
+ * session saved before the UAT changes (string unit/shift preferences,
+ * free-text primary specialty, missing new keys) loads safely. Selections
+ * that aren't current options are dropped here only because the applicant
+ * could never see or deselect them; validation still rejects them if they
+ * ever reach the Worker another way. */
 function readStored(formData: Record<string, unknown> | undefined): EmploymentApplicationData {
-  const stored = (formData?.[FORM_DATA_KEY] ?? {}) as Partial<EmploymentApplicationData>;
-  return { ...defaultFormData.employmentApplication, ...stored };
+  return dropUnknownSelections(normalizeEmploymentApplication(formData?.[FORM_DATA_KEY]));
 }
 
 /**
@@ -57,6 +75,28 @@ export function useEmploymentApplicationForm() {
   function setField<K extends keyof EmploymentApplicationData>(field: K, value: EmploymentApplicationData[K]): void {
     setData((d) => ({ ...d, [field]: value }));
     setIsDirty(true);
+  }
+
+  /** Adds or removes one option from a multi-select field. Switching the
+   * position to CNA hides the unit preference but deliberately keeps its
+   * selections (restored if the applicant switches back); they're ignored
+   * by validation and dropped from the final submitted application. */
+  function toggleSelection(field: MultiSelectKey, value: string): void {
+    setData((d) => {
+      const current = d[field];
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+      return { ...d, [field]: next };
+    });
+    setIsDirty(true);
+  }
+
+  /** License expiration is typed as MM-DD-YYYY but stored canonically as
+   * YYYY-MM-DD. A complete, real date is stored in canonical form; anything
+   * else (partially typed, or impossible like 02-30-2027) is kept as typed
+   * so validation can say exactly what's wrong. */
+  function setLicenseExpirationInput(text: string): void {
+    const masked = maskDisplayDateInput(text);
+    setField('licenseExpiration', displayDateToIso(masked) ?? masked);
   }
 
   function blurField(field: keyof EmploymentApplicationData): void {
@@ -133,6 +173,10 @@ export function useEmploymentApplicationForm() {
   return {
     data,
     setField,
+    toggleSelection,
+    setLicenseExpirationInput,
+    /** Applicant-facing MM-DD-YYYY form of the stored license expiration. */
+    licenseExpirationDisplay: isoDateToDisplay(data.licenseExpiration),
     blurField,
     errors: shownErrors,
     isDirty,

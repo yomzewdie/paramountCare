@@ -9,8 +9,13 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useSession } from './SessionContext';
 import { useReviewSubmission } from './useReviewSubmission';
+import {
+  CLINICAL_UNIT_OPTIONS, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
+  POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS,
+  finalizeEmploymentApplication, formatOptionValues, formatPrimarySpecialty, isoDateToDisplay, requiresUnitPreference,
+} from '@pcs/shared';
 import type {
-  PersonalInfo, EmploymentApplicationData, EmploymentReference, AcknowledgementEntry,
+  PersonalInfo, EmploymentReference, AcknowledgementEntry,
   W4Data, I9Data, SafetyEducationData, UploadedDocuments,
 } from '@pcs/shared';
 
@@ -38,8 +43,6 @@ const VACCINE_STEPS = [
   { stepId: 'flu_declination', name: 'Influenza / H1N1' },
 ];
 
-const SHIFT_LABELS: Record<string, string> = { day: 'Day (7a–7p)', evening: 'Evening (3p–11p)', night: 'Night (7p–7a)', any: 'Open to any' };
-const EMP_TYPE_LABELS: Record<string, string> = { full_time: 'Full-Time', part_time: 'Part-Time', per_diem: 'Per Diem' };
 const FILING_STATUS_LABELS: Record<string, string> = {
   single_mfs: 'Single or Married filing separately',
   mfj_qss: 'Married filing jointly or Qualifying surviving spouse',
@@ -143,7 +146,9 @@ export default function ReviewScreen() {
 
   const formData = session.formData;
   const personalInfo = (formData.personalInfo ?? {}) as Partial<PersonalInfo>;
-  const employmentApplication = (formData.employmentApplication ?? {}) as Partial<EmploymentApplicationData>;
+  // The applicant's final answers — e.g. no hidden unit selections for a CNA
+  // — exactly as the Worker will record them on submission.
+  const employmentApplication = finalizeEmploymentApplication(formData.employmentApplication);
   const employmentReferences = (formData.employmentReferences ?? {}) as Record<string, Partial<EmploymentReference> | undefined>;
   const acknowledgements = (formData.acknowledgements ?? {}) as Record<string, Partial<AcknowledgementEntry> | undefined>;
   const w4Data = (formData.w4Data ?? {}) as Partial<W4Data>;
@@ -151,8 +156,10 @@ export default function ReviewScreen() {
   const safetyEducation = (formData.safetyEducation ?? {}) as Partial<SafetyEducationData>;
   const uploadedDocuments = (formData.uploadedDocuments ?? {}) as Partial<UploadedDocuments>;
 
+  // A step stored as 'completed' under older rules shows "Needs attention"
+  // here, matching what Submit will accept (see steps.ts effectiveStepStates).
   function stepInfo(stepId: string) {
-    const step = progress!.steps.find((s) => s.id === stepId);
+    const step = review.steps.find((s) => s.id === stepId);
     return { completed: step?.completed ?? false, required: step?.required ?? true, exists: !!step };
   }
 
@@ -257,11 +264,15 @@ export default function ReviewScreen() {
       </SectionCard>
 
       <SectionCard title="Employment Application" {...stepInfo('employment_application')} stepId="employment_application" onEdit={onEdit}>
-        <FieldRow label="Position Applied For" value={employmentApplication.positionApplied} />
-        <FieldRow label="Specialty / Unit" value={employmentApplication.specialtyPreference} />
-        <FieldRow label="Employment Type" value={employmentApplication.employmentType ? (EMP_TYPE_LABELS[employmentApplication.employmentType] ?? employmentApplication.employmentType) : null} />
-        <FieldRow label="Shift Preference" value={employmentApplication.shiftPreference ? (SHIFT_LABELS[employmentApplication.shiftPreference] ?? employmentApplication.shiftPreference) : null} />
+        <FieldRow label="Position Applied For" value={formatOptionValues(employmentApplication.positionApplied, POSITION_OPTIONS)} />
+        {requiresUnitPreference(employmentApplication.positionApplied) ? (
+          <FieldRow label="Specialty / Unit Preference" value={formatOptionValues(employmentApplication.specialtyPreference, CLINICAL_UNIT_OPTIONS)} />
+        ) : null}
+        <FieldRow label="Employment Type" value={formatOptionValues(employmentApplication.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS)} />
+        <FieldRow label="Shift Preference" value={formatOptionValues(employmentApplication.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS)} />
         <FieldRow label="License" value={[employmentApplication.licenseType, employmentApplication.licenseNumber, employmentApplication.licenseState].filter(Boolean).join(' · ')} />
+        <FieldRow label="License Expiration" value={isoDateToDisplay(employmentApplication.licenseExpiration)} />
+        <FieldRow label="Primary Clinical Specialty" value={formatPrimarySpecialty(employmentApplication.primarySpecialty, employmentApplication.primarySpecialtyOther)} />
         <FieldRow label="Years of Experience" value={employmentApplication.yearsExperience} />
       </SectionCard>
 
@@ -273,7 +284,7 @@ export default function ReviewScreen() {
           <SectionCard key={refId} title={`Employment Reference #${refId.slice(-1)}`} {...info} stepId={refId} onEdit={onEdit}>
             <FieldRow label="Employer" value={ref?.employerName} />
             <FieldRow label="Position Held" value={ref?.positionHeld} />
-            <FieldRow label="Supervisor" value={ref?.supervisorName} />
+            <FieldRow label="Supervisor" value={[ref?.supervisorName, ref?.supervisorTitle].filter(Boolean).join(', ')} />
             <FieldRow label="Dates" value={ref?.employmentDateFrom && ref?.employmentDateTo ? `${ref.employmentDateFrom} – ${ref.employmentDateTo}` : null} />
           </SectionCard>
         );
@@ -324,7 +335,7 @@ export default function ReviewScreen() {
 
       <SectionCard title="Direct Deposit" {...directDepositInfo} stepId="direct_deposit" onEdit={onEdit}>
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted }]}>
-          {directDepositInfo.completed ? 'Bank information and voided check on file.' : 'Bank information not yet completed.'}
+          {directDepositInfo.completed ? 'Bank information and account verification on file.' : 'Bank information not yet completed.'}
         </Text>
       </SectionCard>
 

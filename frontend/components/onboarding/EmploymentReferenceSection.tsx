@@ -158,6 +158,14 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
               error={errors.supervisorName}
             />
             <Input
+              label="Supervisor's Title"
+              required
+              placeholder="e.g. Charge RN, Nurse Manager, DON"
+              value={data.supervisorTitle}
+              onChange={update('supervisorTitle')}
+              error={errors.supervisorTitle}
+            />
+            <Input
               label="Supervisor's Phone"
               required
               type="tel"
@@ -169,15 +177,6 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
           </div>
 
           <div className="mt-5 pt-5 border-t border-slate-100 space-y-5">
-            <Textarea
-              label="Reason for Leaving"
-              required
-              placeholder="e.g. Contract ended, relocated, seeking new opportunities…"
-              value={data.reasonForLeaving}
-              onChange={update('reasonForLeaving')}
-              error={errors.reasonForLeaving}
-            />
-
             <div className="space-y-3">
               <YesNoField
                 label="Were you eligible for rehire at this employer?"

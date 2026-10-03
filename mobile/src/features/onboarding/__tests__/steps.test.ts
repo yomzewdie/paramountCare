@@ -1,5 +1,5 @@
-import { deriveProgress } from '../steps';
-import { getPacket } from '@pcs/shared';
+import { defaultFormData, getPacket, type StepStates } from '@pcs/shared';
+import { deriveProgress, effectiveStepStates } from '../steps';
 
 describe('deriveProgress', () => {
   it('returns null for an unknown packetId rather than throwing', () => {
@@ -138,5 +138,44 @@ describe('deriveProgress', () => {
       expect(byId.employment_ref_3).toBe(false);
       expect(byId.background_auth).toBe(true);
     });
+  });
+});
+
+describe('deriveProgress — current-rule completion (formData given)', () => {
+  const states: StepStates = { personal_info: 'completed', employment_ref_1: 'completed' };
+  const VALID_PERSONAL_INFO = {
+    ...defaultFormData.personalInfo,
+    firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com', phone: '555-123-4567',
+    address: '123 Main St', city: 'Los Angeles', state: 'CA', zip: '90001',
+  };
+  const LEGACY_REFERENCE = {
+    positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
+    employerName: 'Hospital', employerCity: 'LA', employerState: 'CA',
+    supervisorName: 'Pat', supervisorPhone: '555-000-1111', reasonForLeaving: 'Relocation',
+    permissionGranted: true, eligibleForRehire: true, rehireDetails: '', comments: '',
+  };
+  const formData = { personalInfo: VALID_PERSONAL_INFO, employmentReferences: { employment_ref_1: LEGACY_REFERENCE } };
+
+  it('shows a stored-completed step that fails the current rules as not completed (in progress)', () => {
+    const progress = deriveProgress('general_rn', states, formData)!;
+    expect(progress.steps.find((s) => s.id === 'personal_info')!.completed).toBe(true);
+    expect(progress.steps.find((s) => s.id === 'employment_ref_1')!.completed).toBe(false);
+  });
+
+  it('without formData, stored statuses are trusted as before', () => {
+    expect(deriveProgress('general_rn', states)!.steps.find((s) => s.id === 'employment_ref_1')!.completed).toBe(true);
+  });
+
+  it('effectiveStepStates never mutates its inputs', () => {
+    const packet = getPacket('general_rn')!;
+    const statesCopy = JSON.stringify(states);
+    const formCopy = JSON.stringify(formData);
+    expect(effectiveStepStates(packet, states, formData)).toMatchObject({ personal_info: 'completed', employment_ref_1: 'in_progress' });
+    expect(JSON.stringify(states)).toBe(statesCopy);
+    expect(JSON.stringify(formData)).toBe(formCopy);
+  });
+
+  it('an unknown packet still returns null (no packet definition to validate against)', () => {
+    expect(deriveProgress('not_a_real_packet', states, formData)).toBeNull();
   });
 });

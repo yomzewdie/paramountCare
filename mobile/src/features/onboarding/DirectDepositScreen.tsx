@@ -41,15 +41,15 @@ function formatBytes(bytes: number): string {
 // for the same reason), so this tracks per-SECTION offsets rather than
 // per-field — still lands the applicant next to the actual problem, just
 // not on the exact input the way the plain-TextField screens can.
-type SectionKey = 'employee' | 'primary' | 'additional' | 'voidedCheck' | 'signature';
-const SECTION_ORDER: SectionKey[] = ['employee', 'primary', 'additional', 'voidedCheck', 'signature'];
+type SectionKey = 'employee' | 'primary' | 'additional' | 'bankVerification' | 'signature';
+const SECTION_ORDER: SectionKey[] = ['employee', 'primary', 'additional', 'bankVerification', 'signature'];
 const ERROR_KEY_TO_SECTION: Record<string, SectionKey> = {
   lastName: 'employee', firstName: 'employee',
   primaryBankName: 'primary', primaryAccountType: 'primary', primaryRoutingNumber: 'primary',
   primaryAccountNumber: 'primary', primaryDepositType: 'primary', primaryDepositAmount: 'primary',
   additionalBankName: 'additional', additionalAccountType: 'additional', additionalRoutingNumber: 'additional',
   additionalAccountNumber: 'additional', additionalDepositType: 'additional', additionalDepositAmount: 'additional',
-  directDepositProofDocument: 'voidedCheck',
+  directDepositProofDocument: 'bankVerification',
   typedSignature: 'signature', signedDate: 'signature',
 };
 
@@ -233,10 +233,13 @@ export default function DirectDepositScreen() {
       </FormSection>
       </View>
 
-      <View onLayout={(e) => setSectionOffset('voidedCheck', e)}>
-      <FormSection title="Voided Check">
+      <View onLayout={(e) => setSectionOffset('bankVerification', e)}>
+      <FormSection title="Bank Account Verification">
         <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>
-          Attach a voided check for this agreement. Deposit slips are not accepted. The information on the check should match what you entered above.
+          Upload a voided check or another document that clearly shows the bank routing number and account number. A screenshot from your banking app is acceptable. Deposit slips are not accepted. The information should match what you entered above.
+        </Text>
+        <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
+          Please crop or redact unrelated balances, transactions, or other financial information before uploading.
         </Text>
 
         {capture.permissionError ? (
@@ -264,7 +267,7 @@ export default function DirectDepositScreen() {
               </Text>
             ) : (
               <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-                Make sure the entire check is visible and easy to read before continuing.
+                Make sure the routing and account numbers are visible and easy to read before continuing.
               </Text>
             )}
 

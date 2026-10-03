@@ -1,5 +1,8 @@
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { SessionProvider, useSession } from '../SessionContext';
+import * as SessionContextModule from '../SessionContext';
+import { useReviewSubmission } from '../useReviewSubmission';
+import { defaultEmploymentReference, defaultFormData } from '@pcs/shared';
 import { createSessionEnsurer } from '../ensureSession';
 import * as sessionApi from '../sessionApi';
 import { appError } from '../../../utils/errors';
@@ -48,6 +51,12 @@ function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse 
   };
 }
 
+const VALID_PERSONAL_INFO = {
+  firstName: 'Jane', lastName: 'Doe', middleInitial: '', otherLastNames: '',
+  email: 'jane@example.com', phone: '555-123-4567',
+  address: '123 Main St', aptNumber: '', city: 'Los Angeles', state: 'CA', zip: '90001',
+};
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return <SessionProvider>{children}</SessionProvider>;
 }
@@ -56,7 +65,9 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('SessionContext', () => {
   it('starts loading, then becomes ready with the session and derived progress', async () => {
-    const session = fakeSession();
+    // A 'completed' step must carry data that passes the current rules to
+    // be shown as completed (steps.ts effectiveStepStates).
+    const session = fakeSession({ formData: { personalInfo: VALID_PERSONAL_INFO } });
     mockEnsure.mockResolvedValue({ ok: true, session });
 
     const { result } = renderHook(() => useSession(), { wrapper });
@@ -375,5 +386,88 @@ describe('SessionContext', () => {
       expect(outcome).toEqual({ status: 'error', error: appError('server_error') });
       expect(result.current.session).toEqual(initial);
     });
+  });
+});
+
+// UAT follow-up: Home's progress (this context's `progress`) must agree with
+// Review and with final submission for steps completed under older rules.
+describe('SessionContext — progress uses the current rules (Home)', () => {
+  const VALID_APPLICATION = {
+    ...defaultFormData.employmentApplication,
+    positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
+    licenseType: 'RN', licenseNumber: 'RN1', licenseState: 'CA', licenseExpiration: '2028-03-15',
+    yearsExperience: '3-5', primarySpecialty: 'icu',
+    authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
+    emergencyContactName: 'Jane', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',
+  };
+  const LEGACY_APPLICATION = {
+    ...VALID_APPLICATION,
+    positionApplied: 'RN — Med/Surg', specialtyPreference: 'Med-Surg', shiftPreference: 'day', employmentType: 'full_time',
+  };
+  const VALID_REFERENCE = {
+    ...defaultEmploymentReference,
+    positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
+    employerName: 'Hospital', employerCity: 'LA', employerState: 'CA',
+    supervisorName: 'Pat', supervisorPhone: '555-000-1111', supervisorTitle: 'Nurse Manager',
+    permissionGranted: true, eligibleForRehire: true,
+  };
+  const { supervisorTitle: _omit, ...referenceWithoutTitle } = VALID_REFERENCE;
+  const LEGACY_REFERENCE = { ...referenceWithoutTitle, reasonForLeaving: 'Relocation' };
+  const STEP_STATES = { personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed' };
+
+  async function loadProgress(formData: Record<string, unknown>) {
+    const session = fakeSession({ stepStates: STEP_STATES, formData: { personalInfo: VALID_PERSONAL_INFO, ...formData } });
+    const before = JSON.stringify(session);
+    mockEnsure.mockResolvedValue({ ok: true, session });
+    const { result } = renderHook(() => useSession(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    const completed = (id: string) => result.current.progress!.steps.find((s) => s.id === id)!.completed;
+    return { result, session, before, completed };
+  }
+
+  it('a legacy Employment Application stored as completed is NOT complete on Home, and becomes the next step', async () => {
+    const { result, completed } = await loadProgress({ employmentApplication: LEGACY_APPLICATION, employmentReferences: { employment_ref_1: VALID_REFERENCE } });
+    expect(completed('employment_application')).toBe(false);
+    expect(completed('employment_ref_1')).toBe(true);
+    expect(result.current.progress!.nextStep?.id).toBe('employment_application');
+    expect(result.current.progress!.isComplete).toBe(false);
+  });
+
+  it('a legacy Employment Reference without supervisorTitle stored as completed is NOT complete on Home', async () => {
+    const { completed } = await loadProgress({ employmentApplication: VALID_APPLICATION, employmentReferences: { employment_ref_1: LEGACY_REFERENCE } });
+    expect(completed('employment_ref_1')).toBe(false);
+    expect(completed('employment_application')).toBe(true);
+  });
+
+  it('once fixed and saved, the steps show complete again', async () => {
+    const { completed } = await loadProgress({ employmentApplication: VALID_APPLICATION, employmentReferences: { employment_ref_1: VALID_REFERENCE } });
+    expect(completed('personal_info')).toBe(true);
+    expect(completed('employment_application')).toBe(true);
+    expect(completed('employment_ref_1')).toBe(true);
+  });
+
+  it('never alters the stored session data or step statuses', async () => {
+    const { result, session, before } = await loadProgress({ employmentApplication: LEGACY_APPLICATION, employmentReferences: { employment_ref_1: LEGACY_REFERENCE } });
+    expect(JSON.stringify(session)).toBe(before);
+    expect(result.current.session?.stepStates).toEqual(STEP_STATES);
+    expect(mockedUpdateSession).not.toHaveBeenCalled();
+  });
+
+  it('Home (progress) and Review (useReviewSubmission) derive the same completion state for the same session', async () => {
+    const { result } = await loadProgress({ employmentApplication: LEGACY_APPLICATION, employmentReferences: { employment_ref_1: LEGACY_REFERENCE } });
+    const progress = result.current.progress!;
+    const homeState = Object.fromEntries(progress.steps.map((s) => [s.id, s.completed]));
+
+    const spy = jest.spyOn(SessionContextModule, 'useSession').mockReturnValue(result.current);
+    const { result: review } = renderHook(() => useReviewSubmission());
+    const reviewState = Object.fromEntries(review.current.steps.map((s) => [s.id, s.completed]));
+    spy.mockRestore();
+
+    expect(reviewState).toEqual(homeState);
+    expect(review.current.incompleteRequiredSteps.map((s) => s.id)).toEqual(
+      progress.steps.filter((s) => s.required && s.id !== 'review' && !s.completed).map((s) => s.id),
+    );
+    expect(homeState.employment_application).toBe(false);
+    expect(homeState.employment_ref_1).toBe(false);
   });
 });

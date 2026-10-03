@@ -2,7 +2,15 @@ import type { ElementType, ReactNode } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, Download, FileSignature } from 'lucide-react';
 import type { ApplicationDetail } from '@/lib/admin-api';
-import { displayValue, flattenForDisplay, formatDate, formatFileSize, humanizeKey } from '@/lib/admin-display';
+import {
+  displayValue,
+  employmentApplicationRows,
+  employmentReferenceRows,
+  flattenForDisplay,
+  formatDate,
+  formatFileSize,
+  humanizeKey,
+} from '@/lib/admin-display';
 import { StatusBadge } from '../StatusBadge';
 
 function Section({ title, icon: Icon, children }: { title: string; icon: ElementType; children: ReactNode }) {
@@ -46,10 +54,10 @@ const PAYLOAD_GROUPS: { key: string; title: string }[] = [
 function PayloadSummary({ payload }: { payload: Record<string, unknown> | null }) {
   if (!payload) return <p className="text-sm text-slate-400 italic">No submitted application data available.</p>;
 
-  const groups = PAYLOAD_GROUPS.map(({ key, title }) => ({
-    title,
-    rows: flattenForDisplay(payload[key] as Record<string, unknown> | undefined),
-  })).filter((g) => g.rows.length > 0);
+  const groups = PAYLOAD_GROUPS.map(({ key, title }) => {
+    const value = payload[key] as Record<string, unknown> | undefined;
+    return { title, rows: key === 'employmentApplication' ? employmentApplicationRows(value) : flattenForDisplay(value) };
+  }).filter((g) => g.rows.length > 0);
 
   const refs = payload.employmentReferences as Record<string, Record<string, unknown>> | undefined;
   const acks = payload.acknowledgements as Record<string, { checked?: unknown }> | undefined;
@@ -69,7 +77,7 @@ function PayloadSummary({ payload }: { payload: Record<string, unknown> | null }
           {Object.entries(refs).map(([refId, ref]) => (
             <div key={refId} className="mb-4">
               <p className="text-xs font-medium text-slate-400 mb-2">{humanizeKey(refId)}</p>
-              <InfoGrid rows={flattenForDisplay(ref)} />
+              <InfoGrid rows={employmentReferenceRows(ref)} />
             </div>
           ))}
         </div>

@@ -27,8 +27,8 @@ import { useEmploymentReferenceForm } from './useEmploymentReferenceForm';
 const FIELD_ORDER: (keyof EmploymentReference)[] = [
   'positionHeld', 'employmentDateFrom', 'employmentDateTo',
   'employerName', 'employerCity', 'employerState',
-  'supervisorName', 'supervisorPhone',
-  'reasonForLeaving', 'eligibleForRehire', 'rehireDetails', 'comments',
+  'supervisorName', 'supervisorTitle', 'supervisorPhone',
+  'eligibleForRehire', 'rehireDetails', 'comments',
   'permissionGranted',
 ];
 
@@ -134,11 +134,11 @@ export default function EmploymentReferenceScreen() {
           <SelectField label="State" required options={US_STATE_OPTIONS} value={form.data.employerState} onValueChange={(v) => form.setField('employerState', v)} error={form.errors.employerState} />
         </View>
         <TextField label="Supervisor's Name" required autoComplete="off" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorName')} {...field('supervisorName')} />
+        <TextField label="Supervisor's Title" required autoComplete="off" placeholder="e.g. Charge RN, Nurse Manager, DON" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorTitle')} {...field('supervisorTitle')} />
         <TextField label="Supervisor's Phone" required keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorPhone')} {...field('supervisorPhone')} />
       </FormSection>
 
-      <FormSection title="Leaving & Rehire Eligibility">
-        <TextField label="Reason for Leaving" required multiline numberOfLines={3} returnKeyType="next" onSubmitEditing={() => focusNext('reasonForLeaving')} {...field('reasonForLeaving')} />
+      <FormSection title="Rehire Eligibility">
         <View onLayout={(e) => setFieldOffset('eligibleForRehire', e)}>
           <YesNoField
             label="Were you eligible for rehire at this employer?"

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getWorkerBaseUrl } from '@/lib/server-config';
 import { describeDelivery, canResend, canRevoke, STATUS_META } from '@/lib/invitations';
-import { displayValue, flattenForDisplay, formatDate, REDACTED } from '@/lib/admin-display';
+import {
+  displayValue,
+  employmentApplicationRows,
+  employmentReferenceRows,
+  flattenForDisplay,
+  formatDate,
+  REDACTED,
+} from '@/lib/admin-display';
 import { labelDocuments } from '@/lib/admin-api';
 import { createInvite, resendInvite, revokeInvite, listInvites } from '@/lib/invitation-client';
 import { jsonResponse, stubFetch } from './helpers';
@@ -106,6 +113,55 @@ describe('display safety', () => {
   });
 });
 
+describe('employment application display (UAT field changes)', () => {
+  const rowMap = (rows: [string, string][]) => Object.fromEntries(rows);
+
+  it('renders codes and arrays with human labels, dates as MM-DD-YYYY, and Other text inline', () => {
+    const rows = rowMap(employmentApplicationRows({
+      positionApplied: 'RN', specialtyPreference: ['icu', 'l_and_d', 'anesthesia_tech'], shiftPreference: ['am', 'pm'],
+      employmentType: 'travel_assignment', licenseType: 'RN', licenseExpiration: '2028-03-15',
+      primarySpecialty: 'other', primarySpecialtyOther: 'Pediatrics', hasCPR: true,
+    }));
+    expect(rows['Position Applied For']).toBe('RN');
+    expect(rows['Unit Preferences']).toBe('ICU, L&D, Anesthesia Tech.');
+    expect(rows['Shift Preferences']).toBe('AM, PM');
+    expect(rows['Employment Type']).toBe('Travel Assignment');
+    expect(rows['License Expiration Date']).toBe('03-15-2028');
+    expect(rows['Primary Clinical Specialty']).toBe('Other — Pediatrics');
+    expect(rows['Has C P R']).toBe('Yes'); // unlisted fields keep the generic rendering
+    const flat = JSON.stringify(rows);
+    for (const raw of ['travel_assignment', 'l_and_d', 'anesthesia_tech', 'primarySpecialtyOther', 'specialtyPreference']) {
+      expect(flat).not.toContain(raw);
+    }
+  });
+
+  it('CNA: unit preference is shown as not asked', () => {
+    expect(rowMap(employmentApplicationRows({ positionApplied: 'CNA', specialtyPreference: [] }))['Unit Preferences']).toBe('Not asked (CNA)');
+  });
+
+  it('a pre-change submission renders its historical values readably', () => {
+    const rows = rowMap(employmentApplicationRows({
+      positionApplied: 'RN — Med/Surg', specialtyPreference: 'ICU, Peds', shiftPreference: 'day',
+      employmentType: 'full_time', primarySpecialty: 'Critical Care', licenseExpiration: '2027-01-01',
+    }));
+    expect(rows['Position Applied For']).toBe('RN — Med/Surg');
+    expect(rows['Unit Preferences']).toBe('ICU, Peds');
+    expect(rows['Shift Preferences']).toBe('Day');
+    expect(rows['Employment Type']).toBe('Full-Time');
+    expect(rows['Primary Clinical Specialty']).toBe('Critical Care');
+    expect(rows['License Expiration Date']).toBe('01-01-2027');
+  });
+
+  it('references show Supervisor Title; historical Reason for Leaving stays readable, empty leftovers are hidden', () => {
+    const current = rowMap(employmentReferenceRows({ supervisorName: 'Pat', supervisorTitle: 'Nurse Manager', reasonForLeaving: '' }));
+    expect(current['Supervisor Title']).toBe('Nurse Manager');
+    expect(current).not.toHaveProperty('Reason For Leaving');
+
+    const historical = rowMap(employmentReferenceRows({ supervisorName: 'Pat', reasonForLeaving: 'Relocation' }));
+    expect(historical['Reason For Leaving']).toBe('Relocation');
+  });
+});
+
 describe('labelDocuments', () => {
   const docs = [
     { id: 1, objectKey: 'uploads/1/check.jpg', fileName: 'check.jpg', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
@@ -117,7 +173,7 @@ describe('labelDocuments', () => {
       directDepositProofDocument: { objectKey: 'uploads/1/check.jpg' },
       vaccineProofDocuments: { hep_b_declination: { objectKey: 'uploads/1/hepb.pdf' } },
     });
-    expect(out[0].label).toBe('Direct deposit — voided check');
+    expect(out[0].label).toBe('Direct deposit — bank account verification');
     expect(out[1].label).toBe('Hepatitis B vaccination proof');
     expect(out[2].label).toBeNull();
     expect(JSON.stringify(out)).not.toContain('uploads/1');
@@ -134,7 +190,7 @@ describe('labelDocuments', () => {
       'Hepatitis B vaccination proof',
       'Tdap vaccination proof',
       'Influenza vaccination proof',
-      'Direct deposit — voided check',
+      'Direct deposit — bank account verification',
     ]);
     expect(JSON.stringify(out)).not.toContain('k/');
   });

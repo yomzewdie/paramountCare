@@ -248,6 +248,26 @@ sessions.patch('/:sessionId', async (c) => {
     }
     const effectiveFormData = withDefaults({ ...storedFormData, ...(p.formData ?? {}) });
 
+    // Clients re-send the FULL stepStates on every save (see mobile's
+    // stepPatch.ts), so every previously-completed step is re-checked here
+    // on every save of any step. When validation rules tighten (UAT
+    // feedback: fixed-choice employment fields, supervisorTitle on
+    // references), a step completed under the old rules would otherwise
+    // block every unrelated save in that session. A step that was ALREADY
+    // 'completed' in storage and was ALREADY invalid against the stored data
+    // is that pre-existing condition, not something this request introduced
+    // — it is not re-rejected here. Newly completing a step, or turning a
+    // still-valid completed step invalid, is rejected exactly as before, and
+    // final submission (services/submission.ts) still re-validates every
+    // required step, so such a step must be fixed before submitting.
+    let storedStepStates: Record<string, string> = {};
+    try {
+      storedStepStates = JSON.parse(authResult.session.step_states_json || '{}');
+    } catch {
+      storedStepStates = {};
+    }
+    const storedEffectiveFormData = withDefaults(storedFormData);
+
     for (const [stepId, status] of Object.entries(p.stepStates)) {
       if (status !== 'completed') continue;
       const step = packet.steps.find((s) => s.id === stepId);
@@ -256,6 +276,9 @@ sessions.patch('/:sessionId', async (c) => {
       }
       const valid = isStepValid(stepId, effectiveFormData, step);
       if (!valid) {
+        const preExistingInvalidCompletion =
+          storedStepStates[stepId] === 'completed' && !isStepValid(stepId, storedEffectiveFormData, step);
+        if (preExistingInvalidCompletion) continue;
         return c.json({ error: `Step "${stepId}" cannot be marked completed — its data does not pass validation`, field: stepId }, 422);
       }
     }

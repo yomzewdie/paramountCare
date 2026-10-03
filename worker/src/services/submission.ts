@@ -2,6 +2,7 @@ import {
   getPacket,
   isStepValid,
   defaultFormData,
+  finalizeEmploymentApplication,
   type OnboardingFormData,
   type DirectDepositBankAccount,
   type StepStates,
@@ -67,6 +68,11 @@ function redactSensitiveFormData(data: OnboardingFormData): Record<string, unkno
 
   return {
     ...data,
+    // The applicant's FINAL answers only: unit selections hidden by choosing
+    // CNA, and Other text left over after picking a listed specialty, are
+    // harmless in-progress state but not part of the submitted application.
+    // Also normalizes pre-UAT string shapes to the current array shapes.
+    employmentApplication: finalizeEmploymentApplication(data.employmentApplication),
     // Same rule as document promotion: no vaccination-proof reference for a vaccine whose final answer is a declination.
     vaccineProofDocuments: activeVaccineProofDocuments(data.vaccineProofDocuments, data.acknowledgements),
     i9Data: {

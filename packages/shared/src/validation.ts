@@ -16,6 +16,18 @@ import type {
   DirectDepositBankAccount,
 } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
+import {
+  CLINICAL_UNIT_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  POSITION_OPTIONS,
+  PRIMARY_SPECIALTY_OPTIONS,
+  PRIMARY_SPECIALTY_OTHER,
+  SHIFT_PREFERENCE_OPTIONS,
+  isOptionValue,
+  normalizeEmploymentApplication,
+  requiresUnitPreference,
+} from './employmentApplication';
+import { isValidIsoDate } from './dates';
 
 export type FieldErrors = Record<string, string>;
 
@@ -68,21 +80,62 @@ export function validatePersonalInfo(data: PersonalInfo): FieldErrors {
 
 // ── Employment Application ────────────────────────────────────────────────────
 
-export function validateEmploymentApplication(data: EmploymentApplicationData): FieldErrors {
+//
+// UAT feedback: position / employment type / primary specialty are fixed
+// choices, unit and shift preferences are multi-selects, and the unit
+// preference is not asked of (nor required for) a CNA. Input is normalized
+// first (employmentApplication.ts), so a session saved before these changes
+// — string unit/shift values, missing new keys — can never crash this; a
+// legacy value that isn't an allowed choice is simply reported invalid.
+// Hidden CNA unit selections and stale "Other" text are ignored here, never
+// required to be cleared.
+export function validateEmploymentApplication(raw: EmploymentApplicationData): FieldErrors {
   const errors: FieldErrors = {};
+  const data = normalizeEmploymentApplication(raw);
 
-  if (!data.positionApplied.trim())   errors.positionApplied   = 'Position applied for is required';
-  if (!data.specialtyPreference.trim()) errors.specialtyPreference = 'Specialty / unit preference is required';
-  if (!data.shiftPreference)          errors.shiftPreference   = 'Shift preference is required';
-  if (!data.employmentType)           errors.employmentType    = 'Employment type is required';
+  if (!data.positionApplied.trim()) {
+    errors.positionApplied = 'Position applied for is required';
+  } else if (!isOptionValue(POSITION_OPTIONS, data.positionApplied)) {
+    errors.positionApplied = 'Select CNA, LVN, RN, or NP';
+  }
+
+  if (requiresUnitPreference(data.positionApplied)) {
+    if (data.specialtyPreference.length === 0) {
+      errors.specialtyPreference = 'Select at least one unit preference';
+    } else if (!data.specialtyPreference.every((v) => isOptionValue(CLINICAL_UNIT_OPTIONS, v))) {
+      errors.specialtyPreference = 'Unit preference contains an option that is no longer available';
+    }
+  }
+
+  if (data.shiftPreference.length === 0) {
+    errors.shiftPreference = 'Select at least one shift preference';
+  } else if (!data.shiftPreference.every((v) => isOptionValue(SHIFT_PREFERENCE_OPTIONS, v))) {
+    errors.shiftPreference = 'Shift preference contains an option that is no longer available';
+  }
+
+  if (!data.employmentType) {
+    errors.employmentType = 'Employment type is required';
+  } else if (!isOptionValue(EMPLOYMENT_TYPE_OPTIONS, data.employmentType)) {
+    errors.employmentType = 'Select Per-Diem Assignment or Travel Assignment';
+  }
 
   if (!data.licenseType)              errors.licenseType       = 'License type is required';
   if (!data.licenseNumber.trim())     errors.licenseNumber     = 'License number is required';
   if (!data.licenseState)             errors.licenseState      = 'License state is required';
-  if (!data.licenseExpiration.trim()) errors.licenseExpiration = 'License expiration date is required';
+  if (!data.licenseExpiration.trim()) {
+    errors.licenseExpiration = 'License expiration date is required';
+  } else if (!isValidIsoDate(data.licenseExpiration)) {
+    errors.licenseExpiration = 'Enter a valid date (MM-DD-YYYY)';
+  }
 
   if (!data.yearsExperience)          errors.yearsExperience   = 'Years of experience is required';
-  if (!data.primarySpecialty.trim())  errors.primarySpecialty  = 'Primary specialty is required';
+  if (!data.primarySpecialty.trim()) {
+    errors.primarySpecialty = 'Primary specialty is required';
+  } else if (!isOptionValue(PRIMARY_SPECIALTY_OPTIONS, data.primarySpecialty)) {
+    errors.primarySpecialty = 'Select a primary specialty';
+  } else if (data.primarySpecialty === PRIMARY_SPECIALTY_OTHER && !data.primarySpecialtyOther.trim()) {
+    errors.primarySpecialtyOther = 'Please specify your primary specialty';
+  }
 
   if (data.authorizedToWork !== true) {
     errors.authorizedToWork = 'You must be legally authorized to work in the United States to proceed';
@@ -184,14 +237,21 @@ const employmentReferenceSchema = z.object({
   employerState:      z.string().min(2, 'State is required'),
   supervisorName:     z.string().min(1, 'Supervisor name is required'),
   supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
+  supervisorTitle:    z.string().trim().min(1, 'Supervisor title is required'),
   permissionGranted:  z.boolean(),
-  reasonForLeaving:   z.string().min(1, 'Reason for leaving is required'),
+  // reasonForLeaving: legacy-only (replaced by supervisorTitle) — never
+  // required; old values are passed through untouched.
   eligibleForRehire:  z.union([z.boolean(), z.null()]),
   rehireDetails:      z.string(),
   comments:           z.string(),
 });
 
-export function validateEmploymentReference(data: EmploymentReference): FieldErrors {
+// Same rules for every reference step (#1, #2, optional #3) — they share one
+// type, one screen, and one formData record.
+export function validateEmploymentReference(raw: EmploymentReference): FieldErrors {
+  // Defaults first: a reference saved before supervisorTitle existed gets a
+  // friendly "required" message, not a type error.
+  const data: EmploymentReference = { ...defaultEmploymentReference, ...raw };
   const errors = parseSchema(employmentReferenceSchema, data);
   if (!data.permissionGranted) {
     errors.permissionGranted = 'You must grant permission before continuing';
@@ -317,8 +377,12 @@ export function validateW4(data: W4Data): FieldErrors {
 // The primary account and a signed authorization are required; the second
 // ("Additional Bank Information") account is optional, but if the applicant
 // has started filling it in, it must be completed like the primary one
-// rather than left half-entered. The voided-check proof is required by the
-// source form's own text ("Attach a voided check with this agreement").
+// rather than left half-entered. Bank account verification is required by
+// the source form's own text ("Attach a voided check with this agreement");
+// per UAT feedback the business intent is verifying the account, so a
+// voided check OR another bank document / banking-app screenshot showing
+// the routing and account numbers satisfies it — the requirement itself
+// (one uploaded, ownership-verified document) is unchanged.
 
 const routingNumberRegex = /^[0-3]\d{8}$/;
 
@@ -383,7 +447,7 @@ export function validateDirectDeposit(
   if (!data.signedDate.trim()) errors.signedDate = 'Date is required';
 
   if (!proofDocument) {
-    errors.directDepositProofDocument = 'A voided check must be attached to complete direct deposit authorization';
+    errors.directDepositProofDocument = 'Upload a voided check or bank document showing your routing and account numbers to complete direct deposit authorization';
   }
 
   return errors;

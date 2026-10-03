@@ -118,7 +118,10 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   hep_b_vaccination_proof: 'Hepatitis B vaccination proof',
   tdap_vaccination_proof: 'Tdap vaccination proof',
   flu_vaccination_proof: 'Influenza vaccination proof',
-  direct_deposit_voided_check: 'Direct deposit — voided check',
+  // doc_type key kept for stored-data compatibility; the slot accepts any
+  // bank account verification document (voided check, bank letter, or
+  // banking-app screenshot).
+  direct_deposit_voided_check: 'Direct deposit — bank account verification',
   list_a: 'I-9 List A document',
   list_b: 'I-9 List B document',
   list_c: 'I-9 List C document',

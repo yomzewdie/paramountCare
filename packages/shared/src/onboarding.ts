@@ -1,3 +1,5 @@
+import { defaultEmploymentApplicationData } from './employmentApplication';
+
 // ── Personal Info ─────────────────────────────────────────────────────────────
 export interface PersonalInfo {
   firstName: string;
@@ -62,25 +64,29 @@ export interface I9Data {
 // ── Employment Application ────────────────────────────────────────────────────
 // Source: Paramount Care Staffing Application for Employment
 export interface EmploymentApplicationData {
-  // Position applied for
-  positionApplied: string;         // RN, LVN, CNA, NP, etc.
-  specialtyPreference: string;     // ICU, ER, Med-Surg, L&D, Peds, etc.
-  shiftPreference: string;         // 'day' | 'evening' | 'night' | 'any'
-  employmentType: string;          // 'full_time' | 'part_time' | 'per_diem'
+  // Position applied for — option lists live in employmentApplication.ts.
+  // `string`/`string[]` rather than literal unions on purpose: stored
+  // sessions and submitted payloads can still hold pre-UAT legacy values,
+  // which normalizeEmploymentApplication() reads safely.
+  positionApplied: string;         // canonical applicant position: 'CNA' | 'LVN' | 'RN' | 'NP'
+  specialtyPreference: string[];   // unit preference codes (multi-select); not asked for CNA. Legacy: free-text string
+  shiftPreference: string[];       // 'am' | 'mid' | 'pm' (multi-select). Legacy: 'day' | 'evening' | 'night' | 'any'
+  employmentType: string;          // 'per_diem_assignment' | 'travel_assignment'. Legacy: 'full_time' | 'part_time' | 'per_diem'
   availableStartDate: string;      // YYYY-MM-DD
 
   // Professional license / credentials
-  licenseType: string;             // 'RN' | 'LVN' | 'NP' | 'CNA' | 'other'
+  licenseType: string;             // license/credential held: 'RN' | 'LVN' | 'NP' | 'CNA' | 'other' (distinct from positionApplied)
   licenseNumber: string;
   licenseState: string;
-  licenseExpiration: string;       // YYYY-MM-DD (HTML date input)
+  licenseExpiration: string;       // canonical YYYY-MM-DD; mobile shows/accepts MM-DD-YYYY (see dates.ts)
   hasCPR: boolean;
   cprCertNumber: string;
   cprExpiration: string;           // YYYY-MM-DD
 
   // Clinical experience summary
   yearsExperience: string;         // '0-1' | '1-3' | '3-5' | '5-10' | '10+'
-  primarySpecialty: string;        // free text — main clinical specialty
+  primarySpecialty: string;        // specialty code (single-select) or 'other'. Legacy: free text
+  primarySpecialtyOther: string;   // required only when primarySpecialty === 'other'
   currentlyEmployed: boolean | null;
   previouslyWorkedHere: boolean | null;  // previously with Paramount Care Staffing
 
@@ -114,8 +120,12 @@ export interface EmploymentReference {
   employerState: string;               // State
   supervisorName: string;              // Supervisor's Name
   supervisorPhone: string;             // Tel No.
+  supervisorTitle: string;             // Supervisor's title (UAT feedback — replaced Reason for Leaving)
   permissionGranted: boolean;          // Applicant permission consent
-  reasonForLeaving: string;            // Reason for leaving this employer
+  /** @deprecated Legacy only — no longer collected (replaced by
+   * supervisorTitle). Still present on older sessions/submissions and kept
+   * readable there; never required. */
+  reasonForLeaving?: string;
   eligibleForRehire: boolean | null;   // Were you eligible for rehire?
   rehireDetails: string;               // Required if eligibleForRehire === false
   comments: string;                    // Additional comments / notes (optional)
@@ -130,8 +140,8 @@ export const defaultEmploymentReference: EmploymentReference = {
   employerState: '',
   supervisorName: '',
   supervisorPhone: '',
+  supervisorTitle: '',
   permissionGranted: false,
-  reasonForLeaving: '',
   eligibleForRehire: null,
   rehireDetails: '',
   comments: '',
@@ -331,7 +341,10 @@ export interface OnboardingFormData {
   /** Vaccination proof uploads — keyed by vaccine step ID (e.g. 'hep_b_declination'). */
   vaccineProofDocuments: Record<string, UploadedFile | null>;
   directDepositData: DirectDepositData;
-  /** Voided-check proof required by the Direct Deposit Authorization source form. */
+  /** Bank account verification required by the Direct Deposit Authorization
+   * source form — a voided check, or another bank document / banking-app
+   * screenshot showing the routing and account numbers. (The upload slot's
+   * doc_type stays `direct_deposit_voided_check` for stored-data compatibility.) */
   directDepositProofDocument: UploadedFile | null;
 }
 
@@ -356,37 +369,7 @@ export const defaultFormData: OnboardingFormData = {
     state: '',
     zip: '',
   },
-  employmentApplication: {
-    positionApplied: '',
-    specialtyPreference: '',
-    shiftPreference: '',
-    employmentType: '',
-    availableStartDate: '',
-    licenseType: '',
-    licenseNumber: '',
-    licenseState: '',
-    licenseExpiration: '',
-    hasCPR: false,
-    cprCertNumber: '',
-    cprExpiration: '',
-    yearsExperience: '',
-    primarySpecialty: '',
-    currentlyEmployed: null,
-    previouslyWorkedHere: null,
-    authorizedToWork: null,
-    hasConviction: null,
-    convictionDetails: '',
-    hasLicenseDiscipline: null,
-    licenseDisciplineDetails: '',
-    hasLicenseRevocation: null,
-    licenseRevocationDetails: '',
-    licenseRevocationJurisdiction: '',
-    licenseRevocationDate: '',
-    underInvestigation: null,
-    emergencyContactName: '',
-    emergencyContactRelationship: '',
-    emergencyContactPhone: '',
-  },
+  employmentApplication: defaultEmploymentApplicationData,
   i9Data: {
     firstName: '',
     lastName: '',

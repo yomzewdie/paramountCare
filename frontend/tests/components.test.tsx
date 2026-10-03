@@ -129,10 +129,11 @@ describe('Application detail', () => {
       w4Data: { ssn: '123-45-6789', filingStatus: 'single' },
       directDepositData: { primaryAccount: { bankName: 'First Bank', accountNumber: '9988776655', routingNumber: '021000021' } },
       signatureData: { typedName: 'Jane Nurse', signatureDataUrl: 'data:image/png;base64,BBBB' },
-      employmentReferences: { employment_ref_1: { name: 'Ref One', phone: '555-0101' } },
+      employmentApplication: { positionApplied: 'LVN', specialtyPreference: ['tele_dou', 'pacu'], shiftPreference: ['mid'], employmentType: 'per_diem_assignment', licenseExpiration: '2029-12-31', primarySpecialty: 'sds' },
+      employmentReferences: { employment_ref_1: { name: 'Ref One', phone: '555-0101', supervisorTitle: 'Charge RN' } },
     },
     documents: [
-      { id: 7, label: 'Direct deposit — voided check', fileName: 'check.jpg', fileSize: 2048, uploadedAt: '2026-09-26T14:00:00.000Z' },
+      { id: 7, label: 'Direct deposit — bank account verification', fileName: 'check.jpg', fileSize: 2048, uploadedAt: '2026-09-26T14:00:00.000Z' },
       { id: 8, label: null, fileName: 'hepb.pdf', fileSize: 500, uploadedAt: '2026-09-26T14:05:00.000Z' },
     ],
     auditLogs: [{ id: 1, action: 'application_submitted', metadata: { documentCount: 2 }, createdAt: '2026-09-26T15:00:00.000Z' }],
@@ -143,6 +144,12 @@ describe('Application detail', () => {
     for (const s of ['Applicant', 'Application / onboarding', 'Generated forms', 'Uploaded documents']) expect(html).toContain(s);
     for (const s of ['Jane Nurse', 'jane@example.com', '555-0100', 'APP-123', 'Sep 26, 2026', 'Austin', 'First Bank', 'Ref One']) expect(html).toContain(s);
   });
+  it('renders the employment application and references human-readably, without codes or keys', () => {
+    for (const s of ['Position Applied For', 'LVN', 'Tele-DOU, PACU', 'MID', 'Per-Diem Assignment', '12-31-2029', 'SDS', 'Supervisor Title', 'Charge RN']) {
+      expect(html).toContain(s);
+    }
+    for (const s of ['tele_dou', 'per_diem_assignment', 'specialtyPreference']) expect(html).not.toContain(s);
+  });
   it('links signed W-4 / I-9 and each document through the protected proxy routes (ids only)', () => {
     expect(html).toContain('href="/api/admin/w4-pdf/APP-123"');
     expect(html).toContain('href="/api/admin/i9-pdf/APP-123"');
@@ -150,7 +157,7 @@ describe('Application detail', () => {
     expect(html).toContain('href="/api/admin/documents/APP-123/8"');
     expect(html).toContain('Download Signed W-4');
     expect(html).toContain('Download Signed I-9');
-    expect(html).toContain('Direct deposit — voided check');
+    expect(html).toContain('Direct deposit — bank account verification');
   });
   it('shows vaccination evidence only for documents the application actually contains (a declined vaccine has none)', () => {
     const withProof = renderToStaticMarkup(

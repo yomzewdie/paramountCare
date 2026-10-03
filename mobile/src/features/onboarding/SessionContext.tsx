@@ -216,7 +216,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const progress = useMemo<OnboardingProgress | null>(
-    () => (session ? deriveProgress(session.packetId, session.stepStates) : null),
+    // formData included: a step stored 'completed' under older rules is shown
+    // as not complete (steps.ts effectiveStepStates) — Home and Review agree
+    // with what final submission will accept.
+    () => (session ? deriveProgress(session.packetId, session.stepStates, session.formData) : null),
     [session],
   );
 

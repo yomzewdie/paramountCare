@@ -1,11 +1,21 @@
 import { useCallback, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import type { EmploymentApplicationData } from '@pcs/shared';
+import {
+  CLINICAL_UNIT_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  POSITION_OPTIONS,
+  PRIMARY_SPECIALTY_OPTIONS,
+  PRIMARY_SPECIALTY_OTHER,
+  SHIFT_PREFERENCE_OPTIONS,
+  requiresUnitPreference,
+  type EmploymentApplicationData,
+} from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
 import { SelectField, type SelectOption } from '../../components/SelectField';
 import { YesNoField } from '../../components/YesNoField';
+import { MultiSelectField } from '../../components/MultiSelectField';
 import { FormSection } from '../../components/FormSection';
 import { StepActionBar } from '../../components/StepActionBar';
 import { FormFooterStatus } from '../../components/FormFooterStatus';
@@ -17,25 +27,16 @@ import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { US_STATE_OPTIONS } from '../../constants/usStates';
 import { useEmploymentApplicationForm } from './useEmploymentApplicationForm';
 
-// Mirrors the existing web EmploymentApplicationSection.tsx's exact option
-// lists — not a domain/business concern, so not in @pcs/shared.
+// The license/credential the applicant holds — a separate concept from the
+// canonical position they're applying for (`positionApplied`, whose options
+// live in @pcs/shared with the other Employment Application choices).
+// Mirrors the existing web EmploymentApplicationSection.tsx's option list.
 const LICENSE_TYPE_OPTIONS: SelectOption[] = [
   { label: 'Registered Nurse (RN)', value: 'RN' },
   { label: 'Licensed Vocational Nurse (LVN)', value: 'LVN' },
   { label: 'Nurse Practitioner (NP)', value: 'NP' },
   { label: 'Certified Nursing Assistant (CNA)', value: 'CNA' },
   { label: 'Other', value: 'other' },
-];
-const EMPLOYMENT_TYPE_OPTIONS: SelectOption[] = [
-  { label: 'Full-Time', value: 'full_time' },
-  { label: 'Part-Time', value: 'part_time' },
-  { label: 'Per Diem', value: 'per_diem' },
-];
-const SHIFT_PREFERENCE_OPTIONS: SelectOption[] = [
-  { label: 'Day (7a–7p / 8a–4p)', value: 'day' },
-  { label: 'Evening (3p–11p)', value: 'evening' },
-  { label: 'Night (7p–7a / 11p–7a)', value: 'night' },
-  { label: 'Open to any shift', value: 'any' },
 ];
 const YEARS_EXPERIENCE_OPTIONS: SelectOption[] = [
   { label: 'Less than 1 year', value: '0-1' },
@@ -50,9 +51,9 @@ const YEARS_EXPERIENCE_OPTIONS: SelectOption[] = [
 // for scroll targeting even though they never receive a focus-chain ref —
 // same accepted pattern as every prior step screen.
 const FIELD_ORDER: (keyof EmploymentApplicationData)[] = [
-  'licenseType', 'positionApplied', 'specialtyPreference', 'employmentType', 'shiftPreference', 'availableStartDate',
-  'licenseNumber', 'licenseState', 'licenseExpiration', 'hasCPR', 'cprCertNumber', 'cprExpiration',
-  'yearsExperience', 'primarySpecialty', 'currentlyEmployed', 'previouslyWorkedHere',
+  'positionApplied', 'specialtyPreference', 'employmentType', 'shiftPreference', 'availableStartDate',
+  'licenseType', 'licenseNumber', 'licenseState', 'licenseExpiration', 'hasCPR', 'cprCertNumber', 'cprExpiration',
+  'yearsExperience', 'primarySpecialty', 'primarySpecialtyOther', 'currentlyEmployed', 'previouslyWorkedHere',
   'authorizedToWork', 'hasConviction', 'convictionDetails',
   'hasLicenseDiscipline', 'licenseDisciplineDetails',
   'hasLicenseRevocation', 'licenseRevocationDetails', 'licenseRevocationJurisdiction', 'licenseRevocationDate',
@@ -159,26 +160,51 @@ export default function EmploymentApplicationScreen() {
       ) : null}
 
       <FormSection title="Position Applied For">
-        <View onLayout={(e) => setFieldOffset('licenseType', e)}>
-          <SelectField label="License / Position Type" required options={LICENSE_TYPE_OPTIONS} {...select('licenseType')} />
+        <View onLayout={(e) => setFieldOffset('positionApplied', e)}>
+          <SelectField label="Position Applied For" required options={POSITION_OPTIONS} {...select('positionApplied')} />
         </View>
-        <TextField label="Position Applied For" required placeholder="e.g. RN — Med/Surg, ICU Travel RN" returnKeyType="next" onSubmitEditing={() => focusNext('positionApplied')} {...field('positionApplied')} />
-        <TextField label="Specialty / Unit Preference" required placeholder="e.g. ICU, ER, L&D, Pediatrics" returnKeyType="next" onSubmitEditing={() => focusNext('specialtyPreference')} {...field('specialtyPreference')} />
+        {/* Not asked of a CNA. Selections made before switching to CNA stay in
+            the session (restored on switching back) but never block completion
+            and are not part of the submitted application. */}
+        {requiresUnitPreference(form.data.positionApplied) ? (
+          <View onLayout={(e) => setFieldOffset('specialtyPreference', e)}>
+            <MultiSelectField
+              label="Specialty / Unit Preference" required hint="Select all that apply"
+              options={CLINICAL_UNIT_OPTIONS} values={form.data.specialtyPreference}
+              onToggle={(v) => form.toggleSelection('specialtyPreference', v)}
+              error={form.errors.specialtyPreference}
+            />
+          </View>
+        ) : null}
         <View onLayout={(e) => setFieldOffset('employmentType', e)}>
           <SelectField label="Employment Type" required options={EMPLOYMENT_TYPE_OPTIONS} {...select('employmentType')} />
         </View>
         <View onLayout={(e) => setFieldOffset('shiftPreference', e)}>
-          <SelectField label="Shift Preference" required options={SHIFT_PREFERENCE_OPTIONS} {...select('shiftPreference')} />
+          <MultiSelectField
+            label="Shift Preference" required hint="Select all that apply"
+            options={SHIFT_PREFERENCE_OPTIONS} values={form.data.shiftPreference}
+            onToggle={(v) => form.toggleSelection('shiftPreference', v)}
+            error={form.errors.shiftPreference}
+          />
         </View>
-        <TextField label="Available Start Date" hint="Optional — YYYY-MM-DD" placeholder="YYYY-MM-DD" returnKeyType="next" onSubmitEditing={() => focusNext('availableStartDate')} {...field('availableStartDate')} />
+        <TextField label="Available Start Date" hint="Optional — YYYY-MM-DD" placeholder="YYYY-MM-DD" returnKeyType="next" onSubmitEditing={() => fieldRefs.current.licenseNumber?.focus()} {...field('availableStartDate')} />
       </FormSection>
 
       <FormSection title="Professional License & CPR">
+        <View onLayout={(e) => setFieldOffset('licenseType', e)}>
+          <SelectField label="License Type" required options={LICENSE_TYPE_OPTIONS} {...select('licenseType')} />
+        </View>
         <TextField label="License Number" required placeholder="e.g. RN123456" returnKeyType="next" onSubmitEditing={() => focusNext('licenseNumber')} {...field('licenseNumber')} />
         <View onLayout={(e) => setFieldOffset('licenseState', e)}>
           <SelectField label="License State" required options={US_STATE_OPTIONS} {...select('licenseState')} />
         </View>
-        <TextField label="License Expiration Date" required hint="YYYY-MM-DD" placeholder="YYYY-MM-DD" returnKeyType="next" onSubmitEditing={() => focusNext('licenseExpiration')} {...field('licenseExpiration')} />
+        <TextField
+          label="License Expiration Date" required hint="MM-DD-YYYY" placeholder="MM-DD-YYYY"
+          keyboardType="number-pad" maxLength={10} returnKeyType="next" onSubmitEditing={() => focusNext('licenseExpiration')}
+          {...field('licenseExpiration')}
+          value={form.licenseExpirationDisplay}
+          onChangeText={form.setLicenseExpirationInput}
+        />
         <View onLayout={(e) => setFieldOffset('hasCPR', e)}>
           <YesNoField label="Do you hold a current CPR/BLS certification?" {...yesNo('hasCPR')} />
         </View>
@@ -194,7 +220,15 @@ export default function EmploymentApplicationScreen() {
         <View onLayout={(e) => setFieldOffset('yearsExperience', e)}>
           <SelectField label="Total Years of Nursing Experience" required options={YEARS_EXPERIENCE_OPTIONS} {...select('yearsExperience')} />
         </View>
-        <TextField label="Primary Clinical Specialty" required hint="Your main area of nursing practice" placeholder="e.g. Critical Care, Emergency, Med-Surg" returnKeyType="next" onSubmitEditing={() => focusNext('primarySpecialty')} {...field('primarySpecialty')} />
+        <View onLayout={(e) => setFieldOffset('primarySpecialty', e)}>
+          <SelectField label="Primary Clinical Specialty" required options={PRIMARY_SPECIALTY_OPTIONS} {...select('primarySpecialty')} />
+        </View>
+        {/* Other text is kept if the applicant switches to a listed specialty
+            (restored if they switch back) but is only required — and only
+            submitted — while Other is selected. */}
+        {form.data.primarySpecialty === PRIMARY_SPECIALTY_OTHER ? (
+          <TextField label="Please specify your primary specialty" required placeholder="e.g. Pediatrics" returnKeyType="done" onSubmitEditing={() => {}} {...field('primarySpecialtyOther')} />
+        ) : null}
         <View onLayout={(e) => setFieldOffset('currentlyEmployed', e)}>
           <YesNoField label="Are you currently employed?" {...yesNo('currentlyEmployed')} />
         </View>

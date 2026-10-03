@@ -6,6 +6,11 @@ import {
   FileText,
 } from 'lucide-react';
 import { OnboardingFormData } from '@/types/onboarding';
+import {
+  CLINICAL_UNIT_OPTIONS, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
+  POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS,
+  finalizeEmploymentApplication, formatOptionValues, formatPrimarySpecialty, isoDateToDisplay, requiresUnitPreference,
+} from '@pcs/shared';
 import { isStepValid } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -77,19 +82,15 @@ function BoolRow({ label, checked }: { label: string; checked: boolean }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
-const SHIFT_LABELS: Record<string, string> = {
-  day: 'Day (7a–7p)', evening: 'Evening (3p–11p)', night: 'Night (7p–7a)', any: 'Open to any',
-};
-const EMP_TYPE_LABELS: Record<string, string> = {
-  full_time: 'Full-Time', part_time: 'Part-Time', per_diem: 'Per Diem',
-};
 const EXP_LABELS: Record<string, string> = {
   '0-1': 'Less than 1 year', '1-3': '1–3 years', '3-5': '3–5 years',
   '5-10': '5–10 years', '10+': '10+ years',
 };
 
 export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
-  const { personalInfo: p, employmentApplication: ea, i9Data: i9, safetyEducation: s, uploadedDocuments: u } = data;
+  const { personalInfo: p, i9Data: i9, safetyEducation: s, uploadedDocuments: u } = data;
+  // Final answers, e.g. no hidden unit selections for a CNA.
+  const ea = finalizeEmploymentApplication(data.employmentApplication);
 
   const citizenshipLabels: Record<string, string> = {
     citizen:                   'U.S. Citizen',
@@ -184,16 +185,18 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
 
           {/* 2. Employment Application */}
           <ReviewGroup title="Employment Application" icon={<ClipboardList size={15} />} step="employment_application" isComplete={stepValid.employment_application} onEdit={onEditStep}>
-            <Row label="Position Applied For" value={ea.positionApplied} />
-            <Row label="Specialty / Unit" value={ea.specialtyPreference} />
-            <Row label="Employment Type" value={(EMP_TYPE_LABELS[ea.employmentType] ?? ea.employmentType) || null} />
-            <Row label="Shift Preference" value={(SHIFT_LABELS[ea.shiftPreference] ?? ea.shiftPreference) || null} />
+            <Row label="Position Applied For" value={formatOptionValues(ea.positionApplied, POSITION_OPTIONS) || null} />
+            {requiresUnitPreference(ea.positionApplied) && (
+              <Row label="Specialty / Unit Preference" value={formatOptionValues(ea.specialtyPreference, CLINICAL_UNIT_OPTIONS) || null} />
+            )}
+            <Row label="Employment Type" value={formatOptionValues(ea.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) || null} />
+            <Row label="Shift Preference" value={formatOptionValues(ea.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) || null} />
             <Row label="License Type" value={ea.licenseType || null} />
             <Row label="License Number" value={ea.licenseNumber || null} />
             <Row label="License State" value={ea.licenseState || null} />
-            <Row label="License Expires" value={ea.licenseExpiration || null} />
+            <Row label="License Expires" value={isoDateToDisplay(ea.licenseExpiration) || null} />
             <Row label="Years of Experience" value={(EXP_LABELS[ea.yearsExperience] ?? ea.yearsExperience) || null} />
-            <Row label="Primary Specialty" value={ea.primarySpecialty || null} />
+            <Row label="Primary Specialty" value={formatPrimarySpecialty(ea.primarySpecialty, ea.primarySpecialtyOther) || null} />
             <Row label="Work Authorization" value={ea.authorizedToWork === true ? 'Authorized' : ea.authorizedToWork === false ? 'Not authorized' : null} />
             <Row label="License Revocation/Suspension" value={ea.hasLicenseRevocation === true ? `Yes — ${ea.licenseRevocationDetails.slice(0, 80)}${ea.licenseRevocationDetails.length > 80 ? '…' : ''}` : ea.hasLicenseRevocation === false ? 'None' : null} />
             <Row label="Emergency Contact" value={ea.emergencyContactName ? `${ea.emergencyContactName} (${ea.emergencyContactRelationship})` : null} />
@@ -345,8 +348,9 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
                 <Row label="Employer" value={e.employerName} />
                 <Row label="Location" value={[e.employerCity, e.employerState].filter(Boolean).join(', ') || null} />
                 <Row label="Supervisor" value={e.supervisorName} />
+                <Row label="Supervisor Title" value={e.supervisorTitle || null} />
                 <Row label="Supervisor Phone" value={e.supervisorPhone} />
-                <Row label="Reason for Leaving" value={e.reasonForLeaving || null} />
+                {e.reasonForLeaving && <Row label="Reason for Leaving" value={e.reasonForLeaving} />}
                 <Row label="Eligible for Rehire" value={e.eligibleForRehire === true ? 'Yes' : e.eligibleForRehire === false ? 'No' : null} />
                 {e.eligibleForRehire === false && e.rehireDetails && (
                   <Row label="Rehire Details" value={e.rehireDetails} />

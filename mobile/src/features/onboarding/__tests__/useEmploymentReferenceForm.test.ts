@@ -42,8 +42,8 @@ const VALID_REFERENCE = {
   employerState: 'CA',
   supervisorName: 'Jane Supervisor',
   supervisorPhone: '555-000-1111',
+  supervisorTitle: 'Nurse Manager',
   permissionGranted: true,
-  reasonForLeaving: 'Contract ended',
   eligibleForRehire: true,
 };
 
@@ -430,5 +430,49 @@ describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel 
     const stepData = call[0].stepData as Record<string, unknown>;
     expect(stepData.employment_ref_3).toBeUndefined();
     expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_1' }));
+  });
+});
+
+describe('useEmploymentReferenceForm — Supervisor Title replaces Reason for Leaving (all references)', () => {
+  it.each(['employment_ref_1', 'employment_ref_2', 'employment_ref_3'])('%s requires supervisorTitle and not reasonForLeaving', async (stepId) => {
+    const saveStep = setupSession(fakeSession({ formData: { employmentReferences: { [stepId]: { ...VALID_REFERENCE, supervisorTitle: '' } } } }));
+    const { result } = renderHook(() => useEmploymentReferenceForm(stepId));
+
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(saveStep).not.toHaveBeenCalled();
+    expect(result.current.errors.supervisorTitle).toBe('Supervisor title is required');
+    expect(result.current.errors).not.toHaveProperty('reasonForLeaving');
+  });
+
+  it('captures supervisorTitle in the saved reference', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentReferences: { employment_ref_2: VALID_REFERENCE } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_2'));
+    act(() => result.current.setField('supervisorTitle', 'Director of Nursing'));
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+      stepData: { employment_ref_2: expect.objectContaining({ supervisorTitle: 'Director of Nursing' }) },
+    }));
+  });
+
+  it('a reference saved before the change keeps its historical reasonForLeaving on load and save', async () => {
+    const legacy = { ...VALID_REFERENCE, supervisorTitle: undefined, reasonForLeaving: 'Relocation' };
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentReferences: { employment_ref_1: legacy } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+    expect(result.current.data.reasonForLeaving).toBe('Relocation');
+
+    act(() => result.current.setField('supervisorTitle', 'Charge RN'));
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({
+      stepData: { employment_ref_1: expect.objectContaining({ reasonForLeaving: 'Relocation', supervisorTitle: 'Charge RN' }) },
+    }));
   });
 });

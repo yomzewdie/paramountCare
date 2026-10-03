@@ -31,14 +31,11 @@ export function useReviewSubmission() {
   const [conflict, setConflict] = useState(false);
   const [incompleteSteps, setIncompleteSteps] = useState<IncompleteStepInfo[] | null>(null);
 
-  const requiredSteps = useMemo(
-    () => (progress?.steps ?? []).filter((s) => s.required && s.id !== 'review'),
-    [progress],
-  );
-  const optionalSteps = useMemo(
-    () => (progress?.steps ?? []).filter((s) => !s.required && s.id !== 'review'),
-    [progress],
-  );
+  // progress.steps already reflects the current rules (steps.ts
+  // effectiveStepStates), so Review, Home, and Submit all agree.
+  const steps = useMemo(() => progress?.steps ?? [], [progress]);
+  const requiredSteps = useMemo(() => steps.filter((s) => s.required && s.id !== 'review'), [steps]);
+  const optionalSteps = useMemo(() => steps.filter((s) => !s.required && s.id !== 'review'), [steps]);
   const incompleteRequiredSteps = useMemo(() => requiredSteps.filter((s) => !s.completed), [requiredSteps]);
   const readyToSubmit = incompleteRequiredSteps.length === 0;
 
@@ -79,6 +76,8 @@ export function useReviewSubmission() {
   }
 
   return {
+    /** Every packet step, with `completed` checked against the current rules (via deriveProgress). */
+    steps,
     requiredSteps,
     optionalSteps,
     incompleteRequiredSteps,

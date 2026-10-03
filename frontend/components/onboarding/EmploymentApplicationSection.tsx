@@ -2,6 +2,16 @@
 
 import { ClipboardList, Stethoscope, ShieldCheck, Phone, Info, Check } from 'lucide-react';
 import type { EmploymentApplicationData } from '@/types/onboarding';
+import {
+  CLINICAL_UNIT_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  POSITION_OPTIONS,
+  PRIMARY_SPECIALTY_OPTIONS,
+  PRIMARY_SPECIALTY_OTHER,
+  SHIFT_PREFERENCE_OPTIONS,
+  requiresUnitPreference,
+  type FieldOption,
+} from '@pcs/shared';
 import type { FieldErrors } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -56,6 +66,52 @@ function YesNoField({
   );
 }
 
+/** "Select all that apply" — same chip styling as YesNoField above. */
+function MultiSelectField({
+  label,
+  options,
+  values,
+  onChange,
+  error,
+  required,
+}: {
+  label: string;
+  options: readonly FieldOption[];
+  values: string[];
+  onChange: (values: string[]) => void;
+  error?: string;
+  required?: boolean;
+}) {
+  const toggle = (value: string) =>
+    onChange(values.includes(value) ? values.filter((v) => v !== value) : [...values, value]);
+  return (
+    <FieldWrapper label={label} required={required} error={error} hint="Select all that apply">
+      <div className="flex flex-wrap gap-2 pt-0.5">
+        {options.map((opt) => {
+          const selected = values.includes(opt.value);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              onClick={() => toggle(opt.value)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${
+                selected
+                  ? 'bg-blue-600 border-blue-600 text-white'
+                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-blue-300'
+              }`}
+            >
+              {selected && <Check size={13} strokeWidth={3} />}
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </FieldWrapper>
+  );
+}
+
 export function EmploymentApplicationSection({
   data,
   onChange,
@@ -84,37 +140,15 @@ export function EmploymentApplicationSection({
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <Select
-              label="License / Position Type"
-              required
-              value={data.licenseType}
-              onChange={update('licenseType')}
-              error={errors.licenseType}
-            >
-              <option value="">Select type</option>
-              <option value="RN">Registered Nurse (RN)</option>
-              <option value="LVN">Licensed Vocational Nurse (LVN)</option>
-              <option value="NP">Nurse Practitioner (NP)</option>
-              <option value="CNA">Certified Nursing Assistant (CNA)</option>
-              <option value="other">Other</option>
-            </Select>
-
-            <Input
               label="Position Applied For"
               required
-              placeholder="e.g. RN — Med/Surg, ICU Travel RN"
               value={data.positionApplied}
               onChange={update('positionApplied')}
               error={errors.positionApplied}
-            />
-
-            <Input
-              label="Specialty / Unit Preference"
-              required
-              placeholder="e.g. ICU, ER, L&D, Pediatrics, Med-Surg"
-              value={data.specialtyPreference}
-              onChange={update('specialtyPreference')}
-              error={errors.specialtyPreference}
-            />
+            >
+              <option value="">Select position</option>
+              {POSITION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </Select>
 
             <Select
               label="Employment Type"
@@ -124,24 +158,31 @@ export function EmploymentApplicationSection({
               error={errors.employmentType}
             >
               <option value="">Select type</option>
-              <option value="full_time">Full-Time</option>
-              <option value="part_time">Part-Time</option>
-              <option value="per_diem">Per Diem</option>
+              {EMPLOYMENT_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </Select>
 
-            <Select
+            {/* Not asked of a CNA; earlier selections are kept (restored on switching back). */}
+            {requiresUnitPreference(data.positionApplied) && (
+              <div className="sm:col-span-2">
+                <MultiSelectField
+                  label="Specialty / Unit Preference"
+                  required
+                  options={CLINICAL_UNIT_OPTIONS}
+                  values={data.specialtyPreference}
+                  onChange={(v) => set('specialtyPreference', v)}
+                  error={errors.specialtyPreference}
+                />
+              </div>
+            )}
+
+            <MultiSelectField
               label="Shift Preference"
               required
-              value={data.shiftPreference}
-              onChange={update('shiftPreference')}
+              options={SHIFT_PREFERENCE_OPTIONS}
+              values={data.shiftPreference}
+              onChange={(v) => set('shiftPreference', v)}
               error={errors.shiftPreference}
-            >
-              <option value="">Select shift</option>
-              <option value="day">Day (7a–7p / 8a–4p)</option>
-              <option value="evening">Evening (3p–11p)</option>
-              <option value="night">Night (7p–7a / 11p–7a)</option>
-              <option value="any">Open to any shift</option>
-            </Select>
+            />
 
             <Input
               label="Available Start Date"
@@ -164,6 +205,20 @@ export function EmploymentApplicationSection({
         />
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <Select
+              label="License Type"
+              required
+              value={data.licenseType}
+              onChange={update('licenseType')}
+              error={errors.licenseType}
+            >
+              <option value="">Select type</option>
+              <option value="RN">Registered Nurse (RN)</option>
+              <option value="LVN">Licensed Vocational Nurse (LVN)</option>
+              <option value="NP">Nurse Practitioner (NP)</option>
+              <option value="CNA">Certified Nursing Assistant (CNA)</option>
+              <option value="other">Other</option>
+            </Select>
             <Input
               label="License Number"
               required
@@ -249,15 +304,28 @@ export function EmploymentApplicationSection({
               <option value="10+">10+ years</option>
             </Select>
 
-            <Input
+            <Select
               label="Primary Clinical Specialty"
               required
-              placeholder="e.g. Critical Care, Emergency, Med-Surg"
               value={data.primarySpecialty}
               onChange={update('primarySpecialty')}
               error={errors.primarySpecialty}
               hint="Your main area of nursing practice"
-            />
+            >
+              <option value="">Select specialty</option>
+              {PRIMARY_SPECIALTY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </Select>
+
+            {data.primarySpecialty === PRIMARY_SPECIALTY_OTHER && (
+              <Input
+                label="Please specify your primary specialty"
+                required
+                placeholder="e.g. Pediatrics"
+                value={data.primarySpecialtyOther}
+                onChange={update('primarySpecialtyOther')}
+                error={errors.primarySpecialtyOther}
+              />
+            )}
 
             <YesNoField
               label="Are you currently employed?"

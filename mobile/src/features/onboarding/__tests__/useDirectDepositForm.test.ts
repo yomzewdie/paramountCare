@@ -328,7 +328,7 @@ describe('useDirectDepositForm', () => {
       let outcome;
       await act(async () => { outcome = await result.current.complete(); });
       expect(outcome).toEqual({ kind: 'invalid' });
-      expect(result.current.errors.directDepositProofDocument).toBe('A voided check must be attached to complete direct deposit authorization');
+      expect(result.current.errors.directDepositProofDocument).toBe('Upload a voided check or bank document showing your routing and account numbers to complete direct deposit authorization');
 
       await pickAndUpload(result);
 

@@ -1,4 +1,4 @@
-import type { StepStates } from '@pcs/shared';
+import { normalizeEmploymentApplication, type StepStates } from '@pcs/shared';
 import type {
   OnboardingFormData,
   PersonalInfo,
@@ -93,7 +93,8 @@ function restoreFile(f: StorableUploadedFile | null) {
 function fromStorable(stored: StorableFormData): OnboardingFormData {
   return {
     personalInfo:          stored.personalInfo          ?? defaultFormData.personalInfo,
-    employmentApplication: stored.employmentApplication  ?? defaultFormData.employmentApplication,
+    // Normalized: drafts saved before the UAT field changes hold string unit/shift values.
+    employmentApplication: normalizeEmploymentApplication(stored.employmentApplication),
     i9Data:                stored.i9Data                ?? defaultFormData.i9Data,
     w4Data:                stored.w4Data                ?? defaultFormData.w4Data,
     employmentReferences:  stored.employmentReferences  ?? defaultFormData.employmentReferences,

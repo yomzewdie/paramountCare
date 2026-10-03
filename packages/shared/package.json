@@ -9,7 +9,9 @@
     "./packets": "./src/packets.ts",
     "./onboarding": "./src/onboarding.ts",
     "./validation": "./src/validation.ts",
-    "./completion": "./src/completion.ts"
+    "./completion": "./src/completion.ts",
+    "./employmentApplication": "./src/employmentApplication.ts",
+    "./dates": "./src/dates.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

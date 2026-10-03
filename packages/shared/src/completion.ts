@@ -1,5 +1,18 @@
 import type { OnboardingFormData, AcknowledgementEntry } from './onboarding';
+import { defaultEmploymentReference } from './onboarding';
 import type { OnboardingPacket } from './packets';
+import {
+  CLINICAL_UNIT_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  POSITION_OPTIONS,
+  PRIMARY_SPECIALTY_OPTIONS,
+  PRIMARY_SPECIALTY_OTHER,
+  SHIFT_PREFERENCE_OPTIONS,
+  isOptionValue,
+  normalizeEmploymentApplication,
+  requiresUnitPreference,
+} from './employmentApplication';
+import { isValidIsoDate } from './dates';
 
 export interface StepCompletion {
   step: string;   // packet step ID
@@ -19,28 +32,37 @@ function countStrings(values: string[]): { completed: number; total: number } {
   };
 }
 
-function employmentApplicationCompletion(data: OnboardingFormData['employmentApplication'] | undefined): StepCompletion {
-  if (!data) return { step: 'employment_application', completed: 0, total: 17, percent: 0 };
-  let completed = 0;
-  if (data.positionApplied.trim()) completed++;
-  if (data.specialtyPreference.trim()) completed++;
-  if (data.shiftPreference) completed++;
-  if (data.employmentType) completed++;
-  if (data.licenseType) completed++;
-  if (data.licenseNumber.trim()) completed++;
-  if (data.licenseState) completed++;
-  if (data.licenseExpiration.trim()) completed++;
-  if (data.yearsExperience) completed++;
-  if (data.primarySpecialty.trim()) completed++;
-  if (data.authorizedToWork === true) completed++;
-  if (data.hasConviction !== null) completed++;
-  if (data.hasLicenseDiscipline !== null) completed++;
-  if (data.hasLicenseRevocation !== null) completed++;
-  if (data.underInvestigation !== null) completed++;
-  if (data.emergencyContactName.trim()) completed++;
-  if (data.emergencyContactRelationship.trim()) completed++;
-  if (data.emergencyContactPhone.trim()) completed++;
-  const total = 18;
+// Counts an item only once it would pass validateEmploymentApplication(), so
+// 100% always means "valid". The unit preference item is not part of the
+// denominator for a CNA (never asked), and a hidden selection never counts.
+function employmentApplicationCompletion(raw: OnboardingFormData['employmentApplication'] | undefined): StepCompletion {
+  const data = normalizeEmploymentApplication(raw);
+  const asksUnits = requiresUnitPreference(data.positionApplied);
+  const items: boolean[] = [
+    isOptionValue(POSITION_OPTIONS, data.positionApplied),
+    ...(asksUnits
+      ? [data.specialtyPreference.length > 0 && data.specialtyPreference.every((v) => isOptionValue(CLINICAL_UNIT_OPTIONS, v))]
+      : []),
+    data.shiftPreference.length > 0 && data.shiftPreference.every((v) => isOptionValue(SHIFT_PREFERENCE_OPTIONS, v)),
+    isOptionValue(EMPLOYMENT_TYPE_OPTIONS, data.employmentType),
+    !!data.licenseType,
+    !!data.licenseNumber.trim(),
+    !!data.licenseState,
+    isValidIsoDate(data.licenseExpiration),
+    !!data.yearsExperience,
+    isOptionValue(PRIMARY_SPECIALTY_OPTIONS, data.primarySpecialty) &&
+      (data.primarySpecialty !== PRIMARY_SPECIALTY_OTHER || !!data.primarySpecialtyOther.trim()),
+    data.authorizedToWork === true,
+    data.hasConviction !== null,
+    data.hasLicenseDiscipline !== null,
+    data.hasLicenseRevocation !== null,
+    data.underInvestigation !== null,
+    !!data.emergencyContactName.trim(),
+    !!data.emergencyContactRelationship.trim(),
+    !!data.emergencyContactPhone.trim(),
+  ];
+  const completed = items.filter(Boolean).length;
+  const total = items.length;
   return { step: 'employment_application', completed, total, percent: pct(completed, total) };
 }
 
@@ -77,8 +99,10 @@ function i9Completion(data: OnboardingFormData['i9Data']): StepCompletion {
 }
 
 function employmentCompletion(data: OnboardingFormData, stepId: string): StepCompletion {
-  const ref = data.employmentReferences?.[stepId];
-  if (!ref) return { step: stepId, completed: 0, total: 11, percent: 0 };
+  const stored = data.employmentReferences?.[stepId];
+  if (!stored) return { step: stepId, completed: 0, total: 11, percent: 0 };
+  // Defaults first — a reference saved before supervisorTitle existed.
+  const ref = { ...defaultEmploymentReference, ...stored };
   let completed = 0;
   if (ref.positionHeld.trim()) completed++;
   if (ref.employmentDateFrom.trim()) completed++;
@@ -88,8 +112,8 @@ function employmentCompletion(data: OnboardingFormData, stepId: string): StepCom
   if (ref.employerState.trim()) completed++;
   if (ref.supervisorName.trim()) completed++;
   if (ref.supervisorPhone.trim()) completed++;
+  if (ref.supervisorTitle.trim()) completed++;
   if (ref.permissionGranted) completed++;
-  if (ref.reasonForLeaving.trim()) completed++;
   if (ref.eligibleForRehire !== null) completed++;
   const total = 11;
   return { step: stepId, completed, total, percent: pct(completed, total) };

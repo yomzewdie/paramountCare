@@ -82,11 +82,11 @@ const VALID_PERSONAL_INFO = {
   address: '123 Main St', aptNumber: '', city: 'Los Angeles', state: 'CA', zip: '90001',
 };
 
-const VALID_EMPLOYMENT_APPLICATION = {
-  positionApplied: 'RN', specialtyPreference: 'Med-Surg', shiftPreference: 'day', employmentType: 'full_time',
+export const VALID_EMPLOYMENT_APPLICATION = {
+  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
   availableStartDate: '2026-01-01',
   licenseType: 'RN', licenseNumber: 'RN123456', licenseState: 'CA', licenseExpiration: '2028-01-01',
-  yearsExperience: '3-5', primarySpecialty: 'Med-Surg',
+  yearsExperience: '3-5', primarySpecialty: 'med_surg', primarySpecialtyOther: '',
   authorizedToWork: true, hasConviction: false, convictionDetails: '',
   hasLicenseDiscipline: false, licenseDisciplineDetails: '',
   hasLicenseRevocation: false, licenseRevocationDetails: '',
@@ -97,11 +97,11 @@ const VALID_EMPLOYMENT_APPLICATION = {
 const SIGNED_ACK = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z' };
 const DECLINING_VACCINE = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' };
 
-const VALID_REFERENCE = {
+export const VALID_REFERENCE = {
   positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
   employerName: 'Test Hospital', employerCity: 'Los Angeles', employerState: 'CA',
-  supervisorName: 'Supervisor Name', supervisorPhone: '5551112222',
-  permissionGranted: true, reasonForLeaving: 'Relocation', eligibleForRehire: true,
+  supervisorName: 'Supervisor Name', supervisorPhone: '5551112222', supervisorTitle: 'Nurse Manager',
+  permissionGranted: true, eligibleForRehire: true,
   rehireDetails: '', comments: '',
 };
 
