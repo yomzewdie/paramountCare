@@ -52,6 +52,8 @@ export interface ApplicationsPage {
 // /api/admin/documents/<applicationId>/<documentId>, by numeric id only.
 export interface DocumentRecord {
   id: number;
+  /** Upload slot (e.g. 'applicant_resume'); null for generated forms and legacy rows. */
+  docType: string | null;
   label: string | null;
   fileName: string;
   fileSize: number;
@@ -115,6 +117,7 @@ interface WorkerDocumentRecord {
 // upload slot (worker/src/routes/sessions.ts DOC_TYPE_APPLIERS). Vaccination
 // proof is identified per vaccine.
 export const DOC_TYPE_LABELS: Record<string, string> = {
+  applicant_resume: 'Resume',
   hep_b_vaccination_proof: 'Hepatitis B vaccination proof',
   tdap_vaccination_proof: 'Tdap vaccination proof',
   flu_vaccination_proof: 'Influenza vaccination proof',
@@ -125,7 +128,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   list_a: 'I-9 List A document',
   list_b: 'I-9 List B document',
   list_c: 'I-9 List C document',
-  nursing_license: 'Nursing license',
+  nursing_license: 'Professional license / certification',
   cpr_cert: 'CPR / BLS certification',
 };
 
@@ -162,6 +165,7 @@ export function labelDocuments(
   };
 
   if (payload) {
+    ref(payload.resumeDocument, DOC_TYPE_LABELS.applicant_resume);
     ref(payload.directDepositProofDocument, DOC_TYPE_LABELS.direct_deposit_voided_check);
     const vaccines = payload.vaccineProofDocuments;
     if (vaccines && typeof vaccines === 'object') {
@@ -179,6 +183,7 @@ export function labelDocuments(
 
   return docs.map((d) => ({
     id: d.id,
+    docType: d.docType ?? null,
     label: (d.docType ? DOC_TYPE_LABELS[d.docType] : undefined) ?? labelByKey.get(d.objectKey) ?? null,
     fileName: d.fileName,
     fileSize: d.fileSize,

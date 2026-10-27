@@ -1,30 +1,49 @@
-import { useCallback, useRef } from 'react';
-import { useRouter } from 'expo-router';
-import { ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { Button } from '../../components/Button';
 import { StepActionBar } from '../../components/StepActionBar';
 import { FormFooterStatus } from '../../components/FormFooterStatus';
+import { RevealOnShow } from '../../components/RevealOnShow';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useDocumentsForm } from './useDocumentsForm';
 import { DocumentSlotCard } from '../../components/DocumentSlotCard';
+import { buildDocumentChecklist, type ChecklistItem } from '../documents/documentChecklist';
 
+/**
+ * Documents & Credentials — a guided checklist over the same required
+ * slots, rules, and upload pipeline as before (useDocumentsForm):
+ *  - the I-9 identity choice first (List A, or List B + List C), then the
+ *    chosen path's upload(s), then the packet's credentials in order;
+ *  - ONE active upload card at a time — the first incomplete requirement;
+ *  - completed uploads collapse to a compact row (✓, file name, Replace);
+ *    Replace reopens the full card (with Remove), and it collapses again
+ *    once the new file is uploaded;
+ *  - after each upload the next requirement opens and is scrolled into view.
+ *
+ * No unsaved-changes guard: every upload persists itself the moment it
+ * succeeds, so leaving this screen can never discard anything.
+ */
 export default function DocumentsScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = useDocumentsForm();
 
-  // No useUnsavedChangesGuard here (unlike every text-field-based step) —
-  // there is no local draft to lose: every slot persists itself the
-  // instant it's uploaded, so leaving this screen at any point can never
-  // discard anything.
+  const checklist = buildDocumentChecklist({ requiredSlots: form.requiredSlots, identityPath: form.identityPath, documents: form.documents });
 
-  // Section-level (not per-field — there are no text fields here) scroll
-  // targets: the identity group, and each individual credential slot,
-  // keyed by docType. Mirrors the same onLayout-offset-tracking pattern
-  // every other step screen uses for its own scroll-to-first-error.
+  // A completed item the applicant reopened with Replace, and the file it
+  // held then — once a different file is uploaded it collapses again.
+  const [reopened, setReopened] = useState<{ docType: string; objectKey: string | undefined } | null>(null);
+  function isOpen(item: ChecklistItem): boolean {
+    if (item.docType === checklist.activeDocType) return true;
+    if (reopened?.docType !== item.docType) return false;
+    return !(item.done && item.file?.objectKey !== reopened.objectKey);
+  }
+
+  // Scroll-to-first-error targets: the identity section and each item.
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsets = useRef<Record<string, number>>({});
   const setSectionOffset = useCallback((key: string, e: LayoutChangeEvent) => {
@@ -33,27 +52,78 @@ export default function DocumentsScreen() {
 
   function scrollToFirstError() {
     const identityInvalid = !!form.errors.i9 || !!form.identityPathError;
-    const firstCredentialKey = form.visibleCredentialSlots.find((s) => form.errors[s.formDataField])?.docType;
-    const key = identityInvalid ? 'identity' : firstCredentialKey;
-    const y = key ? sectionOffsets.current[key] : undefined;
+    const firstInvalid = identityInvalid ? 'identity' : checklist.items.find((i) => !i.done)?.docType;
+    const y = firstInvalid ? sectionOffsets.current[firstInvalid] : undefined;
     if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
   }
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.afterComplete();
     else if (outcome.kind === 'invalid') scrollToFirstError();
   }
 
-  const totalRequired = form.visibleIdentitySlots.length > 0 ? 1 + form.visibleCredentialSlots.length : form.visibleCredentialSlots.length;
-  const completedRequired =
-    (form.visibleIdentitySlots.length > 0 && form.identitySatisfied ? 1 : 0) +
-    form.visibleCredentialSlots.filter((s) => form.slotHooks[s.docType]?.status === 'uploaded').length;
+  const caption = (text: string, color = theme.colors.textMuted) => (
+    <Text style={[theme.typography.caption, { color, marginBottom: theme.spacing.sm }]}>{text}</Text>
+  );
+
+  function renderItem(item: ChecklistItem, index: number) {
+    const hook = form.slotHooks[item.docType];
+    const error = item.group === 'credential' ? form.errors[item.slot.formDataField] : undefined;
+    const open = isOpen(item);
+    return (
+      <View key={item.docType} onLayout={(e) => setSectionOffset(item.docType, e)} style={{ marginBottom: theme.spacing.sm }}>
+        <RevealOnShow when={open} testID={`doc-open-${item.docType}`}>
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>
+            {index + 1}. {item.slot.label}
+          </Text>
+          <DocumentSlotCard slot={item.slot} hook={hook} error={error} />
+          {item.done && reopened?.docType === item.docType ? (
+            <Button label="Done" variant="secondary" onPress={() => setReopened(null)} />
+          ) : null}
+        </RevealOnShow>
+        {!open ? (
+          <View
+            testID={`doc-row-${item.docType}`}
+            style={{
+              flexDirection: 'row', alignItems: 'center', padding: theme.spacing.md,
+              borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface,
+            }}
+          >
+            <Text
+              accessibilityLabel={item.done ? 'Uploaded' : 'Not uploaded yet'}
+              style={[theme.typography.bodyStrong, { color: item.done ? theme.colors.success : theme.colors.textMuted, width: 24 }]}
+            >
+              {item.done ? '✓' : `${index + 1}`}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[theme.typography.bodyStrong, { color: item.done ? theme.colors.text : theme.colors.textMuted }]}>{item.slot.label}</Text>
+              <Text numberOfLines={1} style={[theme.typography.caption, { color: theme.colors.textMuted }]}>
+                {item.done ? item.file?.name : 'Up next'}
+              </Text>
+              {error ? <Text style={[theme.typography.caption, { color: theme.colors.danger }]}>{error}</Text> : null}
+            </View>
+            {item.done ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Replace ${item.slot.label}`}
+                hitSlop={8}
+                onPress={() => setReopened({ docType: item.docType, objectKey: item.file?.objectKey })}
+                style={{ minHeight: theme.minTouchTarget, justifyContent: 'center', paddingHorizontal: 8 }}
+              >
+                <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '600' }]}>Replace</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
+  }
 
   return (
     <Screen
@@ -72,134 +142,47 @@ export default function DocumentsScreen() {
         </>
       }
     >
-      <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>License & Credential Uploads</Text>
-      <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
-        {completedRequired} of {totalRequired} requirements complete
+      <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Documents & Credentials</Text>
+      <Text accessibilityLiveRegion="polite" style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
+        {checklist.completedRequired} of {checklist.totalRequired} required documents uploaded
       </Text>
 
-      {form.identityRequired ? (
-        <View style={{ marginBottom: theme.spacing.lg }} onLayout={(e) => setSectionOffset('identity', e)}>
-          <Text
-            style={[
-              theme.typography.caption,
-              { color: theme.colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: theme.spacing.sm },
-            ]}
-          >
-            Required Documents
+      {checklist.allComplete ? (
+        <View
+          testID="documents-complete"
+          style={{ marginBottom: theme.spacing.lg, padding: theme.spacing.md, backgroundColor: theme.colors.successSurface, borderRadius: theme.radii.md }}
+        >
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.success }]}>All required documents uploaded</Text>
+          <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.xs }]}>
+            Tap {form.isCompleted ? 'Save' : 'Continue'} to finish this step.
           </Text>
-          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Identity & Work Authorization</Text>
-          <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-            Choose one way to verify your identity and work authorization.
-          </Text>
-
-          <View style={{ flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.md }}>
-            <View style={{ flex: 1 }}>
-              <Button
-                label="List A document"
-                variant={form.identityPath === 'list_a' ? 'primary' : 'secondary'}
-                onPress={() => form.setIdentityPath('list_a')}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                label="List B + List C documents"
-                variant={form.identityPath === 'list_b_c' ? 'primary' : 'secondary'}
-                onPress={() => form.setIdentityPath('list_b_c')}
-              />
-            </View>
-          </View>
-
-          {form.identityPath === 'list_a' ? (
-            <>
-              <DocumentSlotCard slot={form.visibleIdentitySlots.find((s) => s.docType === 'list_a')!} hook={form.slotHooks.list_a} />
-              {form.slotHooks.list_b.file || form.slotHooks.list_c.file ? (
-                <Text style={[theme.typography.caption, { color: theme.colors.textMuted, fontStyle: 'italic', marginBottom: theme.spacing.sm }]}>
-                  Your previously attached List B/List C document(s) will be removed automatically once your List A document is uploaded here.
-                </Text>
-              ) : null}
-            </>
-          ) : null}
-
-          {form.identityPath === 'list_b_c' ? (
-            <>
-              <DocumentSlotCard slot={form.visibleIdentitySlots.find((s) => s.docType === 'list_b')!} hook={form.slotHooks.list_b} badge="+" />
-              <DocumentSlotCard slot={form.visibleIdentitySlots.find((s) => s.docType === 'list_c')!} hook={form.slotHooks.list_c} />
-              {form.slotHooks.list_a.file ? (
-                <Text style={[theme.typography.caption, { color: theme.colors.textMuted, fontStyle: 'italic', marginBottom: theme.spacing.sm }]}>
-                  Your previously attached List A document will be removed automatically once both List B and List C are uploaded here.
-                </Text>
-              ) : null}
-            </>
-          ) : null}
-
-          {!form.identityPath ? (
-            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-              Select an option above to continue.
-            </Text>
-          ) : null}
-
-          {/* form.errors.i9 (nothing satisfies the requirement at all) takes
-              priority; identityPathError only applies once something DOES
-              satisfy it — via the path the applicant is actively moving
-              away from — and explains why Continue is still blocked for
-              the option they actually selected. */}
-          {form.errors.i9 ? (
-            <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: theme.spacing.xs }]}>
-              {form.errors.i9}
-            </Text>
-          ) : form.identityPathError ? (
-            <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: theme.spacing.xs }]}>
-              {form.identityPathError}
-            </Text>
-          ) : null}
-
-          {form.visibleCredentialSlots.map((slot) => (
-            <View key={slot.docType} style={{ marginTop: theme.spacing.md }} onLayout={(e) => setSectionOffset(slot.docType, e)}>
-              <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{slot.label}</Text>
-              <DocumentSlotCard slot={slot} hook={form.slotHooks[slot.docType]} />
-              {form.errors[slot.formDataField] ? (
-                <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: -theme.spacing.xs }]}>
-                  {form.errors[slot.formDataField]}
-                </Text>
-              ) : null}
-            </View>
-          ))}
         </View>
-      ) : (
-        // No i9Uploads requirement for this packet — still show whichever
-        // credential slots ARE required, without the identity heading.
-        form.visibleCredentialSlots.length > 0 ? (
-          <View style={{ marginBottom: theme.spacing.lg }}>
-            <Text
-              style={[
-                theme.typography.caption,
-                { color: theme.colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: theme.spacing.sm },
-              ]}
-            >
-              Required Documents
-            </Text>
-            {form.visibleCredentialSlots.map((slot) => (
-              <View key={slot.docType} style={{ marginBottom: theme.spacing.md }}>
-                <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>{slot.label}</Text>
-                <DocumentSlotCard slot={slot} hook={form.slotHooks[slot.docType]} />
-                {form.errors[slot.formDataField] ? (
-                  <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: -theme.spacing.xs }]}>
-                    {form.errors[slot.formDataField]}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
+      ) : null}
+
+      {checklist.identityRequired ? (
+        <View style={{ marginBottom: theme.spacing.md }} onLayout={(e) => setSectionOffset('identity', e)}>
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Identity & Work Authorization</Text>
+          {caption('Choose one way to verify your identity and work authorization.')}
+          <View style={{ flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Button label="List A document" variant={form.identityPath === 'list_a' ? 'primary' : 'secondary'} onPress={() => form.setIdentityPath('list_a')} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button label="List B + List C documents" variant={form.identityPath === 'list_b_c' ? 'primary' : 'secondary'} onPress={() => form.setIdentityPath('list_b_c')} />
+            </View>
           </View>
-        ) : null
-      )}
+          {checklist.needsIdentityChoice ? caption('Select an option above to start.') : null}
+          {form.identityPath === 'list_a' && (form.slotHooks.list_b.file || form.slotHooks.list_c.file)
+            ? caption('Your previously attached List B/List C document(s) will be removed automatically once your List A document is uploaded.')
+            : null}
+          {form.identityPath === 'list_b_c' && form.slotHooks.list_a.file
+            ? caption('Your previously attached List A document will be removed automatically once both List B and List C are uploaded.')
+            : null}
+          {form.errors.i9 ? caption(form.errors.i9, theme.colors.danger) : form.identityPathError ? caption(form.identityPathError, theme.colors.danger) : null}
+        </View>
+      ) : null}
 
-      {/* No optional document exists in the current Paramount business
-          process (confirmed from packets.ts/completion.ts/the existing web
-          UploadSection.tsx — all three agree) — this section intentionally
-          renders nothing today rather than fabricating one, but the data
-          shape (`DocumentSlotDef.optional`) already supports a future
-          genuinely-optional document type appearing here. */}
-
+      {checklist.items.map(renderItem)}
     </Screen>
   );
 }

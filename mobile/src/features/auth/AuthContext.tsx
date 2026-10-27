@@ -131,6 +131,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+/** Like useAuth(), but null outside an AuthProvider — for hooks that only
+ * use account data as an optional convenience (e.g. pre-filling a field). */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
+}
+
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth() must be used within an AuthProvider');

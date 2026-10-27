@@ -9,7 +9,7 @@ import { OnboardingFormData } from '@/types/onboarding';
 import {
   CLINICAL_UNIT_OPTIONS, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
   POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS,
-  finalizeEmploymentApplication, formatOptionValues, formatPrimarySpecialty, isoDateToDisplay, requiresUnitPreference,
+  finalizeEmploymentApplication, formatOptionValues, isoDateToDisplay, requiresUnitPreference,
 } from '@pcs/shared';
 import { isStepValid } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
@@ -81,11 +81,6 @@ function BoolRow({ label, checked }: { label: string; checked: boolean }) {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-
-const EXP_LABELS: Record<string, string> = {
-  '0-1': 'Less than 1 year', '1-3': '1–3 years', '3-5': '3–5 years',
-  '5-10': '5–10 years', '10+': '10+ years',
-};
 
 export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
   const { personalInfo: p, i9Data: i9, safetyEducation: s, uploadedDocuments: u } = data;
@@ -184,7 +179,7 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
           </ReviewGroup>
 
           {/* 2. Employment Application */}
-          <ReviewGroup title="Employment Application" icon={<ClipboardList size={15} />} step="employment_application" isComplete={stepValid.employment_application} onEdit={onEditStep}>
+          <ReviewGroup title="Applicant Details" icon={<ClipboardList size={15} />} step="employment_application" isComplete={stepValid.employment_application} onEdit={onEditStep}>
             <Row label="Position Applied For" value={formatOptionValues(ea.positionApplied, POSITION_OPTIONS) || null} />
             {requiresUnitPreference(ea.positionApplied) && (
               <Row label="Specialty / Unit Preference" value={formatOptionValues(ea.specialtyPreference, CLINICAL_UNIT_OPTIONS) || null} />
@@ -195,8 +190,6 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
             <Row label="License Number" value={ea.licenseNumber || null} />
             <Row label="License State" value={ea.licenseState || null} />
             <Row label="License Expires" value={isoDateToDisplay(ea.licenseExpiration) || null} />
-            <Row label="Years of Experience" value={(EXP_LABELS[ea.yearsExperience] ?? ea.yearsExperience) || null} />
-            <Row label="Primary Specialty" value={formatPrimarySpecialty(ea.primarySpecialty, ea.primarySpecialtyOther) || null} />
             <Row label="Work Authorization" value={ea.authorizedToWork === true ? 'Authorized' : ea.authorizedToWork === false ? 'Not authorized' : null} />
             <Row label="License Revocation/Suspension" value={ea.hasLicenseRevocation === true ? `Yes — ${ea.licenseRevocationDetails.slice(0, 80)}${ea.licenseRevocationDetails.length > 80 ? '…' : ''}` : ea.hasLicenseRevocation === false ? 'None' : null} />
             <Row label="Emergency Contact" value={ea.emergencyContactName ? `${ea.emergencyContactName} (${ea.emergencyContactRelationship})` : null} />
@@ -343,19 +336,11 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
                 isComplete={stepValid[stepId as keyof typeof stepValid]}
                 onEdit={onEditStep}
               >
-                <Row label="Position Held" value={e.positionHeld} />
-                <Row label="Dates of Employment" value={e.employmentDateFrom && e.employmentDateTo ? `${e.employmentDateFrom} – ${e.employmentDateTo}` : null} />
-                <Row label="Employer" value={e.employerName} />
-                <Row label="Location" value={[e.employerCity, e.employerState].filter(Boolean).join(', ') || null} />
                 <Row label="Supervisor" value={e.supervisorName} />
                 <Row label="Supervisor Title" value={e.supervisorTitle || null} />
+                <Row label="Facility / Employer" value={e.employerName} />
                 <Row label="Supervisor Phone" value={e.supervisorPhone} />
-                {e.reasonForLeaving && <Row label="Reason for Leaving" value={e.reasonForLeaving} />}
-                <Row label="Eligible for Rehire" value={e.eligibleForRehire === true ? 'Yes' : e.eligibleForRehire === false ? 'No' : null} />
-                {e.eligibleForRehire === false && e.rehireDetails && (
-                  <Row label="Rehire Details" value={e.rehireDetails} />
-                )}
-                {e.comments && <Row label="Comments" value={e.comments} />}
+                {e.supervisorEmail && <Row label="Supervisor Email" value={e.supervisorEmail} />}
                 <BoolRow label="Permission granted for PARAMOUNT CARE STAFFING, LLC to contact this reference" checked={e.permissionGranted} />
               </ReviewGroup>
             );

@@ -96,3 +96,20 @@ Rationale for the ordering: **completion, security, compliance, and operational 
 - Do not build a rules engine, event bus, or AI integration now.
 - Do not hardcode a rigid one-packet-per-specialization model further (see ADR-016) — but do not generalize it into a full rules engine either, until #2 is actually scheduled.
 - Do not migrate applicant profile data into `users`, and do not migrate credential lifecycle data into `onboarding_sessions.form_data_json` — both explicitly called out in ADR-016 as the wrong home for that data.
+
+---
+
+## 5. Backlog from UAT (not scheduled)
+
+### Automated employment reference verification — **Future**
+
+UAT asked for references to be verified automatically: when an applicant submits, each listed supervisor (Employment Reference #1/#2/#3 — name, title, facility, phone, optional email, permission to contact) would receive a secure link to Paramount's Employment Reference Check form, and their responses would appear on the application in the Admin Portal.
+
+Deliberately **not** built yet. It needs its own design and approval for: an outbound email workflow to third parties (deliverability, consent, retries), single-use expiring tokens for unauthenticated supervisors, a new data model and D1 tables for reference requests and responses, a supervisor-facing web form, and Admin Portal status/review UI. The current reference model (supervisor contact details + the applicant's permission to contact) is already what such a workflow would consume, so no data change is needed until then.
+
+### Professional experience requirements — **Decided: manual recruiter review**
+
+- The CNA minimum of 1 year of relevant professional experience is **not** enforced automatically.
+- The RN minimum of 2 years of relevant professional experience is **not** enforced automatically.
+- Recruiters verify professional experience manually from the applicant's uploaded resume (Admin Portal → Resume → Download).
+- The app does not parse resumes and does not collect manual work history (employers, titles, dates, years of experience). The only automatic eligibility rule is age: applicants must be at least 18 (Personal Information → Date of Birth), enforced on mobile and at Worker submission.

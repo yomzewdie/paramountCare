@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider } from '../../../theme/ThemeProvider';
 import VaccineDeclinationScreen from '../VaccineDeclinationScreen';
@@ -126,5 +127,133 @@ describe.each(['hep_b_declination', 'tdap_declination', 'flu_declination'])('Vac
     await press(PROVIDING_LABEL);
     expect(screen.getByText('kept-card.pdf')).toBeTruthy();
     expect(screen.getByText('Replace')).toBeTruthy();
+  });
+});
+
+// Physical-UAT: a Yes/No answer that reveals the required next action
+// (declination signature, or the proof upload) scrolls THAT control into
+// view — through the real Screen scroll logic — once, after layout.
+describe.each(['hep_b_declination', 'tdap_declination', 'flu_declination'])('VaccineDeclinationScreen reveal scrolling (%s)', (stepId) => {
+  const VIEWPORT = { y: 0, h: 700 }; // a small iPhone's visible scroll area
+  const MARGIN = 24;
+  let frames: Record<string, { y: number; h: number }>;
+
+  beforeEach(() => {
+    mockStepId = stepId;
+    jest.clearAllMocks();
+    frames = {};
+    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
+    // Window frames by testID; anything else (e.g. the keyboard container) is irrelevant here.
+    jest.spyOn(View.prototype as unknown as { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => void }, 'measureInWindow')
+      .mockImplementation(function (this: { props?: { testID?: string } }, cb) {
+        const f = frames[this.props?.testID ?? ''] ?? { y: 0, h: 0 };
+        cb(0, f.y, 400, f.h);
+      });
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  function scrollSpy() {
+    const scroll = screen.UNSAFE_getByType(ScrollView).instance as ScrollView;
+    jest.spyOn(scroll, 'getNativeScrollRef').mockReturnValue({ measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(0, VIEWPORT.y, 400, VIEWPORT.h) } as never);
+    return jest.spyOn(scroll, 'scrollTo').mockImplementation(() => {});
+  }
+  const layout = (testID: string) => act(() => fireEvent(screen.getByTestId(testID), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 600 } } }));
+
+  it('Yes reveals the signature entry and scrolls it fully into view', async () => {
+    renderScreen();
+    const scrollTo = scrollSpy();
+    await press(DECLINING_LABEL);
+    expect(screen.getByPlaceholderText('Type your full legal name to sign')).toBeTruthy();
+    frames['decline-required-action'] = { y: 1000, h: 70 }; // below the fold, under the long statement
+    layout('decline-reveal');
+    // The smallest scroll that shows the whole signature control: its bottom
+    // lands just above the viewport's bottom margin, so the content above it
+    // (statement, checkbox) stays as visible as the screen allows.
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ y: 1070 - (VIEWPORT.h - MARGIN), animated: true });
+  });
+
+  it('No reveals the proof upload and scrolls it into view', async () => {
+    renderScreen();
+    const scrollTo = scrollSpy();
+    await press(PROVIDING_LABEL);
+    expect(screen.getByText(UPLOAD_LABEL)).toBeTruthy();
+    frames['proof-required-action'] = { y: 900, h: 250 };
+    layout('proof-reveal');
+    expect(scrollTo).toHaveBeenCalledWith({ y: 1150 - (VIEWPORT.h - MARGIN), animated: true });
+  });
+
+  it('does not move the screen when the revealed control is already fully visible', async () => {
+    renderScreen();
+    const scrollTo = scrollSpy();
+    await press(DECLINING_LABEL);
+    frames['decline-required-action'] = { y: 300, h: 70 };
+    layout('decline-reveal');
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('scrolls once per reveal — never again on re-render, typing, or re-layout', async () => {
+    renderScreen();
+    const scrollTo = scrollSpy();
+    await press(DECLINING_LABEL);
+    frames['decline-required-action'] = { y: 1000, h: 70 };
+    layout('decline-reveal');
+    fireEvent.changeText(screen.getByPlaceholderText('Type your full legal name to sign'), 'Jane Doe');
+    layout('decline-reveal');
+    layout('decline-reveal');
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching answers scrolls to each newly revealed control in turn', async () => {
+    renderScreen();
+    const scrollTo = scrollSpy();
+    await press(DECLINING_LABEL);
+    frames['decline-required-action'] = { y: 1000, h: 70 };
+    layout('decline-reveal');
+    await press(PROVIDING_LABEL);
+    frames['proof-required-action'] = { y: 900, h: 250 };
+    layout('proof-reveal');
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not scroll on opening a step whose answer was already saved', () => {
+    renderScreen(session({ formData: { acknowledgements: { [stepId]: { decision: 'declining', checked: false, typedSignature: '', signedAt: '' } } } }));
+    const scrollTo = scrollSpy();
+    frames['decline-required-action'] = { y: 1000, h: 70 };
+    layout('decline-reveal');
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('completion is unchanged: Continue after Yes still requires the acknowledgement and signature (nothing saved)', async () => {
+    const saveStep = jest.fn();
+    (useSession as jest.Mock).mockReturnValue({
+      session: session(), saveStep, associateDocument: jest.fn(), removeDocument: jest.fn(), status: 'ready', progress: null, error: null, refresh: jest.fn(),
+    });
+    render(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <ThemeProvider><VaccineDeclinationScreen /></ThemeProvider>
+      </SafeAreaProvider>,
+    );
+    scrollSpy();
+    await press(DECLINING_LABEL);
+    await press('Continue');
+    expect(saveStep).not.toHaveBeenCalled();
+    expect(screen.getByText('Your electronic signature is required to complete the declination')).toBeTruthy();
+  });
+});
+
+describe.each(['hep_b_declination', 'tdap_declination', 'flu_declination'])('VaccineDeclinationScreen — one continuous scroll (%s)', (stepId) => {
+  beforeEach(() => {
+    mockStepId = stepId;
+    jest.clearAllMocks();
+  });
+
+  it('the declination statement has no inner scroller: the page is the only vertical scroll surface', async () => {
+    renderScreen();
+    await press(DECLINING_LABEL);
+    expect(screen.UNSAFE_getAllByType(ScrollView)).toHaveLength(1);
+    const style = StyleSheet.flatten(screen.getByTestId('statement').props.style);
+    expect(style.maxHeight).toBeUndefined();
+    expect(style.height).toBeUndefined();
   });
 });

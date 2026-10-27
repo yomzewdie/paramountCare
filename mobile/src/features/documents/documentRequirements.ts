@@ -26,6 +26,9 @@ export interface DocumentRequirement {
   minHeightPx?: number;
   maxSizeBytes: number;
   allowedMimeTypes: string[];
+  /** Applicant-facing list of accepted formats, e.g. "a PDF, DOC, or DOCX"
+   * (defaults to "a PDF, JPG, or PNG"). */
+  allowedTypesDescription?: string;
 }
 
 // Mirrors the Worker's own ALLOWED_TYPES/MAX_SIZE (worker/src/routes/uploads.ts)
@@ -101,3 +104,38 @@ export const VACCINATION_PROOF_REQUIREMENT: DocumentRequirement = {
   maxSizeBytes: SERVER_MAX_SIZE_BYTES,
   allowedMimeTypes: SERVER_ALLOWED_MIME_TYPES,
 };
+
+export const DOC_MIME_TYPE = 'application/msword';
+export const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** The applicant's resume — the whole "About You & Work History" phase.
+ * PDF, DOC, or DOCX (the Worker enforces the same set for the
+ * `applicant_resume` slot and stores Word files as downloads only — never
+ * parsed or rendered). A resume is a document, not a photo, so the
+ * scanner/camera/photo paths are off. */
+export const RESUME_REQUIREMENT: DocumentRequirement = {
+  label: 'Resume',
+  scannerAllowed: false,
+  cameraAllowed: false,
+  existingPhotoAllowed: false,
+  pdfAllowed: true,
+  maxSizeBytes: SERVER_MAX_SIZE_BYTES,
+  allowedMimeTypes: ['application/pdf', DOC_MIME_TYPE, DOCX_MIME_TYPE],
+  allowedTypesDescription: 'a PDF, DOC, or DOCX',
+};
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: DOC_MIME_TYPE,
+  docx: DOCX_MIME_TYPE,
+};
+
+/** The MIME type for a file picked from the Files app. Some providers report
+ * none, or a generic `application/octet-stream`, for Word documents — the
+ * file's own extension decides then. A reported specific type is kept as-is
+ * (the Worker requires DOC/DOCX types to match their extension). */
+export function mimeTypeForPickedDocument(name: string, reported: string | null | undefined): string {
+  if (reported && reported !== 'application/octet-stream') return reported;
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  return MIME_BY_EXTENSION[ext] ?? reported ?? 'application/octet-stream';
+}

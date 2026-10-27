@@ -67,9 +67,9 @@ export const CREDENTIAL_SLOT_BY_KEY: Record<string, DocumentSlotDef> = {
   nursing_license: {
     docType: 'nursing_license',
     formDataField: 'nursingLicense',
-    label: 'Nursing License',
-    description: 'Current state nursing license — RN, LPN, or other.',
-    examples: 'State-issued nursing license card or official printout',
+    label: 'Professional License / Certification',
+    description: 'Your current license or certification for the position you are applying for — RN, LVN, NP, CNA, or Tech (e.g. CST, ARRT, RRT, EMT).',
+    examples: 'State-issued license card or official printout, CNA certificate, or Tech certification card',
   },
   cpr_cert: {
     docType: 'cpr_cert',
@@ -161,4 +161,16 @@ export const VACCINE_PROOF_SLOT_BY_TYPE: Record<string, VaccineProofSlot> = {
   hep_b: { docType: 'hep_b_vaccination_proof', label: 'Hepatitis B vaccination proof' },
   tdap: { docType: 'tdap_vaccination_proof', label: 'Tdap vaccination proof' },
   flu: { docType: 'flu_vaccination_proof', label: 'Influenza vaccination proof' },
+};
+
+// ── Resume ──────────────────────────────────────────────────────────────────
+//
+// `applicant_resume` is the server-recognized slot (worker/src/routes/
+// sessions.ts's DOC_TYPE_APPLIERS); it lands in formData.resumeDocument and
+// is labeled "Resume" in the admin portal.
+export const RESUME_SLOT = {
+  docType: 'applicant_resume',
+  label: 'Resume',
+  description: 'Your current resume, including your work history, clinical experience, and education.',
+  examples: 'PDF, DOC, or DOCX, up to 10 MB',
 };

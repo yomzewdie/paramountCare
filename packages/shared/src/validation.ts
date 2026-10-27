@@ -17,19 +17,21 @@ import type {
 } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
 import {
-  CLINICAL_UNIT_OPTIONS,
   EMPLOYMENT_TYPE_OPTIONS,
+  LICENSE_TYPE_OPTIONS,
   POSITION_OPTIONS,
-  PRIMARY_SPECIALTY_OPTIONS,
-  PRIMARY_SPECIALTY_OTHER,
   SHIFT_PREFERENCE_OPTIONS,
+  activeSpecialtySelections,
   isOptionValue,
   normalizeEmploymentApplication,
   requiresUnitPreference,
 } from './employmentApplication';
-import { isValidIsoDate } from './dates';
+import { ageOnDate, isValidIsoDate, isoDateOf } from './dates';
 
 export type FieldErrors = Record<string, string>;
+
+/** Applicants must be at least this old (Personal Information's DOB). */
+export const MINIMUM_AGE_YEARS = 18;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,14 +70,31 @@ const personalInfoSchema = z.object({
   city:        z.string().min(1, 'City or town is required'),
   state:       z.string().min(2, 'State is required'),
   zip:         z.string().min(1, 'ZIP code is required').regex(zipRegex, 'Enter a 5-digit ZIP code'),
+  // Checked separately (validatePersonalInfo) — needs a calendar-age rule.
+  dateOfBirth: z.string().optional(),
   // Optional fields — no validation needed
   middleInitial: z.string(),
   otherLastNames: z.string(),
   aptNumber: z.string(),
 });
 
-export function validatePersonalInfo(data: PersonalInfo): FieldErrors {
-  return parseSchema(personalInfoSchema, data);
+/** Date of birth is required and the applicant must be at least 18 on
+ * `asOf` (a real calendar-age calculation — see dates.ts ageOnDate). Pass
+ * `asOf` only to make the age check deterministic (tests); everything else
+ * uses today. Same rule mobile, completion, and the Worker apply. */
+export function validatePersonalInfo(data: PersonalInfo, asOf: Date = new Date()): FieldErrors {
+  const errors = parseSchema(personalInfoSchema, data);
+  const dob = (data.dateOfBirth ?? '').trim();
+  if (!dob) {
+    errors.dateOfBirth = 'Date of birth is required';
+  } else if (!isValidIsoDate(dob)) {
+    errors.dateOfBirth = 'Enter a valid date (MM/DD/YYYY)';
+  } else {
+    const age = ageOnDate(dob, isoDateOf(asOf));
+    if (age === null) errors.dateOfBirth = 'Enter a valid date of birth';
+    else if (age < MINIMUM_AGE_YEARS) errors.dateOfBirth = `You must be at least ${MINIMUM_AGE_YEARS} years old to apply.`;
+  }
+  return errors;
 }
 
 // ── Employment Application ────────────────────────────────────────────────────
@@ -87,8 +106,10 @@ export function validatePersonalInfo(data: PersonalInfo): FieldErrors {
 // first (employmentApplication.ts), so a session saved before these changes
 // — string unit/shift values, missing new keys — can never crash this; a
 // legacy value that isn't an allowed choice is simply reported invalid.
-// Hidden CNA unit selections and stale "Other" text are ignored here, never
-// required to be cleared.
+// Hidden CNA unit selections are ignored here, never required to be cleared.
+// Resume-first onboarding: experience/work-history fields (years of
+// experience, primary specialty, …) are covered by the resume and are not
+// validated at all — a legacy value is neither required nor rejected.
 export function validateEmploymentApplication(raw: EmploymentApplicationData): FieldErrors {
   const errors: FieldErrors = {};
   const data = normalizeEmploymentApplication(raw);
@@ -96,14 +117,14 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
   if (!data.positionApplied.trim()) {
     errors.positionApplied = 'Position applied for is required';
   } else if (!isOptionValue(POSITION_OPTIONS, data.positionApplied)) {
-    errors.positionApplied = 'Select CNA, LVN, RN, or NP';
+    errors.positionApplied = 'Select CNA, Tech, LVN, RN, or NP';
   }
 
-  if (requiresUnitPreference(data.positionApplied)) {
-    if (data.specialtyPreference.length === 0) {
-      errors.specialtyPreference = 'Select at least one unit preference';
-    } else if (!data.specialtyPreference.every((v) => isOptionValue(CLINICAL_UNIT_OPTIONS, v))) {
-      errors.specialtyPreference = 'Unit preference contains an option that is no longer available';
+  // Only the selections valid for the chosen position count (a CNA is
+  // always [CNA]); selections left over from another position are drafts.
+  if (requiresUnitPreference(data.positionApplied) && isOptionValue(POSITION_OPTIONS, data.positionApplied)) {
+    if (activeSpecialtySelections(data.positionApplied, data.specialtyPreference).length === 0) {
+      errors.specialtyPreference = 'Select at least one specialty / unit preference';
     }
   }
 
@@ -113,28 +134,20 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
     errors.shiftPreference = 'Shift preference contains an option that is no longer available';
   }
 
-  if (!data.employmentType) {
-    errors.employmentType = 'Employment type is required';
-  } else if (!isOptionValue(EMPLOYMENT_TYPE_OPTIONS, data.employmentType)) {
-    errors.employmentType = 'Select Per-Diem Assignment or Travel Assignment';
+  if (data.employmentType.length === 0) {
+    errors.employmentType = 'Select at least one employment type';
+  } else if (!data.employmentType.every((v) => isOptionValue(EMPLOYMENT_TYPE_OPTIONS, v))) {
+    errors.employmentType = 'Select Per-Diem Assignment, Travel Assignment, or both';
   }
 
   if (!data.licenseType)              errors.licenseType       = 'License type is required';
+  else if (!isOptionValue(LICENSE_TYPE_OPTIONS, data.licenseType)) errors.licenseType = 'Select CNA, Tech, LVN, RN, or NP';
   if (!data.licenseNumber.trim())     errors.licenseNumber     = 'License number is required';
   if (!data.licenseState)             errors.licenseState      = 'License state is required';
   if (!data.licenseExpiration.trim()) {
     errors.licenseExpiration = 'License expiration date is required';
   } else if (!isValidIsoDate(data.licenseExpiration)) {
     errors.licenseExpiration = 'Enter a valid date (MM-DD-YYYY)';
-  }
-
-  if (!data.yearsExperience)          errors.yearsExperience   = 'Years of experience is required';
-  if (!data.primarySpecialty.trim()) {
-    errors.primarySpecialty = 'Primary specialty is required';
-  } else if (!isOptionValue(PRIMARY_SPECIALTY_OPTIONS, data.primarySpecialty)) {
-    errors.primarySpecialty = 'Select a primary specialty';
-  } else if (data.primarySpecialty === PRIMARY_SPECIALTY_OTHER && !data.primarySpecialtyOther.trim()) {
-    errors.primarySpecialtyOther = 'Please specify your primary specialty';
   }
 
   if (data.authorizedToWork !== true) {
@@ -153,10 +166,17 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
     errors.licenseDisciplineDetails = 'Please provide details regarding the disciplinary action';
   }
 
+  if (data.availableStartDate.trim() && !isValidIsoDate(data.availableStartDate)) {
+    errors.availableStartDate = 'Enter a valid date (MM/DD/YYYY)';
+  }
+
   if (data.hasLicenseRevocation === null) {
     errors.hasLicenseRevocation = 'Please answer the license revocation/suspension question';
   } else if (data.hasLicenseRevocation && !data.licenseRevocationDetails.trim()) {
     errors.licenseRevocationDetails = 'Please provide details regarding the license action';
+  }
+  if (data.hasLicenseRevocation && data.licenseRevocationDate.trim() && !isValidIsoDate(data.licenseRevocationDate)) {
+    errors.licenseRevocationDate = 'Enter a valid date (MM/DD/YYYY)';
   }
 
   if (data.underInvestigation === null) {
@@ -228,40 +248,49 @@ export function validateI9(data: I9Data): FieldErrors {
 
 // ── Employment Reference ──────────────────────────────────────────────────────
 
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const employmentReferenceSchema = z.object({
-  positionHeld:       z.string().min(1, 'Position held is required'),
-  employmentDateFrom: z.string().min(1, 'Employment start date is required'),
-  employmentDateTo:   z.string().min(1, 'Employment end date is required'),
-  employerName:       z.string().min(1, 'Employer name is required'),
-  employerCity:       z.string().min(1, 'City is required'),
-  employerState:      z.string().min(2, 'State is required'),
   supervisorName:     z.string().min(1, 'Supervisor name is required'),
-  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
   supervisorTitle:    z.string().trim().min(1, 'Supervisor title is required'),
+  employerName:       z.string().min(1, 'Facility or employer is required'),
+  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
   permissionGranted:  z.boolean(),
-  // reasonForLeaving: legacy-only (replaced by supervisorTitle) — never
-  // required; old values are passed through untouched.
-  eligibleForRehire:  z.union([z.boolean(), z.null()]),
-  rehireDetails:      z.string(),
-  comments:           z.string(),
 });
 
 // Same rules for every reference step (#1, #2, optional #3) — they share one
-// type, one screen, and one formData record.
+// type, one screen, and one formData record. Resume-first onboarding: only
+// who to contact and permission to contact them are required; the
+// employment details themselves are on the resume. Legacy fields (position
+// held, dates, employer city/state, rehire eligibility, reason for leaving)
+// are never required and old values are passed through untouched. Every
+// rule here was already enforced before resume-first (only supervisorEmail
+// is new, and optional), so a reference completed under the old rules can
+// never become invalid.
 export function validateEmploymentReference(raw: EmploymentReference): FieldErrors {
-  // Defaults first: a reference saved before supervisorTitle existed gets a
+  // Defaults first: a reference saved before a field existed gets a
   // friendly "required" message, not a type error.
   const data: EmploymentReference = { ...defaultEmploymentReference, ...raw };
   const errors = parseSchema(employmentReferenceSchema, data);
+  const email = (data.supervisorEmail ?? '').trim();
+  if (email && !emailRegex.test(email)) {
+    errors.supervisorEmail = 'Enter a valid email address, or leave it blank';
+  }
   if (!data.permissionGranted) {
     errors.permissionGranted = 'You must grant permission before continuing';
   }
-  if (data.eligibleForRehire === null) {
-    errors.eligibleForRehire = 'Please indicate rehire eligibility';
-  } else if (data.eligibleForRehire === false && !data.rehireDetails.trim()) {
-    errors.rehireDetails = 'Please explain why you were not eligible for rehire';
-  }
   return errors;
+}
+
+// ── Resume ────────────────────────────────────────────────────────────────────
+//
+// The whole "About You & Work History" phase. Like every other document
+// field, `resumeDocument` is only ever set by the Worker's ownership-verified
+// association route; final submission additionally re-checks the upload
+// ledger itself (worker/src/services/submission.ts), so a value written any
+// other way can never stand in for a real uploaded resume.
+export function validateResume(file: UploadedFile | null | undefined): FieldErrors {
+  return file ? {} : { resumeDocument: 'Upload your resume to continue.' };
 }
 
 // ── Safety & Education ────────────────────────────────────────────────────────
@@ -297,7 +326,7 @@ export function validateSafety(data: SafetyEducationData): FieldErrors {
 // associated" check is needed beyond "is the field non-null."
 
 const REQUIRED_UPLOAD_FIELD: Record<string, { field: keyof UploadedDocuments; label: string }> = {
-  nursing_license: { field: 'nursingLicense', label: 'your nursing license' },
+  nursing_license: { field: 'nursingLicense', label: 'your professional license or certification' },
   cpr_cert:        { field: 'cprCertification', label: 'your CPR/BLS certification' },
 };
 
@@ -565,6 +594,7 @@ export function validateStep(
         return validateEmploymentReference(data.employmentReferences?.[step.id] ?? defaultEmploymentReference);
 
       case 'document_upload':
+        if (step.subtype === 'resume') return validateResume(data.resumeDocument);
         return validateDocuments(data.uploadedDocuments, step);
 
       case 'exam':
@@ -589,6 +619,7 @@ export function validateStep(
     case 'flu_declination':  return validateVaccineDeclination(data.acknowledgements[stepId], true, data.vaccineProofDocuments?.[stepId] ?? null);
     case 'safety_acknowledgements': return validateSafety(data.safetyEducation);
     case 'documents':        return validateDocuments(data.uploadedDocuments);
+    case 'resume':           return validateResume(data.resumeDocument);
     case 'review':           return {};
     default:                 return {};
   }

@@ -4,9 +4,12 @@ import {
   displayDateToIso,
   dropUnknownSelections,
   isoDateToDisplay,
+  isoDateToSlash,
   maskDisplayDateInput,
   normalizeEmploymentApplication,
+  slashInputToStored,
   validateEmploymentApplication,
+  withCanonicalSpecialty,
   type EmploymentApplicationData,
   type FieldErrors,
 } from '@pcs/shared';
@@ -25,7 +28,10 @@ export type SubmitOutcome =
   | { kind: 'error'; message: string };
 
 /** Multi-select fields in this form. */
-export type MultiSelectKey = 'specialtyPreference' | 'shiftPreference';
+export type MultiSelectKey = 'specialtyPreference' | 'shiftPreference' | 'employmentType';
+
+/** Ordinary (MM/DD/YYYY) date fields in this form. */
+export type SlashDateKey = 'availableStartDate' | 'licenseRevocationDate';
 
 /** Reads this step's stored data through the shared normalizer, so a
  * session saved before the UAT changes (string unit/shift preferences,
@@ -77,10 +83,11 @@ export function useEmploymentApplicationForm() {
     setIsDirty(true);
   }
 
-  /** Adds or removes one option from a multi-select field. Switching the
-   * position to CNA hides the unit preference but deliberately keeps its
-   * selections (restored if the applicant switches back); they're ignored
-   * by validation and dropped from the final submitted application. */
+  /** Adds or removes one option from a multi-select field. Switching
+   * position (e.g. RN → Tech) hides the options that don't apply but keeps
+   * them stored as drafts (restored on switching back); only the options
+   * valid for the current position are active, validated, and submitted
+   * (see activeSpecialtySelections in @pcs/shared). */
   function toggleSelection(field: MultiSelectKey, value: string): void {
     setData((d) => {
       const current = d[field];
@@ -97,6 +104,12 @@ export function useEmploymentApplicationForm() {
   function setLicenseExpirationInput(text: string): void {
     const masked = maskDisplayDateInput(text);
     setField('licenseExpiration', displayDateToIso(masked) ?? masked);
+  }
+
+  /** Available Start Date / Approximate Date of Action: typed as
+   * MM/DD/YYYY (slashes inserted automatically), stored as YYYY-MM-DD. */
+  function setSlashDateInput(field: SlashDateKey, text: string): void {
+    setField(field, slashInputToStored(text));
   }
 
   function blurField(field: keyof EmploymentApplicationData): void {
@@ -131,7 +144,7 @@ export function useEmploymentApplicationForm() {
     setSaveError(null);
     const result = await saveStep({
       formDataKey: FORM_DATA_KEY,
-      stepData: data,
+      stepData: withCanonicalSpecialty(data),
       stepId: STEP_ID,
       status: isCompleted ? undefined : 'in_progress',
     });
@@ -148,7 +161,7 @@ export function useEmploymentApplicationForm() {
 
     setIsCompleting(true);
     setSaveError(null);
-    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: data, stepId: STEP_ID, status: 'completed' });
+    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: withCanonicalSpecialty(data), stepId: STEP_ID, status: 'completed' });
     setIsCompleting(false);
     return handleResult(result);
   }
@@ -175,8 +188,12 @@ export function useEmploymentApplicationForm() {
     setField,
     toggleSelection,
     setLicenseExpirationInput,
-    /** Applicant-facing MM-DD-YYYY form of the stored license expiration. */
+    /** Applicant-facing MM-DD-YYYY form of the stored license expiration
+     * (License Expiration deliberately keeps dashes, per UAT). */
     licenseExpirationDisplay: isoDateToDisplay(data.licenseExpiration),
+    setSlashDateInput,
+    /** Applicant-facing MM/DD/YYYY form of a stored ordinary date. */
+    slashDateDisplay: (field: SlashDateKey) => isoDateToSlash(data[field]),
     blurField,
     errors: shownErrors,
     isDirty,

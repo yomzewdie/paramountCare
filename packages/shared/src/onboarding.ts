@@ -6,6 +6,9 @@ export interface PersonalInfo {
   lastName: string;
   middleInitial: string;   // I-9 Section 1
   otherLastNames: string;  // I-9 Section 1 — maiden name, alias, etc.
+  /** Canonical YYYY-MM-DD (shown/typed as MM/DD/YYYY). Required; the
+   * applicant must be at least 18 (validation.ts). Pre-fills the I-9. */
+  dateOfBirth: string;
   email: string;
   phone: string;
   address: string;
@@ -61,34 +64,35 @@ export interface I9Data {
   i9SignedDate: string;               // MM/DD/YYYY — auto-set when signature is captured
 }
 
-// ── Employment Application ────────────────────────────────────────────────────
-// Source: Paramount Care Staffing Application for Employment
+// ── Employment Application ("Applicant Details") ────────────────────────────
+// Source: Paramount Care Staffing Application for Employment.
+//
+// Resume-first onboarding: work history, clinical experience, and other
+// details an applicant's resume already carries are no longer collected as
+// structured fields — the uploaded resume (`OnboardingFormData.resumeDocument`)
+// replaces them. What remains here is only what a resume cannot reliably
+// supply and Paramount still needs structured: placement preferences,
+// license details for verification, eligibility/background disclosures, and
+// an emergency contact. Fields marked "Legacy" below were collected before
+// that change; they are never asked, required, or defaulted anymore, but
+// older sessions and submitted applications still hold them and remain
+// readable.
 export interface EmploymentApplicationData {
   // Position applied for — option lists live in employmentApplication.ts.
   // `string`/`string[]` rather than literal unions on purpose: stored
   // sessions and submitted payloads can still hold pre-UAT legacy values,
   // which normalizeEmploymentApplication() reads safely.
   positionApplied: string;         // canonical applicant position: 'CNA' | 'LVN' | 'RN' | 'NP'
-  specialtyPreference: string[];   // unit preference codes (multi-select); not asked for CNA. Legacy: free-text string
+  specialtyPreference: string[];   // where the applicant WANTS to work: codes from SPECIALTY_CODES_BY_POSITION (multi-select); ['cna'] for a CNA. Legacy: free-text string
   shiftPreference: string[];       // 'am' | 'mid' | 'pm' (multi-select). Legacy: 'day' | 'evening' | 'night' | 'any'
-  employmentType: string;          // 'per_diem_assignment' | 'travel_assignment'. Legacy: 'full_time' | 'part_time' | 'per_diem'
-  availableStartDate: string;      // YYYY-MM-DD
+  employmentType: string[];        // 'per_diem_assignment' | 'travel_assignment' (multi-select). Legacy: one string, incl. 'full_time' | 'part_time' | 'per_diem'
+  availableStartDate: string;      // YYYY-MM-DD, optional
 
-  // Professional license / credentials
+  // Professional license — structured for license verification/credentialing
   licenseType: string;             // license/credential held: 'RN' | 'LVN' | 'NP' | 'CNA' | 'other' (distinct from positionApplied)
   licenseNumber: string;
   licenseState: string;
   licenseExpiration: string;       // canonical YYYY-MM-DD; mobile shows/accepts MM-DD-YYYY (see dates.ts)
-  hasCPR: boolean;
-  cprCertNumber: string;
-  cprExpiration: string;           // YYYY-MM-DD
-
-  // Clinical experience summary
-  yearsExperience: string;         // '0-1' | '1-3' | '3-5' | '5-10' | '10+'
-  primarySpecialty: string;        // specialty code (single-select) or 'other'. Legacy: free text
-  primarySpecialtyOther: string;   // required only when primarySpecialty === 'other'
-  currentlyEmployed: boolean | null;
-  previouslyWorkedHere: boolean | null;  // previously with Paramount Care Staffing
 
   // Eligibility & background questions
   authorizedToWork: boolean | null;      // must be true to proceed
@@ -106,45 +110,71 @@ export interface EmploymentApplicationData {
   emergencyContactName: string;
   emergencyContactRelationship: string;
   emergencyContactPhone: string;
+
+  // ── Legacy (manual work-history application) — read-only ─────────────────
+  /** @deprecated Legacy only — covered by the resume. */
+  yearsExperience?: string;
+  /** @deprecated Legacy only — covered by the resume. Specialty code or 'other'; older values may be free text. */
+  primarySpecialty?: string;
+  /** @deprecated Legacy only — accompanies primarySpecialty === 'other'. */
+  primarySpecialtyOther?: string;
+  /** @deprecated Legacy only — covered by the resume. */
+  currentlyEmployed?: boolean | null;
+  /** @deprecated Legacy only — Paramount's own records answer this. */
+  previouslyWorkedHere?: boolean | null;
+  /** @deprecated Legacy only — the CPR/BLS card is a required upload in the documents step. */
+  hasCPR?: boolean;
+  /** @deprecated Legacy only. */
+  cprCertNumber?: string;
+  /** @deprecated Legacy only. */
+  cprExpiration?: string;
 }
 
 // ── Employment Reference Check ────────────────────────────────────────────────
 // Source: Paramount Care Staffing Employment Reference Check forms
 // One instance per step ID (e.g. 'employment_ref_1', 'employment_ref_2').
+//
+// Resume-first onboarding: a reference is now just WHO Paramount should
+// contact and the applicant's permission to contact them. The employment
+// itself (position held, dates, employer location) is on the resume, and
+// rehire eligibility is what the reference check verifies with the
+// supervisor directly. Legacy fields are kept readable, never collected.
 export interface EmploymentReference {
-  positionHeld: string;                // Position Held
-  employmentDateFrom: string;          // Dates of Employment: From
-  employmentDateTo: string;            // Dates of Employment: To (or "Present")
-  employerName: string;                // Current/Former Employer
-  employerCity: string;                // City
-  employerState: string;               // State
   supervisorName: string;              // Supervisor's Name
+  supervisorTitle: string;             // Supervisor's title
+  employerName: string;                // Facility / employer where the applicant reported to them
   supervisorPhone: string;             // Tel No.
-  supervisorTitle: string;             // Supervisor's title (UAT feedback — replaced Reason for Leaving)
-  permissionGranted: boolean;          // Applicant permission consent
-  /** @deprecated Legacy only — no longer collected (replaced by
-   * supervisorTitle). Still present on older sessions/submissions and kept
-   * readable there; never required. */
+  supervisorEmail?: string;            // Optional — validated only when provided
+  permissionGranted: boolean;          // Applicant permission to contact / release information
+
+  // ── Legacy (manual work-history reference) — read-only ───────────────────
+  /** @deprecated Legacy only — covered by the resume. */
+  positionHeld?: string;
+  /** @deprecated Legacy only — covered by the resume. */
+  employmentDateFrom?: string;
+  /** @deprecated Legacy only — covered by the resume. */
+  employmentDateTo?: string;
+  /** @deprecated Legacy only — covered by the resume. */
+  employerCity?: string;
+  /** @deprecated Legacy only — covered by the resume. */
+  employerState?: string;
+  /** @deprecated Legacy only (replaced by supervisorTitle before resume-first). */
   reasonForLeaving?: string;
-  eligibleForRehire: boolean | null;   // Were you eligible for rehire?
-  rehireDetails: string;               // Required if eligibleForRehire === false
-  comments: string;                    // Additional comments / notes (optional)
+  /** @deprecated Legacy only — verified with the reference during the reference check. */
+  eligibleForRehire?: boolean | null;
+  /** @deprecated Legacy only. */
+  rehireDetails?: string;
+  /** @deprecated Legacy only. */
+  comments?: string;
 }
 
 export const defaultEmploymentReference: EmploymentReference = {
-  positionHeld: '',
-  employmentDateFrom: '',
-  employmentDateTo: '',
-  employerName: '',
-  employerCity: '',
-  employerState: '',
   supervisorName: '',
-  supervisorPhone: '',
   supervisorTitle: '',
+  employerName: '',
+  supervisorPhone: '',
+  supervisorEmail: '',
   permissionGranted: false,
-  eligibleForRehire: null,
-  rehireDetails: '',
-  comments: '',
 };
 
 // ── Safety & Education ────────────────────────────────────────────────────────
@@ -341,6 +371,14 @@ export interface OnboardingFormData {
   /** Vaccination proof uploads — keyed by vaccine step ID (e.g. 'hep_b_declination'). */
   vaccineProofDocuments: Record<string, UploadedFile | null>;
   directDepositData: DirectDepositData;
+  /** The applicant's resume — the whole "About You & Work History" phase
+   * (packets.ts `resume` step, upload slot doc_type `applicant_resume`).
+   * Like every other document field, only ever set by the Worker's
+   * ownership-verified association route. Kept as its own top-level key
+   * (not inside `uploadedDocuments`, which the documents step saves as a
+   * whole) so a later structured-extraction feature can sit beside it
+   * without touching this field. */
+  resumeDocument: UploadedFile | null;
   /** Bank account verification required by the Direct Deposit Authorization
    * source form — a voided check, or another bank document / banking-app
    * screenshot showing the routing and account numbers. (The upload slot's
@@ -361,6 +399,7 @@ export const defaultFormData: OnboardingFormData = {
     lastName: '',
     middleInitial: '',
     otherLastNames: '',
+    dateOfBirth: '',
     email: '',
     phone: '',
     address: '',
@@ -426,4 +465,5 @@ export const defaultFormData: OnboardingFormData = {
   vaccineProofDocuments: {},
   directDepositData: defaultDirectDepositData,
   directDepositProofDocument: null,
+  resumeDocument: null,
 };

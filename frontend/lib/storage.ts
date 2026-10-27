@@ -38,6 +38,7 @@ interface StorableFormData {
   vaccineProofDocuments?: Record<string, StorableUploadedFile | null>;
   directDepositData?: DirectDepositData;
   directDepositProofDocument?: StorableUploadedFile | null;
+  resumeDocument?: StorableUploadedFile | null;
   uploadedDocuments: {
     listA: StorableUploadedFile | null;
     listB: StorableUploadedFile | null;
@@ -75,6 +76,7 @@ function toStorable(data: OnboardingFormData): StorableFormData {
     ),
     directDepositData:          data.directDepositData,
     directDepositProofDocument: stripFile(data.directDepositProofDocument),
+    resumeDocument:             stripFile(data.resumeDocument),
     uploadedDocuments: {
       listA:            stripFile(data.uploadedDocuments.listA),
       listB:            stripFile(data.uploadedDocuments.listB),
@@ -106,6 +108,7 @@ function fromStorable(stored: StorableFormData): OnboardingFormData {
     ),
     directDepositData:          stored.directDepositData          ?? defaultFormData.directDepositData,
     directDepositProofDocument: restoreFile(stored.directDepositProofDocument ?? null),
+    resumeDocument:             restoreFile(stored.resumeDocument ?? null),
     uploadedDocuments: {
       listA:            restoreFile(stored.uploadedDocuments.listA),
       listB:            restoreFile(stored.uploadedDocuments.listB),

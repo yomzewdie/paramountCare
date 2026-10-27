@@ -236,3 +236,29 @@ describe('generateW4Pdf — missing/renamed AcroForm field failure', () => {
     await expect(generateW4Pdf(BASE_INPUT, new Uint8Array(0))).rejects.toThrow(/requires the official w4-2026\.pdf template/);
   });
 });
+
+describe('generateW4Pdf — 2026 Step 5 placement regression', () => {
+  async function runs(bytes: Uint8Array) {
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const doc = await pdfjsLib.getDocument({ data: bytes, verbosity: 0 }).promise;
+    const tc = await (await doc.getPage(1)).getTextContent();
+    return (tc.items as { str: string; transform: number[] }[]).filter((i) => i.str.trim()).map((i) => ({ str: i.str, x: i.transform[4], y: i.transform[5] }));
+  }
+  async function rect(name: string) {
+    const doc = await PDFDocument.load(decodeTemplate(), { ignoreEncryption: true });
+    return doc.getForm().getTextField(name).acroField.getWidgets()[0].getRectangle();
+  }
+  const within = (p: { x: number; y: number }, r: { x: number; y: number; width: number; height: number }) =>
+    p.x >= r.x - 2 && p.x <= r.x + r.width + 2 && p.y >= r.y - 2 && p.y <= r.y + r.height + 2;
+
+  it('puts the employee signature and date in Step 5 and leaves the employer-only EIN field (f1_14) empty', async () => {
+    const bytes = await generateW4Pdf({ ...BASE_INPUT, typedSignature: 'Jane M Doe', signedDate: '10/21/2026' }, decodeTemplate(), null);
+    const text = await runs(bytes);
+    const sig = text.find((t) => t.str.includes('Jane M Doe'));
+    const date = text.find((t) => t.str.includes('10/21/2026'));
+    expect(sig && within(sig, await rect('topmostSubform[0].Page1[0].f1_12[0]'))).toBe(true);
+    expect(date && within(date, await rect('topmostSubform[0].Page1[0].f1_13[0]'))).toBe(true);
+    const ein = await rect('topmostSubform[0].Page1[0].f1_14[0]');
+    expect(text.filter((t) => t.x >= ein.x && t.x <= ein.x + ein.width && t.y >= ein.y && t.y <= ein.y + ein.height).map((t) => t.str)).toEqual([]);
+  });
+});

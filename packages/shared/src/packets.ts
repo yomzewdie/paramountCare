@@ -64,6 +64,8 @@ export interface PacketStep {
    * Narrows rendering within a type family.
    * government_form: 'i9' | 'w4'
    * internal_form:   'employment_application' | 'direct_deposit'
+   * document_upload: 'resume' (the applicant's resume); omitted for the
+   *                  config-driven Documents & Credentials step
    */
   subtype?: string;
   label: string;
@@ -165,26 +167,67 @@ export function canNavigateToStep(
 // When adding or removing steps, bump the version number so sessions that
 // started on a previous version are not corrupted.
 
-// Full 19-step GENERAL_RN packet per OnboardingFlow.pdf.
+// Shared first steps for every packet (resume-first onboarding, packet v6).
+//
+// "About You & Work History" is just the resume upload — work history,
+// employer details, dates, and clinical experience come from the resume and
+// are no longer typed in. Structured data the resume can't reliably supply
+// (legal name/contact/address for the I-9/W-4 and the application record;
+// position, license, eligibility disclosures, emergency contact) follows as
+// "Applicant Details", then the employment references — now just who to
+// contact and permission to contact them. The Application Statement moves
+// to the start of the authorizations, AFTER everything it certifies has
+// been entered. Step ids are unchanged from v5 (only `resume` is new), so
+// sessions started on v5 keep every completed step.
+const RESUME_STEP: PacketStep = {
+  id:       'resume',
+  type:     'document_upload',
+  subtype:  'resume',
+  label:    'Upload Your Resume',
+  required: true,
+};
+
+const PERSONAL_INFO_STEP: PacketStep = {
+  id:       'personal_info',
+  type:     'personal_info',
+  label:    'Personal Information',
+  required: true,
+};
+
+const APPLICANT_DETAILS_STEP: PacketStep = {
+  id:       'employment_application',
+  type:     'internal_form',
+  subtype:  'employment_application',
+  label:    'Applicant Details',
+  required: true,
+  config:   { requiresSignature: true },
+};
+
+// Full GENERAL_RN packet per OnboardingFlow.pdf, resume-first.
 // Used only by general_rn and lvn; specialty packets build from VARIANT_BASE_STEPS.
 const GENERAL_RN_STEPS: PacketStep[] = [
-  // Phase 1 — Personal Information
+  // Phase 1 — About You & Work History
+  RESUME_STEP,
+
+  // Phase 2 — Applicant Details & References
+  PERSONAL_INFO_STEP,
+  APPLICANT_DETAILS_STEP,
   {
-    id:       'personal_info',
-    type:     'personal_info',
-    label:    'Personal Information',
+    id:       'employment_ref_1',
+    type:     'employment_reference',
+    label:    'Employment Reference #1',
     required: true,
+    config:   { referenceNumber: 1 },
+  },
+  {
+    id:       'employment_ref_2',
+    type:     'employment_reference',
+    label:    'Employment Reference #2',
+    required: true,
+    config:   { referenceNumber: 2 },
   },
 
-  // Phase 2 — Application Forms & Employment References
-  {
-    id:       'employment_application',
-    type:     'internal_form',
-    subtype:  'employment_application',
-    label:    'Employment Application',
-    required: true,
-    config:   { requiresSignature: true },
-  },
+  // Phase 3 — Authorizations & Acknowledgements
   {
     id:       'application_statement',
     type:     'acknowledgement',
@@ -202,23 +245,6 @@ const GENERAL_RN_STEPS: PacketStep[] = [
     },
   },
 
-  // Employment References (collected immediately after application statement, before background auth)
-  {
-    id:       'employment_ref_1',
-    type:     'employment_reference',
-    label:    'Employment Reference #1',
-    required: true,
-    config:   { referenceNumber: 1 },
-  },
-  {
-    id:       'employment_ref_2',
-    type:     'employment_reference',
-    label:    'Employment Reference #2',
-    required: true,
-    config:   { referenceNumber: 2 },
-  },
-
-  // Phase 3 — Background & Health Authorizations
   {
     id:       'background_auth',
     type:     'acknowledgement',
@@ -358,7 +384,7 @@ const GENERAL_RN_STEPS: PacketStep[] = [
   {
     id:       'documents',
     type:     'document_upload',
-    label:    'License & Credential Uploads',
+    label:    'Documents & Credentials',
     required: true,
     config:   {
       i9Uploads:       true,
@@ -417,21 +443,21 @@ const GENERAL_RN_STEPS: PacketStep[] = [
 // These use a condensed flow — declinations and some acknowledgements are omitted
 // in favor of the specialization-specific orientation they receive on-site.
 const VARIANT_BASE_STEPS: PacketStep[] = [
-  { id: 'personal_info',       type: 'personal_info',        label: 'Personal Information',          required: true },
-  { id: 'employment_application', type: 'internal_form', subtype: 'employment_application',
-    label: 'Employment Application', required: true, config: { requiresSignature: true } },
+  RESUME_STEP,
+  PERSONAL_INFO_STEP,
+  APPLICANT_DETAILS_STEP,
+  { id: 'employment_ref_1',    type: 'employment_reference', label: 'Employment Reference #1',       required: true, config: { referenceNumber: 1 } },
   { id: 'application_statement',  type: 'acknowledgement',
     label: 'Applicant Statement', required: true,
     config: { acknowledgementId: 'application_statement', requiresSignature: true,
       text: 'I certify that the answers given herein are true and complete to the best of my knowledge. I authorize investigation of all statements contained in this application for employment as may be necessary in arriving at an employment decision.\n\nI understand that this application is not, and is not intended to be, a contract of employment. I understand that if employed, my employment will be at-will and may be terminated at any time, with or without notice, by either myself or by Paramount Care Staffing, LLC.\n\nI understand that any misrepresentation or omission of facts called for in this application may disqualify me from further consideration for employment, and if employed, may result in my immediate discharge.' } },
-  { id: 'employment_ref_1',    type: 'employment_reference', label: 'Employment Reference #1',       required: true, config: { referenceNumber: 1 } },
   { id: 'background_auth',     type: 'acknowledgement',      label: 'Background Investigation & Drug/Alcohol Testing Authorization', required: true,
     config: { acknowledgementId: 'background_auth', requiresSignature: true,
       text: 'I hereby authorize Paramount Care Staffing, LLC and/or its designated agents and representatives to conduct a comprehensive review of my background through a consumer reporting agency. I understand this may include criminal history, employment verification, professional license verification, sex offender registry check, and reference checks.\n\nI also authorize Paramount Care Staffing, LLC to conduct pre-employment and random drug and alcohol testing as a condition of employment and continued employment. I consent to the release of test results to Paramount Care Staffing, LLC and to any client facilities to which I may be assigned.' } },
   { id: 'w4',                  type: 'government_form',  subtype: 'w4',   label: 'Tax Forms / W-4',              required: true, config: { requiresSignature: true } },
   { id: 'i9',                  type: 'government_form',  subtype: 'i9',   label: 'Form I-9 (Section 1)',         required: true, config: { requiresSignature: true } },
   { id: 'direct_deposit',      type: 'internal_form',    subtype: 'direct_deposit', label: 'Direct Deposit Authorization', required: true, config: { requiresSignature: true } },
-  { id: 'documents',           type: 'document_upload',      label: 'License & Credential Uploads',  required: true, config: { i9Uploads: true, requiredUploads: ['nursing_license', 'cpr_cert'] } },
+  { id: 'documents',           type: 'document_upload',      label: 'Documents & Credentials',  required: true, config: { i9Uploads: true, requiredUploads: ['nursing_license', 'cpr_cert'] } },
   { id: 'safety_acknowledgements', type: 'acknowledgement',  label: 'Safety & Education Exam',       required: true, config: { acknowledgementId: 'safety_acknowledgements', requiresSignature: false } },
   { id: 'review',              type: 'review',               label: 'Review & Submit',               required: true },
 ];
@@ -461,7 +487,7 @@ function insertAfter(steps: PacketStep[], afterId: string, ...inserts: PacketSte
 export const PACKETS: Record<string, OnboardingPacket> = {
   general_rn: {
     id:             'general_rn',
-    version:        5,
+    version:        6,
     name:           'Registered Nurse',
     specialization: 'RN',
     steps:          GENERAL_RN_STEPS,
@@ -469,7 +495,7 @@ export const PACKETS: Record<string, OnboardingPacket> = {
 
   icu_rn: {
     id:             'icu_rn',
-    version:        5,
+    version:        6,
     name:           'ICU Nurse',
     specialization: 'ICU',
     steps:          insertAfter(VARIANT_BASE_STEPS, 'employment_ref_1', TWO_REFS_EXTRA),
@@ -477,7 +503,7 @@ export const PACKETS: Record<string, OnboardingPacket> = {
 
   er_rn: {
     id:             'er_rn',
-    version:        5,
+    version:        6,
     name:           'ER Nurse',
     specialization: 'ER',
     steps:          insertAfter(VARIANT_BASE_STEPS, 'employment_ref_1', TWO_REFS_EXTRA),
@@ -485,7 +511,7 @@ export const PACKETS: Record<string, OnboardingPacket> = {
 
   lvn: {
     id:             'lvn',
-    version:        5,
+    version:        6,
     name:           'Licensed Vocational Nurse',
     specialization: 'LVN',
     steps:          GENERAL_RN_STEPS,
@@ -493,7 +519,7 @@ export const PACKETS: Record<string, OnboardingPacket> = {
 
   travel_rn: {
     id:             'travel_rn',
-    version:        5,
+    version:        6,
     name:           'Travel Nurse',
     specialization: 'Travel',
     steps:          insertAfter(

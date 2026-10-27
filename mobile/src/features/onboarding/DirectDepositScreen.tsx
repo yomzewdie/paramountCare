@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { Image, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { BankAccountType, DepositAllocationType } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
@@ -12,6 +11,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { useDirectDepositForm } from './useDirectDepositForm';
@@ -55,7 +55,7 @@ const ERROR_KEY_TO_SECTION: Record<string, SectionKey> = {
 
 export default function DirectDepositScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = useDirectDepositForm();
 
@@ -76,12 +76,12 @@ export default function DirectDepositScreen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.afterComplete();
     else if (outcome.kind === 'invalid') scrollToFirstError();
   }
 

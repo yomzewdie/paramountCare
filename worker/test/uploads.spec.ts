@@ -1,6 +1,7 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin } from './helpers';
+import { buildContentDisposition } from '../src/utils/contentDisposition';
 
 function fakeFile(name: string, type: string, bytes: number): File {
   return new File([new Uint8Array(bytes).fill(1)], name, { type });
@@ -239,5 +240,22 @@ describe('POST /api/uploads — existing file-type/size guards still work unchan
     const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('upload-pdf'));
     const res = await upload({ Authorization: `Bearer ${accessToken}` }, fakeFile('voided-check.pdf', 'application/pdf', 500));
     expect(res.status).toBe(201);
+  });
+});
+
+describe('POST /api/uploads — stored metadata never carries the raw filename', () => {
+  it('sanitizes the R2 Content-Disposition (control characters / quotes) for a Word resume', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('upload-disposition'));
+    const formData = new FormData();
+    formData.append('file', new File([new Uint8Array(20)], 'my "resume".docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    const res = await SELF.fetch(`${BASE}/api/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: formData });
+    expect(res.status).toBe(201);
+    const { objectKey, fileName } = (await res.json()) as { objectKey: string; fileName: string };
+    expect(objectKey).toMatch(/\.docx$/);
+    expect(objectKey).not.toMatch(/["\s]/);
+    const obj = await env.UPLOADS_BUCKET.head(objectKey);
+    // Exactly the shared sanitizer's output for the name the Worker received.
+    expect(obj?.httpMetadata?.contentDisposition).toBe(buildContentDisposition(fileName));
+    expect(obj?.httpMetadata?.contentDisposition).toMatch(/^attachment; filename="[^"\r\n]*"; filename\*=UTF-8''/);
   });
 });

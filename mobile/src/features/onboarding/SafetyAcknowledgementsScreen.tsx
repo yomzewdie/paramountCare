@@ -1,5 +1,4 @@
 import { useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { CheckboxField } from '../../components/CheckboxField';
@@ -9,6 +8,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState, SuccessState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { SAFETY_TOPIC_KEYS, useSafetyAcknowledgementsForm } from './useSafetyAcknowledgementsForm';
@@ -63,7 +63,7 @@ const SAFETY_TOPICS: Record<(typeof SAFETY_TOPIC_KEYS)[number], { title: string;
 
 export default function SafetyAcknowledgementsScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = useSafetyAcknowledgementsForm();
 
@@ -73,12 +73,12 @@ export default function SafetyAcknowledgementsScreen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.afterComplete();
   }
 
   return (

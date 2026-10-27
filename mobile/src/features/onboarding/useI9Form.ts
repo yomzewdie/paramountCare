@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { defaultFormData, validateI9, type I9Data, type CitizenshipStatus, type AlienWorkAuthType, type PersonalInfo, type FieldErrors } from '@pcs/shared';
+import { defaultFormData, isValidIsoDate, isoDateToSlash, validateI9, type I9Data, type CitizenshipStatus, type AlienWorkAuthType, type PersonalInfo, type FieldErrors } from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
@@ -28,10 +28,16 @@ function today(): string {
  * trigger is preserved precisely, not assumed to match another form's). */
 function readStored(formData: Record<string, unknown> | undefined): I9Data {
   const stored = (formData?.[FORM_DATA_KEY] ?? {}) as Partial<I9Data>;
+  const personalInfo = (formData?.personalInfo ?? {}) as Partial<PersonalInfo>;
   const base = { ...defaultFormData.i9Data, ...stored };
+  // Date of birth is now collected once, in Personal Information; the I-9
+  // keeps its own MM/DD/YYYY copy (the form's printed format), pre-filled
+  // only while the applicant hasn't entered one here.
+  if (!base.dateOfBirth && personalInfo.dateOfBirth && isValidIsoDate(personalInfo.dateOfBirth)) {
+    base.dateOfBirth = isoDateToSlash(personalInfo.dateOfBirth);
+  }
   if (base.firstName || base.lastName) return base;
 
-  const personalInfo = (formData?.personalInfo ?? {}) as Partial<PersonalInfo>;
   return {
     ...base,
     firstName: personalInfo.firstName ?? '',

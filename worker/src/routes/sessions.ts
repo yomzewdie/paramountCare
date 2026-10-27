@@ -21,6 +21,7 @@ import {
 } from '../db/queries/onboardingSessions';
 import { findOwnedUpload, findCurrentSlotDocument, associateUploadToSlot } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
+import { RESUME_CONTENT_TYPES } from './uploads';
 import { submitSession } from '../services/submission';
 import { VACCINE_PROOF_STEP_BY_DOC_TYPE } from '../services/vaccineProof';
 
@@ -139,6 +140,24 @@ function rejectIfSubmitted(session: OnboardingSessionRow): Response | null {
   );
 }
 
+// ── Server-owned formData keys ───────────────────────────────────────────────
+//
+// The resume reference is written ONLY by the ownership-verified document
+// routes below. The generic PATCH replaces formData wholesale (clients
+// re-send everything they last read), so any value a client sends for it is
+// discarded in favor of what is stored — a client can never forge a resume
+// reference.
+const SERVER_OWNED_FORM_DATA_KEYS = ['resumeDocument'] as const;
+
+function withServerOwnedKeys(incoming: Record<string, unknown>, stored: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...incoming };
+  for (const key of SERVER_OWNED_FORM_DATA_KEYS) {
+    if (key in stored) out[key] = stored[key];
+    else delete out[key];
+  }
+  return out;
+}
+
 // ── POST /api/sessions — create (always owned by the authenticated caller) ──
 
 sessions.post('/', async (c) => {
@@ -234,19 +253,21 @@ sessions.patch('/:sessionId', async (c) => {
   // the same validation the client already runs. This does not touch the
   // legacy /api/submit-onboarding endpoint or its payloads — it only applies
   // to this new, previously-nonexistent API surface.
+  let storedFormData: Record<string, unknown>;
+  try {
+    storedFormData = JSON.parse(authResult.session.form_data_json || '{}');
+  } catch {
+    storedFormData = {};
+  }
+  const incomingFormData = p.formData ? withServerOwnedKeys(p.formData, storedFormData) : undefined;
+
   if (p.stepStates) {
     const packet = getPacket(authResult.session.packet_id);
     if (!packet) {
       return c.json({ error: `Session references an unknown packet: ${authResult.session.packet_id}` }, 500);
     }
 
-    let storedFormData: Record<string, unknown>;
-    try {
-      storedFormData = JSON.parse(authResult.session.form_data_json || '{}');
-    } catch {
-      storedFormData = {};
-    }
-    const effectiveFormData = withDefaults({ ...storedFormData, ...(p.formData ?? {}) });
+    const effectiveFormData = withDefaults({ ...storedFormData, ...(incomingFormData ?? {}) });
 
     // Clients re-send the FULL stepStates on every save (see mobile's
     // stepPatch.ts), so every previously-completed step is re-checked here
@@ -297,7 +318,7 @@ sessions.patch('/:sessionId', async (c) => {
     email: p.email,
     phone: p.phone,
     stepStatesJson: p.stepStates ? JSON.stringify(p.stepStates) : undefined,
-    formDataJson: p.formData ? JSON.stringify(p.formData) : undefined,
+    formDataJson: incomingFormData ? JSON.stringify(incomingFormData) : undefined,
   });
 
   if (updateResult.ok) {
@@ -363,11 +384,29 @@ function applyVaccineProof(stepId: string) {
   };
 }
 
+// Resume-first onboarding: the applicant's resume, the only content of the
+// "About You & Work History" phase. Its own top-level formData key — see
+// @pcs/shared's OnboardingFormData.resumeDocument.
+const RESUME_DOC_TYPE = 'applicant_resume';
+
+// Slot-specific file types, checked against the type the upload ledger
+// recorded (never anything client-supplied at association time).
+// `/api/uploads` is slot-agnostic, so every slot is restricted here: the
+// resume accepts PDF, DOC, or DOCX (a document, never a photo); every other
+// slot keeps the PDF/JPG/PNG set it has always had. DOC/DOCX files are only
+// ever stored and handed back as downloads — never parsed, converted,
+// rendered, or executed by the Worker.
+const DEFAULT_DOC_TYPE_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+const DOC_TYPE_ALLOWED_CONTENT_TYPES: Record<string, ReadonlySet<string>> = {
+  [RESUME_DOC_TYPE]: new Set(RESUME_CONTENT_TYPES),
+};
+
 const DOC_TYPE_APPLIERS: Record<
   string,
   (formData: Record<string, unknown>, file: DocumentFileMeta | null) => Record<string, unknown>
 > = {
   direct_deposit_voided_check: (formData, file) => ({ ...formData, directDepositProofDocument: file }),
+  [RESUME_DOC_TYPE]: (formData, file) => ({ ...formData, resumeDocument: file }),
   list_a:           (formData, file) => applyUploadedDocumentsField(formData, 'listA', file),
   list_b:           (formData, file) => applyUploadedDocumentsField(formData, 'listB', file),
   list_c:           (formData, file) => applyUploadedDocumentsField(formData, 'listC', file),
@@ -426,6 +465,20 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
   const owned = await findOwnedUpload(c.env.DB, { objectKey: parsed.data.objectKey, userId: payload.uid });
   if (!owned) {
     return c.json({ error: 'This file was not found or does not belong to you. Please upload it again.' }, 403);
+  }
+
+  // Left unassociated (not deleted) on rejection: the applicant still owns
+  // the object, and the client's own orphan cleanup removes it.
+  const allowedTypes = DOC_TYPE_ALLOWED_CONTENT_TYPES[docType] ?? DEFAULT_DOC_TYPE_CONTENT_TYPES;
+  if (!allowedTypes.has(owned.content_type)) {
+    return c.json(
+      {
+        error: docType === RESUME_DOC_TYPE
+          ? 'Your resume must be a PDF, DOC, or DOCX file.'
+          : 'This document must be a PDF, JPG, or PNG file.',
+      },
+      415,
+    );
   }
 
   // Whatever currently occupies this slot, read BEFORE any writes — this is

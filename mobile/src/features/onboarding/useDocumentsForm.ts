@@ -10,7 +10,6 @@ import { useSession } from './SessionContext';
 import { useDocumentSlot } from '../documents/useDocumentSlot';
 import {
   IDENTITY_SLOTS,
-  CREDENTIAL_SLOT_BY_KEY,
   resolveRequiredSlots,
   isIdentityGroupSatisfied,
   deriveCurrentIdentityPath,
@@ -152,7 +151,8 @@ export function useDocumentsForm() {
    * of the M14 prompt) — a slot not returned here is never shown, never
    * required, and never counted, no matter what `slotHooks` contains. */
   const visibleIdentitySlots: DocumentSlotDef[] = IDENTITY_SLOTS.filter((s) => requiredDocTypes.has(s.docType));
-  const visibleCredentialSlots: DocumentSlotDef[] = Object.values(CREDENTIAL_SLOT_BY_KEY).filter((s) => requiredDocTypes.has(s.docType));
+  // In the packet's own `requiredUploads` order (resolveRequiredSlots).
+  const visibleCredentialSlots: DocumentSlotDef[] = requiredSlots.filter((s) => s.group !== 'identity');
 
   const identitySatisfied = isIdentityGroupSatisfied(documents);
 
@@ -245,6 +245,10 @@ export function useDocumentsForm() {
   }
 
   return {
+    /** Every required slot, in packet order (identity first). */
+    requiredSlots,
+    /** The session's stored uploads for this step. */
+    documents,
     identityRequired,
     identityPath,
     setIdentityPath,

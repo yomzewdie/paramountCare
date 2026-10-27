@@ -2,17 +2,17 @@ import type { OnboardingFormData, AcknowledgementEntry } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
 import type { OnboardingPacket } from './packets';
 import {
-  CLINICAL_UNIT_OPTIONS,
   EMPLOYMENT_TYPE_OPTIONS,
+  LICENSE_TYPE_OPTIONS,
   POSITION_OPTIONS,
-  PRIMARY_SPECIALTY_OPTIONS,
-  PRIMARY_SPECIALTY_OTHER,
   SHIFT_PREFERENCE_OPTIONS,
+  activeSpecialtySelections,
   isOptionValue,
   normalizeEmploymentApplication,
   requiresUnitPreference,
 } from './employmentApplication';
 import { isValidIsoDate } from './dates';
+import { validatePersonalInfo } from './validation';
 
 export interface StepCompletion {
   step: string;   // packet step ID
@@ -40,18 +40,13 @@ function employmentApplicationCompletion(raw: OnboardingFormData['employmentAppl
   const asksUnits = requiresUnitPreference(data.positionApplied);
   const items: boolean[] = [
     isOptionValue(POSITION_OPTIONS, data.positionApplied),
-    ...(asksUnits
-      ? [data.specialtyPreference.length > 0 && data.specialtyPreference.every((v) => isOptionValue(CLINICAL_UNIT_OPTIONS, v))]
-      : []),
+    ...(asksUnits ? [activeSpecialtySelections(data.positionApplied, data.specialtyPreference).length > 0] : []),
     data.shiftPreference.length > 0 && data.shiftPreference.every((v) => isOptionValue(SHIFT_PREFERENCE_OPTIONS, v)),
-    isOptionValue(EMPLOYMENT_TYPE_OPTIONS, data.employmentType),
-    !!data.licenseType,
+    data.employmentType.length > 0 && data.employmentType.every((v) => isOptionValue(EMPLOYMENT_TYPE_OPTIONS, v)),
+    isOptionValue(LICENSE_TYPE_OPTIONS, data.licenseType),
     !!data.licenseNumber.trim(),
     !!data.licenseState,
     isValidIsoDate(data.licenseExpiration),
-    !!data.yearsExperience,
-    isOptionValue(PRIMARY_SPECIALTY_OPTIONS, data.primarySpecialty) &&
-      (data.primarySpecialty !== PRIMARY_SPECIALTY_OTHER || !!data.primarySpecialtyOther.trim()),
     data.authorizedToWork === true,
     data.hasConviction !== null,
     data.hasLicenseDiscipline !== null,
@@ -67,11 +62,16 @@ function employmentApplicationCompletion(raw: OnboardingFormData['employmentAppl
 }
 
 function personalCompletion(data: OnboardingFormData['personalInfo']): StepCompletion {
-  const { completed, total } = countStrings([
+  const strings = countStrings([
     data.firstName, data.lastName,
     data.email, data.phone,
     data.address, data.city, data.state, data.zip,
   ]);
+  // DOB counts only once it passes the same rule validation applies
+  // (a real date, applicant at least 18).
+  const dobOk = !!data.dateOfBirth && !validatePersonalInfo(data).dateOfBirth;
+  const completed = strings.completed + (dobOk ? 1 : 0);
+  const total = strings.total + 1;
   return { step: 'personal_info', completed, total, percent: pct(completed, total) };
 }
 
@@ -98,25 +98,25 @@ function i9Completion(data: OnboardingFormData['i9Data']): StepCompletion {
   return { step: 'i9', completed, total, percent: pct(completed, total) };
 }
 
+// Mirrors validateEmploymentReference(): who to contact + permission. The
+// optional email and any legacy work-history fields never count.
 function employmentCompletion(data: OnboardingFormData, stepId: string): StepCompletion {
+  const total = 5;
   const stored = data.employmentReferences?.[stepId];
-  if (!stored) return { step: stepId, completed: 0, total: 11, percent: 0 };
-  // Defaults first — a reference saved before supervisorTitle existed.
+  if (!stored) return { step: stepId, completed: 0, total, percent: 0 };
   const ref = { ...defaultEmploymentReference, ...stored };
   let completed = 0;
-  if (ref.positionHeld.trim()) completed++;
-  if (ref.employmentDateFrom.trim()) completed++;
-  if (ref.employmentDateTo.trim()) completed++;
-  if (ref.employerName.trim()) completed++;
-  if (ref.employerCity.trim()) completed++;
-  if (ref.employerState.trim()) completed++;
   if (ref.supervisorName.trim()) completed++;
-  if (ref.supervisorPhone.trim()) completed++;
   if (ref.supervisorTitle.trim()) completed++;
+  if (ref.employerName.trim()) completed++;
+  if (ref.supervisorPhone.trim()) completed++;
   if (ref.permissionGranted) completed++;
-  if (ref.eligibleForRehire !== null) completed++;
-  const total = 11;
   return { step: stepId, completed, total, percent: pct(completed, total) };
+}
+
+function resumeCompletion(file: OnboardingFormData['resumeDocument'] | undefined): StepCompletion {
+  const completed = file ? 1 : 0;
+  return { step: 'resume', completed, total: 1, percent: pct(completed, 1) };
 }
 
 function safetyCompletion(data: OnboardingFormData['safetyEducation']): StepCompletion {
@@ -242,6 +242,7 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
     'employment_ref_3':       employmentCompletion(data, 'employment_ref_3'),
     'safety_acknowledgements': safetyCompletion(data.safetyEducation),
     'documents':              documentsCompletion(data.uploadedDocuments),
+    'resume':                 resumeCompletion(data.resumeDocument),
     'review':                 { step: 'review', completed: 1, total: 1, percent: 100 },
   };
 }

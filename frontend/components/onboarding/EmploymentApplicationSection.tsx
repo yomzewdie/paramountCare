@@ -6,8 +6,6 @@ import {
   CLINICAL_UNIT_OPTIONS,
   EMPLOYMENT_TYPE_OPTIONS,
   POSITION_OPTIONS,
-  PRIMARY_SPECIALTY_OPTIONS,
-  PRIMARY_SPECIALTY_OTHER,
   SHIFT_PREFERENCE_OPTIONS,
   requiresUnitPreference,
   type FieldOption,
@@ -199,8 +197,8 @@ export function EmploymentApplicationSection({
       <Card>
         <SectionHeader
           icon={<Stethoscope size={20} />}
-          title="Professional License & CPR"
-          description="Enter your current active nursing license and CPR/BLS certification details."
+          title="Professional License"
+          description="Enter your current active nursing license. Your work history comes from your resume."
           iconColor="bg-emerald-50 text-emerald-600"
         />
         <CardBody>
@@ -247,98 +245,6 @@ export function EmploymentApplicationSection({
             />
           </div>
 
-          <div className="mt-5 pt-5 border-t border-slate-100">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
-              CPR / BLS Certification
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <YesNoField
-                label="Do you hold a current CPR/BLS certification?"
-                value={data.hasCPR}
-                onChange={(v) => set('hasCPR', v)}
-              />
-              {data.hasCPR && (
-                <>
-                  <Input
-                    label="CPR Certification Number"
-                    placeholder="e.g. BLS-2024-XXXXX"
-                    value={data.cprCertNumber}
-                    onChange={update('cprCertNumber')}
-                    hint="Enter the number printed on your card"
-                  />
-                  <Input
-                    label="CPR Expiration Date"
-                    type="date"
-                    value={data.cprExpiration}
-                    onChange={update('cprExpiration')}
-                  />
-                </>
-              )}
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* ── Section 3: Clinical Experience ──────────────────────────────────── */}
-      <Card>
-        <SectionHeader
-          icon={<Stethoscope size={20} />}
-          title="Clinical Experience"
-          description="Brief overview of your nursing background. Detailed work history is captured in the Reference Check steps."
-          iconColor="bg-violet-50 text-violet-600"
-        />
-        <CardBody>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <Select
-              label="Total Years of Nursing Experience"
-              required
-              value={data.yearsExperience}
-              onChange={update('yearsExperience')}
-              error={errors.yearsExperience}
-            >
-              <option value="">Select range</option>
-              <option value="0-1">Less than 1 year</option>
-              <option value="1-3">1 – 3 years</option>
-              <option value="3-5">3 – 5 years</option>
-              <option value="5-10">5 – 10 years</option>
-              <option value="10+">10+ years</option>
-            </Select>
-
-            <Select
-              label="Primary Clinical Specialty"
-              required
-              value={data.primarySpecialty}
-              onChange={update('primarySpecialty')}
-              error={errors.primarySpecialty}
-              hint="Your main area of nursing practice"
-            >
-              <option value="">Select specialty</option>
-              {PRIMARY_SPECIALTY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </Select>
-
-            {data.primarySpecialty === PRIMARY_SPECIALTY_OTHER && (
-              <Input
-                label="Please specify your primary specialty"
-                required
-                placeholder="e.g. Pediatrics"
-                value={data.primarySpecialtyOther}
-                onChange={update('primarySpecialtyOther')}
-                error={errors.primarySpecialtyOther}
-              />
-            )}
-
-            <YesNoField
-              label="Are you currently employed?"
-              value={data.currentlyEmployed}
-              onChange={(v) => set('currentlyEmployed', v)}
-            />
-
-            <YesNoField
-              label="Have you previously worked with Paramount Care Staffing, LLC?"
-              value={data.previouslyWorkedHere}
-              onChange={(v) => set('previouslyWorkedHere', v)}
-            />
-          </div>
         </CardBody>
       </Card>
 

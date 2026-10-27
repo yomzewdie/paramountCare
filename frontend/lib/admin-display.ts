@@ -1,16 +1,19 @@
 // Display-safety helpers for the admin application-detail page.
 
 import {
-  CLINICAL_UNIT_OPTIONS,
   EMPLOYMENT_TYPE_OPTIONS,
   LEGACY_EMPLOYMENT_TYPE_LABELS,
+  LEGACY_LICENSE_TYPE_LABELS,
   LEGACY_SHIFT_PREFERENCE_LABELS,
+  LICENSE_TYPE_OPTIONS,
   POSITION_OPTIONS,
   POSITION_WITHOUT_UNIT_PREFERENCE,
   SHIFT_PREFERENCE_OPTIONS,
+  SPECIALTY_OPTIONS,
   formatOptionValues,
   formatPrimarySpecialty,
   isoDateToDisplay,
+  isoDateToSlash,
 } from '@pcs/shared';
 
 export function formatDate(iso: string | null | undefined): string {
@@ -80,48 +83,117 @@ export function flattenForDisplay(obj: Record<string, unknown> | undefined | nul
 // shapes (free text, single strings, legacy codes) and are rendered as-is via
 // the same helpers; they are never rewritten.
 
-const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app: Record<string, unknown>) => string }[] = [
+const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app: Record<string, unknown>) => string; legacyOnly?: boolean }[] = [
   { key: 'positionApplied', label: 'Position Applied For', format: (a) => formatOptionValues(a.positionApplied, POSITION_OPTIONS) },
   {
     key: 'specialtyPreference',
-    label: 'Unit Preferences',
+    label: 'Specialty / Unit Preference (applicant-selected)',
     format: (a) => {
-      const units = formatOptionValues(a.specialtyPreference, CLINICAL_UNIT_OPTIONS);
+      const units = formatOptionValues(a.specialtyPreference, SPECIALTY_OPTIONS);
       if (units) return units;
+      // Applications submitted before CNA had a canonical value stored [].
       return a.positionApplied === POSITION_WITHOUT_UNIT_PREFERENCE ? 'Not asked (CNA)' : '';
     },
   },
   { key: 'employmentType', label: 'Employment Type', format: (a) => formatOptionValues(a.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) },
   { key: 'shiftPreference', label: 'Shift Preferences', format: (a) => formatOptionValues(a.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) },
   { key: 'availableStartDate', label: 'Available Start Date', format: (a) => (typeof a.availableStartDate === 'string' ? isoDateToDisplay(a.availableStartDate) : '') },
-  { key: 'licenseType', label: 'License Type', format: (a) => displayValue('licenseType', a.licenseType) },
+  { key: 'licenseType', label: 'License / Certification Type', format: (a) => formatOptionValues(a.licenseType, LICENSE_TYPE_OPTIONS, LEGACY_LICENSE_TYPE_LABELS) },
   { key: 'licenseNumber', label: 'License Number', format: (a) => displayValue('licenseNumber', a.licenseNumber) },
   { key: 'licenseState', label: 'License State', format: (a) => displayValue('licenseState', a.licenseState) },
   { key: 'licenseExpiration', label: 'License Expiration Date', format: (a) => (typeof a.licenseExpiration === 'string' ? isoDateToDisplay(a.licenseExpiration) : '') },
-  { key: 'primarySpecialty', label: 'Primary Clinical Specialty', format: (a) => formatPrimarySpecialty(a.primarySpecialty, a.primarySpecialtyOther) },
+  // Manual (pre-resume) applications only — never asked of resume-based ones.
+  { key: 'primarySpecialty', label: 'Primary Clinical Specialty', format: (a) => formatPrimarySpecialty(a.primarySpecialty, a.primarySpecialtyOther), legacyOnly: true },
 ];
 
 /** Rendered by its owning row (Primary Clinical Specialty), never on its own. */
 const EMPLOYMENT_APPLICATION_CONSUMED_KEYS = new Set(['primarySpecialtyOther']);
 
 /** Curated rows for the employment application: known fields first, with
- * human labels and values; any other field falls back to the generic rows. */
+ * human labels and values; any other field falls back to the generic rows.
+ * A legacy-only field appears only when the stored application has it. */
 export function employmentApplicationRows(app: Record<string, unknown> | undefined | null): [string, string][] {
   if (!app) return [];
   const known = new Set(EMPLOYMENT_APPLICATION_FIELDS.map((f) => f.key));
-  const curated = EMPLOYMENT_APPLICATION_FIELDS.map(({ label, format }): [string, string] => [label, format(app) || '—']);
+  const curated = EMPLOYMENT_APPLICATION_FIELDS
+    .filter(({ key, legacyOnly }) => !legacyOnly || key in app)
+    .map(({ label, format }): [string, string] => [label, format(app) || '—']);
   const rest = Object.fromEntries(
     Object.entries(app).filter(([k]) => !known.has(k) && !EMPLOYMENT_APPLICATION_CONSUMED_KEYS.has(k)),
   );
   return [...curated, ...flattenForDisplay(rest)];
 }
 
-/** Employment reference rows. `reasonForLeaving` is no longer collected
- * (replaced by Supervisor Title) — a historical value is still shown, an
- * empty leftover key is not. */
+// ── Employment references ─────────────────────────────────────────────────────
+//
+// Resume-based references are who to contact and permission to contact them.
+// Manual (pre-resume) references also carried the employment itself; those
+// fields are shown only when the stored reference actually has a value, so a
+// resume-based reference never shows empty work-history rows.
+
+const REFERENCE_FIELDS: { key: string; label: string; legacyOnly?: boolean }[] = [
+  { key: 'supervisorName', label: 'Supervisor' },
+  { key: 'supervisorTitle', label: 'Supervisor Title' },
+  { key: 'employerName', label: 'Facility / Employer' },
+  { key: 'supervisorPhone', label: 'Supervisor Phone' },
+  { key: 'supervisorEmail', label: 'Supervisor Email', legacyOnly: true }, // optional: shown only when provided
+  { key: 'permissionGranted', label: 'Permission to Contact' },
+  { key: 'positionHeld', label: 'Position Held', legacyOnly: true },
+  { key: 'employmentDateFrom', label: 'Employment From', legacyOnly: true },
+  { key: 'employmentDateTo', label: 'Employment To', legacyOnly: true },
+  { key: 'employerCity', label: 'Employer City', legacyOnly: true },
+  { key: 'employerState', label: 'Employer State', legacyOnly: true },
+  { key: 'eligibleForRehire', label: 'Eligible for Rehire', legacyOnly: true },
+  { key: 'rehireDetails', label: 'Rehire Details', legacyOnly: true },
+  { key: 'reasonForLeaving', label: 'Reason for Leaving', legacyOnly: true },
+  { key: 'comments', label: 'Comments', legacyOnly: true },
+];
+
+function hasValue(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  return true;
+}
+
+/** Employment reference rows: the current fields always, legacy/optional
+ * fields only when they hold a value, then anything unrecognized. */
 export function employmentReferenceRows(ref: Record<string, unknown> | undefined | null): [string, string][] {
   if (!ref) return [];
-  const { reasonForLeaving, ...rest } = ref;
-  const hasReason = typeof reasonForLeaving === 'string' && reasonForLeaving.trim().length > 0;
-  return flattenForDisplay(hasReason ? { ...rest, reasonForLeaving } : rest);
+  const known = new Set(REFERENCE_FIELDS.map((f) => f.key));
+  const curated = REFERENCE_FIELDS
+    .filter(({ key, legacyOnly }) => !legacyOnly || hasValue(ref[key]))
+    .map(({ key, label }): [string, string] => [label, displayValue(key, ref[key])]);
+  const rest = Object.fromEntries(Object.entries(ref).filter(([k]) => !known.has(k)));
+  return [...curated, ...flattenForDisplay(rest)];
 }
+
+// ── Personal details ────────────────────────────────────────────────────────
+
+/** Personal details with the date of birth shown as MM/DD/YYYY. */
+export function personalInfoRows(info: Record<string, unknown> | undefined | null): [string, string][] {
+  if (!info) return [];
+  return flattenForDisplay(info).map(([label, value]): [string, string] =>
+    label === 'Date Of Birth' ? ['Date of Birth', typeof info.dateOfBirth === 'string' && info.dateOfBirth ? isoDateToSlash(info.dateOfBirth) : '—'] : [label, value],
+  );
+}
+
+// ── Application format ──────────────────────────────────────────────────────
+
+export type ApplicationFormat = 'resume' | 'manual';
+
+/** Resume-based applications (every submission since the resume became the
+ * "About You & Work History" step) carry a resume; earlier ones were
+ * submitted with manually entered work history and never have one. */
+export function applicationFormat(
+  payload: Record<string, unknown> | null,
+  documents: { docType: string | null }[],
+): ApplicationFormat {
+  const resume = payload?.resumeDocument;
+  if (resume && typeof resume === 'object') return 'resume';
+  return documents.some((d) => d.docType === 'applicant_resume') ? 'resume' : 'manual';
+}
+
+export const APPLICATION_FORMAT_LABELS: Record<ApplicationFormat, string> = {
+  resume: 'Resume-based application',
+  manual: 'Manual work-history application (legacy)',
+};

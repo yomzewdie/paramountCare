@@ -6,12 +6,26 @@ import { requireAuth } from '../middleware/requireAuth';
 import { requireApplicant } from '../middleware/requireApplicant';
 import { insertUploadedDocument } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
+import { buildContentDisposition } from '../utils/contentDisposition';
 
 // Exported so other routes that serve already-uploaded files back (the
 // generic admin document download route in routes/admin.ts) can validate
 // against the exact same allowlist a file was accepted under, rather than
 // duplicating it.
-export const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+// Word documents are accepted for the resume slot only (enforced when a
+// file is associated with a slot — routes/sessions.ts); they are stored and
+// returned as downloads, never parsed, converted, rendered, or executed.
+export const DOC_MIME_TYPE = 'application/msword';
+export const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const RESUME_CONTENT_TYPES = ['application/pdf', DOC_MIME_TYPE, DOCX_MIME_TYPE] as const;
+export const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', DOC_MIME_TYPE, DOCX_MIME_TYPE]);
+
+/** A Word type must come with its own extension (a mislabeled file — e.g.
+ * anything else declared as a .docx — is refused). */
+const REQUIRED_EXTENSION: Record<string, RegExp> = {
+  [DOC_MIME_TYPE]: /\.doc$/i,
+  [DOCX_MIME_TYPE]: /\.docx$/i,
+};
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const uploads = new Hono<AppEnv>();
@@ -47,9 +61,14 @@ uploads.post('/', async (c) => {
 
   if (!ALLOWED_TYPES.has(entry.type)) {
     return c.json(
-      { success: false, error: `Unsupported file type '${entry.type}'. Allowed: PDF, JPG, PNG.` },
+      { success: false, error: `Unsupported file type '${entry.type}'. Allowed: PDF, JPG, PNG, DOC, DOCX.` },
       415,
     );
+  }
+
+  const requiredExtension = REQUIRED_EXTENSION[entry.type];
+  if (requiredExtension && !requiredExtension.test(entry.name)) {
+    return c.json({ success: false, error: 'The file name does not match its file type.' }, 415);
   }
 
   if (entry.size > MAX_SIZE) {
@@ -63,7 +82,8 @@ uploads.post('/', async (c) => {
     await c.env.UPLOADS_BUCKET.put(objectKey, await entry.arrayBuffer(), {
       httpMetadata: {
         contentType: entry.type,
-        contentDisposition: `attachment; filename="${entry.name}"`,
+        // Never the raw client filename — same sanitizing as the admin download.
+        contentDisposition: buildContentDisposition(entry.name),
       },
     });
   } catch (e) {

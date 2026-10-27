@@ -426,3 +426,17 @@ describe('useI9Form — server validation rejection (defense-in-depth)', () => {
     expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
   });
 });
+
+describe('useI9Form — date of birth (UAT)', () => {
+  it('pre-fills the I-9 date of birth (MM/DD/YYYY) from Personal Information', () => {
+    setupSession(fakeSession({ formData: { personalInfo: { firstName: 'Jane', lastName: 'Doe', dateOfBirth: '1990-03-15' } } }));
+    const { result } = renderHook(() => useI9Form());
+    expect(result.current.data.dateOfBirth).toBe('03/15/1990');
+  });
+
+  it('never overrides a date of birth already entered on the I-9', () => {
+    setupSession(fakeSession({ formData: { personalInfo: { dateOfBirth: '1990-03-15' }, i9Data: { ...defaultFormData.i9Data, lastName: 'Doe', dateOfBirth: '01/02/1991' } } }));
+    const { result } = renderHook(() => useI9Form());
+    expect(result.current.data.dateOfBirth).toBe('01/02/1991');
+  });
+});

@@ -12,6 +12,7 @@ import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepos
 import DocumentsScreen from '../../../../src/features/onboarding/DocumentsScreen';
 import SafetyAcknowledgementsScreen from '../../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 import ReviewScreen from '../../../../src/features/onboarding/ReviewScreen';
+import ResumeScreen from '../../../../src/features/onboarding/ResumeScreen';
 
 // Verifies the routing registry directly (which step ids map to a real
 // screen vs. fall through to the placeholder) without a full navigator
@@ -19,6 +20,10 @@ import ReviewScreen from '../../../../src/features/onboarding/ReviewScreen';
 // snapshot/full-render screen tests (jest.config.js), while still directly
 // exercising the actual behavior M6 §13 asks for.
 describe('onboarding [stepId] real-screen registry', () => {
+  it('maps resume (the whole About You & Work History phase) to the real ResumeScreen', () => {
+    expect(REAL_STEP_SCREENS.resume).toBe(ResumeScreen);
+  });
+
   it('maps personal_info to the real Personal Information screen', () => {
     expect(REAL_STEP_SCREENS.personal_info).toBe(PersonalInfoScreen);
   });
@@ -90,12 +95,14 @@ describe('onboarding [stepId] real-screen registry', () => {
     expect(REAL_STEP_SCREENS.safety_exam).toBeUndefined();
   });
 
-  it('keeps the real packet order intact regardless of implementation history (employment_ref_1 stays after employment_application)', () => {
+  it('keeps the real packet order intact regardless of implementation history (resume first; the statement after the references)', () => {
     const packet = getPacket('general_rn');
     const ids = packet!.steps.map((s) => s.id);
+    expect(ids[0]).toBe('resume');
     expect(ids.indexOf('personal_info')).toBeLessThan(ids.indexOf('employment_application'));
-    expect(ids.indexOf('employment_application')).toBeLessThan(ids.indexOf('application_statement'));
-    expect(ids.indexOf('application_statement')).toBeLessThan(ids.indexOf('employment_ref_1'));
+    expect(ids.indexOf('employment_application')).toBeLessThan(ids.indexOf('employment_ref_1'));
+    expect(ids.indexOf('employment_ref_2')).toBeLessThan(ids.indexOf('application_statement'));
+    expect(ids.indexOf('application_statement')).toBeLessThan(ids.indexOf('background_auth'));
   });
 
   it('confirms employment_ref_2 is required (not a packet branch) in every packet type — the actual source, not an assumed matrix', () => {
@@ -361,10 +368,15 @@ describe('onboarding [stepId] real-screen registry', () => {
     const generalRnSteps = deriveProgress('general_rn', {})!.steps;
 
     it('returns the phase label and 1-based position within that phase for the first step', () => {
-      expect(computePhaseStepPosition(generalRnSteps, 'personal_info')).toEqual({
+      expect(computePhaseStepPosition(generalRnSteps, 'resume')).toEqual({
         phaseLabel: 'About You & Work History',
         stepNumber: 1,
-        totalSteps: 5,
+        totalSteps: 1,
+      });
+      expect(computePhaseStepPosition(generalRnSteps, 'personal_info')).toEqual({
+        phaseLabel: 'Applicant Details & References',
+        stepNumber: 1,
+        totalSteps: 4,
       });
     });
 

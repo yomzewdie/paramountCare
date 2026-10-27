@@ -9,14 +9,14 @@ import type { StepDisplayItem } from './steps';
 // subset of the real packet.steps, in the real packet's own order.
 //
 // Confirmed directly against packets.ts (not assumed) before this map was
-// written: general_rn/lvn share one 19-step sequence (personal_info ...
-// employment_application, application_statement, employment_ref_1/2,
+// written: general_rn/lvn share one 20-step sequence (resume, personal_info,
+// employment_application, employment_ref_1/2, application_statement,
 // background_auth, health_info_auth, patient_bill_of_rights,
 // hep_b/tdap/flu_declination, w4, i9, direct_deposit, documents,
 // jcaho_review, safety_acknowledgements, safety_exam[optional], review);
-// icu_rn/er_rn share a condensed 12-step sequence (no health_info_auth,
+// icu_rn/er_rn share a condensed 13-step sequence (no health_info_auth,
 // patient_bill_of_rights, vaccine declinations, jcaho_review, or
-// safety_exam); travel_rn is that same 12-step sequence plus an optional
+// safety_exam); travel_rn is that same 13-step sequence plus an optional
 // employment_ref_3. Walking each real sequence against the membership map
 // below produces a strictly non-decreasing phase-index sequence for every
 // one of the five packets (verified in phases.test.ts) — i.e. every phase
@@ -30,7 +30,14 @@ import type { StepDisplayItem } from './steps';
 // breaking contiguity. They're grouped with the declinations/direct
 // deposit/documents instead ("Pay, Health & Documents"), and the
 // authorizations group is renamed to reflect what actually remains in it.
-export type OnboardingPhaseId = 'about_you' | 'authorizations' | 'pay_health_documents' | 'safety_review';
+//
+// Resume-first onboarding (packet v6): "About You & Work History" is now
+// only the resume upload. The structured data a resume can't reliably
+// supply (Personal Information, Applicant Details, employment references)
+// is its own phase immediately after it, and the Application Statement
+// opens the authorizations phase — after everything it certifies has been
+// entered. Every phase is still a contiguous slice of every packet's order.
+export type OnboardingPhaseId = 'about_you' | 'applicant_details' | 'authorizations' | 'pay_health_documents' | 'safety_review';
 
 export interface OnboardingPhaseDef {
   id: OnboardingPhaseId;
@@ -39,6 +46,7 @@ export interface OnboardingPhaseDef {
 
 export const ONBOARDING_PHASES: OnboardingPhaseDef[] = [
   { id: 'about_you', label: 'About You & Work History' },
+  { id: 'applicant_details', label: 'Applicant Details & References' },
   { id: 'authorizations', label: 'Authorizations & Acknowledgements' },
   { id: 'pay_health_documents', label: 'Pay, Health & Documents' },
   { id: 'safety_review', label: 'Safety & Final Review' },
@@ -50,13 +58,15 @@ export const ONBOARDING_PHASES: OnboardingPhaseDef[] = [
 // fails loudly (see the "no step lost" test) instead of quietly vanishing
 // from the applicant's journey.
 const STEP_ID_TO_PHASE: Record<string, OnboardingPhaseId> = {
-  personal_info: 'about_you',
-  employment_application: 'about_you',
-  application_statement: 'about_you',
-  employment_ref_1: 'about_you',
-  employment_ref_2: 'about_you',
-  employment_ref_3: 'about_you', // travel_rn only, optional
+  resume: 'about_you',
 
+  personal_info: 'applicant_details',
+  employment_application: 'applicant_details',
+  employment_ref_1: 'applicant_details',
+  employment_ref_2: 'applicant_details',
+  employment_ref_3: 'applicant_details', // travel_rn only, optional
+
+  application_statement: 'authorizations',
   background_auth: 'authorizations',
   health_info_auth: 'authorizations', // general_rn/lvn only
   patient_bill_of_rights: 'authorizations', // general_rn/lvn only
@@ -80,7 +90,7 @@ export interface OnboardingPhaseGroup extends OnboardingPhaseDef {
 }
 
 /**
- * Splits a packet's real, ordered step list into the four applicant-facing
+ * Splits a packet's real, ordered step list into the five applicant-facing
  * phases, preserving each step's original relative order within its phase.
  * A step absent from the given packet (e.g. icu_rn has no jcaho_review)
  * simply never appears in any phase's `steps` — never padded, never
@@ -89,6 +99,7 @@ export interface OnboardingPhaseGroup extends OnboardingPhaseDef {
 export function groupStepsIntoPhases(steps: StepDisplayItem[]): OnboardingPhaseGroup[] {
   const buckets: Record<OnboardingPhaseId, StepDisplayItem[]> = {
     about_you: [],
+    applicant_details: [],
     authorizations: [],
     pay_health_documents: [],
     safety_review: [],

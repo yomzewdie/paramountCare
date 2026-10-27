@@ -76,17 +76,16 @@ async function patchStep(
   return res.json();
 }
 
-const VALID_PERSONAL_INFO = {
-  firstName: 'Jane', lastName: 'Doe', middleInitial: '', otherLastNames: '',
+export const VALID_PERSONAL_INFO = {
+  firstName: 'Jane', lastName: 'Doe', middleInitial: '', otherLastNames: '', dateOfBirth: '1990-01-01',
   email: 'jane.doe@example.com', phone: '5551234567',
   address: '123 Main St', aptNumber: '', city: 'Los Angeles', state: 'CA', zip: '90001',
 };
 
 export const VALID_EMPLOYMENT_APPLICATION = {
-  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
+  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
   availableStartDate: '2026-01-01',
   licenseType: 'RN', licenseNumber: 'RN123456', licenseState: 'CA', licenseExpiration: '2028-01-01',
-  yearsExperience: '3-5', primarySpecialty: 'med_surg', primarySpecialtyOther: '',
   authorizedToWork: true, hasConviction: false, convictionDetails: '',
   hasLicenseDiscipline: false, licenseDisciplineDetails: '',
   hasLicenseRevocation: false, licenseRevocationDetails: '',
@@ -97,12 +96,27 @@ export const VALID_EMPLOYMENT_APPLICATION = {
 const SIGNED_ACK = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z' };
 const DECLINING_VACCINE = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' };
 
+// Resume-first reference: who to contact + permission (employment details are on the resume).
 export const VALID_REFERENCE = {
+  supervisorName: 'Supervisor Name', supervisorTitle: 'Nurse Manager', employerName: 'Test Hospital',
+  supervisorPhone: '5551112222', supervisorEmail: '', permissionGranted: true,
+};
+
+/** A reference exactly as the pre-resume (packet v5) manual form saved it. */
+export const LEGACY_MANUAL_REFERENCE = {
   positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
   employerName: 'Test Hospital', employerCity: 'Los Angeles', employerState: 'CA',
   supervisorName: 'Supervisor Name', supervisorPhone: '5551112222', supervisorTitle: 'Nurse Manager',
   permissionGranted: true, eligibleForRehire: true,
   rehireDetails: '', comments: '',
+};
+
+/** An Employment Application exactly as the pre-resume (packet v5) manual form saved it. */
+export const LEGACY_MANUAL_EMPLOYMENT_APPLICATION = {
+  ...VALID_EMPLOYMENT_APPLICATION,
+  employmentType: 'per_diem_assignment', // single string, as stored before it became a multi-select
+  yearsExperience: '3-5', primarySpecialty: 'med_surg', primarySpecialtyOther: '',
+  currentlyEmployed: true, previouslyWorkedHere: false, hasCPR: true, cprCertNumber: '', cprExpiration: '',
 };
 
 const VALID_W4 = {
@@ -190,6 +204,13 @@ async function completeStep(accessToken: string, session: TestSession, step: Pac
       return patchStep(accessToken, session, { acknowledgements: { ...(session.formData.acknowledgements as object), [step.id]: SIGNED_ACK } }, step.id);
 
     case 'document_upload': {
+      if (step.subtype === 'resume') {
+        const objectKey = await uploadFile(accessToken, fakeFile('resume.pdf', 'application/pdf', 300));
+        const assocRes = await associateDoc(accessToken, session.sessionId, 'applicant_resume', objectKey, session.revision);
+        const assocBody = (await assocRes.json()) as TestSession;
+        if (assocRes.status !== 200) throw new Error(`resume upload association failed: ${JSON.stringify(assocBody)}`);
+        return patchStep(accessToken, assocBody, {}, step.id);
+      }
       let current = session;
       const docTypes: string[] = [];
       if (step.config?.i9Uploads) docTypes.push('list_a');
@@ -237,6 +258,25 @@ export async function completePacketExceptReview(accessToken: string, packetId: 
     session = await completeStep(accessToken, session, step);
   }
   return session;
+}
+
+/** Completes every REQUIRED step of `session`'s packet (except `review`)
+ * that isn't already 'completed', leaving completed steps' data untouched —
+ * for sessions seeded with older data (e.g. a pre-resume v5 session). */
+export async function completeRemainingRequiredSteps(
+  accessToken: string,
+  session: TestSession & { packetId: string },
+  opts: { except?: string[] } = {},
+): Promise<TestSession> {
+  const packet = getPacket(session.packetId);
+  if (!packet) throw new Error(`Unknown packetId: ${session.packetId}`);
+  let current: TestSession = session;
+  for (const step of packet.steps) {
+    if (step.id === 'review' || !step.required || opts.except?.includes(step.id)) continue;
+    if (current.stepStates[step.id] === 'completed') continue;
+    current = await completeStep(accessToken, current, step);
+  }
+  return current;
 }
 
 // ── Shared HTTP-call helpers ─────────────────────────────────────────────

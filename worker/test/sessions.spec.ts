@@ -17,6 +17,7 @@ const VALID_PERSONAL_INFO = {
   lastName: 'Doe',
   middleInitial: '',
   otherLastNames: '',
+  dateOfBirth: '1990-01-01',
   email: 'jane.doe@example.com',
   phone: '5551234567',
   address: '123 Main St',

@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont, PDFForm } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont, PDFForm, PDFImage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export interface I9PdfInput {
@@ -112,8 +112,63 @@ function safeCheck(form: PDFForm, fieldName: string): void {
 
 // ── Template-based generation (official I-9 PDF + AcroForm fill) ──────────────
 //
-// Uses the exact AcroForm field names discovered from the official USCIS I-9
-// (Rev. 08/01/23) PDF. Field names sourced by scripts/discover-i9-fields.mjs.
+// Uses the exact AcroForm field names of the bundled official USCIS Form I-9
+// (frontend/public/forms/i9-2024.pdf — the file itself reads "Edition
+// 01/20/25", OMB 1615-0047, expires 05/31/2027, despite the file name).
+// Field names sourced by scripts/discover-i9-fields.mjs.
+
+export const EMPLOYEE_SIGNATURE_FIELD = 'Signature of Employee';
+
+/** Employer / authorized-representative fields the applicant must never
+ * fill (Section 2 certification and Supplement B). Exported for the
+ * regression test that proves they stay empty. */
+export const EMPLOYER_ONLY_SIGNATURE_FIELDS = [
+  'Signature of Employer or AR',
+  'Last Name First Name and Title of Employer or Authorized Representative',
+  'S2 Todays Date mmddyyyy',
+  'Employers Business or Org Name',
+  'Employers Business or Org Address',
+  'Signature of Emp Rep 0',
+  'Signature of Emp Rep 1',
+  'Signature of Emp Rep 2',
+] as const;
+
+async function embedDrawnSignature(pdfDoc: PDFDocument, input: I9PdfInput): Promise<PDFImage | null> {
+  if (input.i9SignatureType !== 'drawn' || !input.i9SignatureDataUrl?.startsWith('data:image/png;base64,')) return null;
+  try {
+    return await pdfDoc.embedPng(base64ToBytes(input.i9SignatureDataUrl.replace('data:image/png;base64,', '')));
+  } catch {
+    return null; // the typed name is used instead
+  }
+}
+
+export interface SignatureArea {
+  page: PDFPage;
+  pageIndex: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The employee signature field's own widget rectangle and page, from the
+ * template (null if the template has no such field — the drawn image is
+ * then not placed anywhere and the typed name is used). */
+export function findEmployeeSignatureArea(pdfDoc: PDFDocument, form: PDFForm): SignatureArea | null {
+  try {
+    const widget = form.getTextField(EMPLOYEE_SIGNATURE_FIELD).acroField.getWidgets()[0];
+    if (!widget) return null;
+    const pages = pdfDoc.getPages();
+    const pageRef = widget.P();
+    let pageIndex = pageRef ? pages.findIndex((p) => p.ref === pageRef || p.ref.toString() === pageRef.toString()) : -1;
+    if (pageIndex < 0) pageIndex = pages.findIndex((p) => p.node.Annots()?.asArray().some((a) => a === widget.dict || a.toString() === pdfDoc.context.getObjectRef(widget.dict)?.toString()));
+    if (pageIndex < 0) return null;
+    const r = widget.getRectangle();
+    return { page: pages[pageIndex], pageIndex, x: r.x, y: r.y, width: r.width, height: r.height };
+  } catch {
+    return null;
+  }
+}
 
 async function generateFromTemplate(
   templateBytes: Uint8Array,
@@ -170,10 +225,19 @@ async function generateFromTemplate(
   }
 
   // ── Signature ─────────────────────────────────────────────────────────────────
-  // The AcroForm signature line is a plain text field. Set it to the typed name
-  // (or full name as fallback); then overlay the drawn PNG image after flattening.
+  // The employee signs Section 1 ONLY. The employee signature goes into the
+  // "Signature of Employee" field — typed text, or for a drawn signature the
+  // PNG placed inside THAT field's own widget rectangle, located from the
+  // template itself (never fixed page coordinates, which silently land in
+  // the wrong place — e.g. Section 2's employer certification — on any other
+  // template revision). Every employer / authorized-representative field
+  // (Section 2 and Supplement B) is never written by applicant submission.
+  const drawnSignature = await embedDrawnSignature(pdfDoc, input);
+  const employeeSignatureArea = drawnSignature ? findEmployeeSignatureArea(pdfDoc, form) : null;
   const sigText = input.i9TypedSignature || `${input.firstName} ${input.lastName}`;
-  safeSetText(form, "Signature of Employee", sigText);
+  // With a drawn signature placed in the field, the field itself stays empty
+  // so the image is the signature; otherwise the typed name is the signature.
+  safeSetText(form, EMPLOYEE_SIGNATURE_FIELD, drawnSignature && employeeSignatureArea ? '' : sigText);
   safeSetText(form, "Today's Date mmddyyy",  input.i9SignedDate);
 
   // Every text field in this AcroForm holds applicant-entered (or
@@ -191,21 +255,10 @@ async function generateFromTemplate(
   // Flatten — converts all AcroForm fields to static content.
   form.flatten();
 
-  // ── Overlay drawn signature image on top of the flattened field area ──────────
-  // Field coords from discover-i9-fields: page=1, x=42, y=421, w=323, h=13
-  if (input.i9SignatureType === 'drawn' && input.i9SignatureDataUrl?.startsWith('data:image/png;base64,')) {
-    try {
-      const base64 = input.i9SignatureDataUrl.replace('data:image/png;base64,', '');
-      const pngBytes = base64ToBytes(base64);
-      const pngImage = await pdfDoc.embedPng(pngBytes);
-      const page = pdfDoc.getPages()[0];
-      // Clear existing text content in signature area first (draw white rect)
-      page.drawRectangle({ x: 42, y: 421, width: 323, height: 13, color: rgb(1, 1, 1) });
-      const dims = pngImage.scaleToFit(310, 20);
-      page.drawImage(pngImage, { x: 44, y: 420, width: dims.width, height: dims.height });
-    } catch {
-      // If PNG embed fails, the typed/flattened text remains — acceptable fallback.
-    }
+  if (drawnSignature && employeeSignatureArea) {
+    const { page, x, y, width, height } = employeeSignatureArea;
+    const dims = drawnSignature.scaleToFit(width - 4, height);
+    page.drawImage(drawnSignature, { x: x + 2, y, width: dims.width, height: dims.height });
   }
 
   // ── Metadata footer (drawn on page 1 after flatten) ───────────────────────────
@@ -316,7 +369,7 @@ async function generateFallbackPdf(input: I9PdfInput, unicodeFontBytes?: Uint8Ar
 
   rect(page, 0, PH - 10, PW, 10, RED_DIM);
   txt(page, 'U.S. Citizenship and Immigration Services', ML, y, 7.5, regular, DGRAY);
-  txt(page, 'OMB No. 1615-0047  Expires 07/31/2026', PW - MR - 172, y, 7, regular, DGRAY);
+  txt(page, 'OMB No. 1615-0047  Expires 05/31/2027', PW - MR - 172, y, 7, regular, DGRAY);
   y -= 13;
   txt(page, 'Form I-9', ML, y, 11, bold, NAVY);
   txt(page, 'EMPLOYMENT ELIGIBILITY VERIFICATION', ML + 54, y, 11, bold, NAVY);
@@ -407,7 +460,7 @@ async function generateFallbackPdf(input: I9PdfInput, unicodeFontBytes?: Uint8Ar
   const footerY = 28;
   rect(page, 0, 0, PW, footerY + 4, NAVY);
   hline(page, 0, footerY + 4, PW, 1, WHITE);
-  txt(page, 'Form I-9 (Rev. 08/01/23)  |  Section 1 completed electronically  |  NOTE: Template PDF not yet configured in R2 — upgrade pending', ML, footerY - 6, 5.5, regular, WHITE);
+  txt(page, 'Form I-9 (Edition 01/20/25)  |  Section 1 completed electronically  |  NOTE: Template PDF not yet configured in R2 — upgrade pending', ML, footerY - 6, 5.5, regular, WHITE);
   txt(page, `Electronically generated by Paramount Care Staffing, LLC  ·  App ID: ${input.applicationId}  ·  ${input.generatedAt}`, ML, footerY - 16, 6, regular, rgb(0.75, 0.85, 1));
   rect(page, 1, footerY + 4, PW - 2, PH - footerY - 5, undefined, NAVY, 1.5);
 

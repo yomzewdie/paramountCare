@@ -81,7 +81,7 @@ export default function Home() {
           message={`Application submitted. Your reference number is ${session.applicationId}. Documents received — Paramount Care Staffing, LLC will review your application within 1–2 business days.`}
         />
         <View style={{ marginTop: theme.spacing.lg }}>
-          <Button label="View Application" onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: 'review' } })} />
+          <Button label="View Application" onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: 'review', origin: 'home' } })} />
         </View>
       </Screen>
     );
@@ -117,7 +117,7 @@ export default function Home() {
         <ContinueOnboardingCard
           stepLabel={progress.nextStep.label}
           phaseLabel={phases.find((p) => p.id === currentPhaseId)?.label ?? progress.packetName}
-          onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: progress.nextStep!.id } })}
+          onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: progress.nextStep!.id, origin: 'home' } })}
         />
       ) : (
         // Every required step is done but at least one OPTIONAL step is

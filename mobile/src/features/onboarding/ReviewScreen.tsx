@@ -10,13 +10,13 @@ import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useSession } from './SessionContext';
 import { useReviewSubmission } from './useReviewSubmission';
 import {
-  CLINICAL_UNIT_OPTIONS, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
-  POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS,
-  finalizeEmploymentApplication, formatOptionValues, formatPrimarySpecialty, isoDateToDisplay, requiresUnitPreference,
+  EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_LICENSE_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
+  LICENSE_TYPE_OPTIONS, POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS, SPECIALTY_OPTIONS,
+  finalizeEmploymentApplication, formatOptionValues, isoDateToDisplay, isoDateToSlash,
 } from '@pcs/shared';
 import type {
   PersonalInfo, EmploymentReference, AcknowledgementEntry,
-  W4Data, I9Data, SafetyEducationData, UploadedDocuments,
+  W4Data, I9Data, SafetyEducationData, UploadedDocuments, UploadedFile,
 } from '@pcs/shared';
 
 // M16 (ADR-029). Section CONTENT (which fields are summarized in detail vs.
@@ -155,6 +155,7 @@ export default function ReviewScreen() {
   const i9Data = (formData.i9Data ?? {}) as Partial<I9Data>;
   const safetyEducation = (formData.safetyEducation ?? {}) as Partial<SafetyEducationData>;
   const uploadedDocuments = (formData.uploadedDocuments ?? {}) as Partial<UploadedDocuments>;
+  const resumeDocument = (formData.resumeDocument ?? null) as UploadedFile | null;
 
   // A step stored as 'completed' under older rules shows "Needs attention"
   // here, matching what Submit will accept (see steps.ts effectiveStepStates).
@@ -164,7 +165,7 @@ export default function ReviewScreen() {
   }
 
   function onEdit(stepId: string) {
-    router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId } });
+    router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId, origin: 'review' } });
   }
 
   const jcahoInfo = stepInfo('jcaho_review');
@@ -256,24 +257,28 @@ export default function ReviewScreen() {
         </View>
       )}
 
+      {stepInfo('resume').exists ? (
+        <SectionCard title="Resume" {...stepInfo('resume')} stepId="resume" onEdit={onEdit}>
+          <FieldRow label="File" value={resumeDocument?.name} />
+        </SectionCard>
+      ) : null}
+
       <SectionCard title="Personal Information" {...stepInfo('personal_info')} stepId="personal_info" onEdit={onEdit}>
         <FieldRow label="Full Legal Name" value={[personalInfo.firstName, personalInfo.middleInitial, personalInfo.lastName].filter(Boolean).join(' ')} />
+        <FieldRow label="Date of Birth" value={personalInfo.dateOfBirth ? isoDateToSlash(personalInfo.dateOfBirth) : null} />
         <FieldRow label="Email" value={personalInfo.email} />
         <FieldRow label="Phone" value={personalInfo.phone} />
         <FieldRow label="Address" value={[personalInfo.address, personalInfo.city, personalInfo.state, personalInfo.zip].filter(Boolean).join(', ')} />
       </SectionCard>
 
-      <SectionCard title="Employment Application" {...stepInfo('employment_application')} stepId="employment_application" onEdit={onEdit}>
+      <SectionCard title="Applicant Details" {...stepInfo('employment_application')} stepId="employment_application" onEdit={onEdit}>
         <FieldRow label="Position Applied For" value={formatOptionValues(employmentApplication.positionApplied, POSITION_OPTIONS)} />
-        {requiresUnitPreference(employmentApplication.positionApplied) ? (
-          <FieldRow label="Specialty / Unit Preference" value={formatOptionValues(employmentApplication.specialtyPreference, CLINICAL_UNIT_OPTIONS)} />
-        ) : null}
+        <FieldRow label="Specialty / Unit Preference" value={formatOptionValues(employmentApplication.specialtyPreference, SPECIALTY_OPTIONS)} />
         <FieldRow label="Employment Type" value={formatOptionValues(employmentApplication.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS)} />
         <FieldRow label="Shift Preference" value={formatOptionValues(employmentApplication.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS)} />
-        <FieldRow label="License" value={[employmentApplication.licenseType, employmentApplication.licenseNumber, employmentApplication.licenseState].filter(Boolean).join(' · ')} />
+        <FieldRow label="License / Certification" value={[formatOptionValues(employmentApplication.licenseType, LICENSE_TYPE_OPTIONS, LEGACY_LICENSE_TYPE_LABELS), employmentApplication.licenseNumber, employmentApplication.licenseState].filter(Boolean).join(' · ')} />
         <FieldRow label="License Expiration" value={isoDateToDisplay(employmentApplication.licenseExpiration)} />
-        <FieldRow label="Primary Clinical Specialty" value={formatPrimarySpecialty(employmentApplication.primarySpecialty, employmentApplication.primarySpecialtyOther)} />
-        <FieldRow label="Years of Experience" value={employmentApplication.yearsExperience} />
+        <FieldRow label="Emergency Contact" value={[employmentApplication.emergencyContactName, employmentApplication.emergencyContactRelationship].filter(Boolean).join(', ')} />
       </SectionCard>
 
       {['employment_ref_1', 'employment_ref_2', 'employment_ref_3'].map((refId) => {
@@ -282,10 +287,10 @@ export default function ReviewScreen() {
         if (!info.exists) return null;
         return (
           <SectionCard key={refId} title={`Employment Reference #${refId.slice(-1)}`} {...info} stepId={refId} onEdit={onEdit}>
-            <FieldRow label="Employer" value={ref?.employerName} />
-            <FieldRow label="Position Held" value={ref?.positionHeld} />
             <FieldRow label="Supervisor" value={[ref?.supervisorName, ref?.supervisorTitle].filter(Boolean).join(', ')} />
-            <FieldRow label="Dates" value={ref?.employmentDateFrom && ref?.employmentDateTo ? `${ref.employmentDateFrom} – ${ref.employmentDateTo}` : null} />
+            <FieldRow label="Facility / Employer" value={ref?.employerName} />
+            <FieldRow label="Phone" value={ref?.supervisorPhone} />
+            {ref?.supervisorEmail?.trim() ? <FieldRow label="Email" value={ref.supervisorEmail} /> : null}
           </SectionCard>
         );
       })}
@@ -339,9 +344,9 @@ export default function ReviewScreen() {
         </Text>
       </SectionCard>
 
-      <SectionCard title="License & Credential Uploads" {...stepInfo('documents')} stepId="documents" onEdit={onEdit}>
+      <SectionCard title="Documents & Credentials" {...stepInfo('documents')} stepId="documents" onEdit={onEdit}>
         <CheckRow label="Identity & Work Authorization (I-9)" checked={!!uploadedDocuments.listA || (!!uploadedDocuments.listB && !!uploadedDocuments.listC)} />
-        <CheckRow label="Nursing License" checked={!!uploadedDocuments.nursingLicense} />
+        <CheckRow label="Professional License / Certification" checked={!!uploadedDocuments.nursingLicense} />
         <CheckRow label="CPR / BLS Certification" checked={!!uploadedDocuments.cprCertification} />
       </SectionCard>
 

@@ -182,7 +182,7 @@ describe('useReviewSubmission', () => {
 describe('useReviewSubmission — steps completed under older rules', () => {
   const VALID_APPLICATION = {
     ...defaultFormData.employmentApplication,
-    positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
+    positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
     licenseType: 'RN', licenseNumber: 'RN1', licenseState: 'CA', licenseExpiration: '2028-03-15',
     yearsExperience: '3-5', primarySpecialty: 'icu',
     authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,

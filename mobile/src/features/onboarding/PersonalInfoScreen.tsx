@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import type { PersonalInfo } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
@@ -11,6 +10,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { US_STATE_OPTIONS } from '../../constants/usStates';
@@ -20,14 +20,14 @@ import { usePersonalInfoForm } from './usePersonalInfoForm';
 // on a failed Complete attempt. Deliberately separate from whatever key
 // order @pcs/shared's zod schema happens to produce its issues in.
 const FIELD_ORDER: (keyof PersonalInfo)[] = [
-  'lastName', 'firstName', 'middleInitial', 'otherLastNames',
+  'lastName', 'firstName', 'middleInitial', 'otherLastNames', 'dateOfBirth',
   'email', 'phone',
   'address', 'aptNumber', 'city', 'state', 'zip',
 ];
 
 export default function PersonalInfoScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = usePersonalInfoForm();
 
@@ -63,13 +63,13 @@ export default function PersonalInfoScreen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') {
-      router.back(); // returns to the onboarding step list / dashboard — no next-form to advance into yet (M5 §11)
+      nav.afterComplete();
     } else if (outcome.kind === 'invalid') {
       scrollToFirstError();
     }
@@ -103,7 +103,7 @@ export default function PersonalInfoScreen() {
     >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Personal Information</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
-        Enter your full legal name and contact details. Sensitive identity information (date of birth, SSN) is collected later, in the Form I-9 step.
+        Enter your full legal name, date of birth, and contact details. Your Social Security number is collected later, in the Form I-9 step.
       </Text>
 
       {form.conflict ? (
@@ -121,6 +121,14 @@ export default function PersonalInfoScreen() {
         <TextField label="First Name" required autoComplete="given-name" textContentType="givenName" returnKeyType="next" onSubmitEditing={() => focusNext('firstName')} {...field('firstName')} />
         <TextField label="M.I." hint="Optional" maxLength={1} autoCapitalize="characters" returnKeyType="next" onSubmitEditing={() => focusNext('middleInitial')} {...field('middleInitial')} />
         <TextField label="Other Last Names Used" hint="Maiden name, alias, or leave blank" returnKeyType="next" onSubmitEditing={() => focusNext('otherLastNames')} {...field('otherLastNames')} />
+        <TextField
+          label="Date of Birth" required hint="MM/DD/YYYY — you must be at least 18" placeholder="MM/DD/YYYY"
+          keyboardType="number-pad" maxLength={10}
+          returnKeyType="next" onSubmitEditing={() => focusNext('dateOfBirth')}
+          {...field('dateOfBirth')}
+          value={form.dateOfBirthDisplay}
+          onChangeText={form.setDateOfBirthInput}
+        />
       </FormSection>
 
       <FormSection title="Contact Information">

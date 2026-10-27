@@ -17,14 +17,15 @@ describe('deriveProgress', () => {
 
   it('splits completed vs remaining correctly and computes the next step', () => {
     const progress = deriveProgress('general_rn', {
+      resume: 'completed',
       personal_info: 'completed',
       employment_application: 'completed',
     });
     expect(progress).not.toBeNull();
-    expect(progress!.completedSteps.map((s) => s.id)).toEqual(['personal_info', 'employment_application']);
+    expect(progress!.completedSteps.map((s) => s.id)).toEqual(['resume', 'personal_info', 'employment_application']);
     expect(progress!.remainingSteps.every((s) => !s.completed)).toBe(true);
-    // The next step is the first step after the two completed ones, in packet order.
-    expect(progress!.nextStep?.id).toBe('application_statement');
+    // The next step is the first step after the completed ones, in packet order.
+    expect(progress!.nextStep?.id).toBe('employment_ref_1');
   });
 
   it('reports isComplete and a null nextStep once every step is completed', () => {
@@ -63,17 +64,32 @@ describe('deriveProgress', () => {
 
     it('every packet requires employment_ref_2 before employment_ref_1 can be considered the "next" step is done', () => {
       for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
-        const progress = deriveProgress(packetId, { personal_info: 'completed', employment_application: 'completed', application_statement: 'completed', employment_ref_1: 'completed' });
+        const progress = deriveProgress(packetId, { resume: 'completed', personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed' });
         expect(progress!.nextStep?.id).toBe('employment_ref_2');
       }
     });
 
-    it('completing employment_ref_1 and employment_ref_2 surfaces background_auth as the next step, identically for general_rn and icu_rn', () => {
-      const completedThroughRef2 = { personal_info: 'completed', employment_application: 'completed', application_statement: 'completed', employment_ref_1: 'completed', employment_ref_2: 'completed' } as const;
-      const generalRn = deriveProgress('general_rn', completedThroughRef2);
-      const icuRn = deriveProgress('icu_rn', completedThroughRef2);
-      expect(generalRn!.nextStep?.id).toBe('background_auth');
-      expect(icuRn!.nextStep?.id).toBe('background_auth');
+    it('completing employment_ref_1 and employment_ref_2 surfaces the Application Statement, then background_auth, identically for general_rn and icu_rn', () => {
+      const completedThroughRef2 = { resume: 'completed', personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed', employment_ref_2: 'completed' } as const;
+      expect(deriveProgress('general_rn', completedThroughRef2)!.nextStep?.id).toBe('application_statement');
+      expect(deriveProgress('icu_rn', completedThroughRef2)!.nextStep?.id).toBe('application_statement');
+      const withStatement = { ...completedThroughRef2, application_statement: 'completed' } as const;
+      expect(deriveProgress('general_rn', withStatement)!.nextStep?.id).toBe('background_auth');
+      expect(deriveProgress('icu_rn', withStatement)!.nextStep?.id).toBe('background_auth');
+    });
+
+    it('resume-first: a fresh applicant\'s next step is the resume, for every packet', () => {
+      for (const packetId of ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn']) {
+        expect(deriveProgress(packetId, {})!.nextStep?.id).toBe('resume');
+      }
+    });
+
+    it('resume-first: a session started on the manual (v5) flow keeps its completed steps and is sent to the resume next', () => {
+      const v5Completed = { personal_info: 'completed', employment_application: 'completed', application_statement: 'completed', employment_ref_1: 'completed', employment_ref_2: 'completed' } as const;
+      const progress = deriveProgress('general_rn', v5Completed)!;
+      expect(progress.completedSteps.map((s) => s.id).sort()).toEqual(Object.keys(v5Completed).sort());
+      expect(progress.nextStep?.id).toBe('resume');
+      expect(progress.isComplete).toBe(false);
     });
 
   });
@@ -146,7 +162,7 @@ describe('deriveProgress — current-rule completion (formData given)', () => {
   const VALID_PERSONAL_INFO = {
     ...defaultFormData.personalInfo,
     firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com', phone: '555-123-4567',
-    address: '123 Main St', city: 'Los Angeles', state: 'CA', zip: '90001',
+    address: '123 Main St', city: 'Los Angeles', state: 'CA', zip: '90001', dateOfBirth: '1990-01-01',
   };
   const LEGACY_REFERENCE = {
     positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',

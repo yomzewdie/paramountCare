@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
@@ -10,6 +10,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { useAcknowledgementForm } from './useAcknowledgementForm';
@@ -28,7 +29,7 @@ function paragraphsOf(text: string): string[] {
 
 export default function AcknowledgementScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
   const form = useAcknowledgementForm(stepId ?? '');
@@ -51,13 +52,13 @@ export default function AcknowledgementScreen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') {
-      router.back();
+      nav.afterComplete();
     } else if (outcome.kind === 'invalid') {
       scrollToFirstError();
     }
@@ -96,10 +97,16 @@ export default function AcknowledgementScreen() {
       ) : null}
 
       <FormSection title="Statement">
+        {/* The statement grows with its content and scrolls with the page —
+            one scroll surface from the statement through the checkbox and
+            signature. (It used to be a fixed-height box with its own inner
+            ScrollView: a swipe that started on it scrolled only the box and,
+            on iOS, stopped dead at the box's bottom instead of continuing
+            the page, so reaching the checkbox took several swipes.) */}
         <View
           accessibilityRole="text"
+          testID="statement"
           style={{
-            maxHeight: 320,
             borderWidth: 1,
             borderColor: theme.colors.border,
             borderRadius: theme.radii.sm,
@@ -108,16 +115,14 @@ export default function AcknowledgementScreen() {
             marginBottom: theme.spacing.md,
           }}
         >
-          <ScrollView nestedScrollEnabled>
-            {paragraphsOf(form.statementText).map((para, i) => (
-              <Text
-                key={i}
-                style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}
-              >
-                {para}
-              </Text>
-            ))}
-          </ScrollView>
+          {paragraphsOf(form.statementText).map((para, i) => (
+            <Text
+              key={i}
+              style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}
+            >
+              {para}
+            </Text>
+          ))}
         </View>
 
         <View onLayout={(e) => { checkboxOffset.current = e.nativeEvent.layout.y; }}>

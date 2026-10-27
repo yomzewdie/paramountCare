@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import type { W4Data, W4FilingStatus } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
@@ -13,6 +12,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { useW4Form } from './useW4Form';
@@ -96,7 +96,7 @@ function DollarField({ label, value, onChangeText, hint }: { label: string; valu
 
 export default function W4Screen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = useW4Form();
 
@@ -127,13 +127,13 @@ export default function W4Screen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') {
-      router.back();
+      nav.afterComplete();
     } else if (outcome.kind === 'invalid') {
       scrollToFirstError();
     }

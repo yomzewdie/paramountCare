@@ -78,6 +78,17 @@ export function PersonalInfoSection({ data, onChange, errors = {} }: PersonalInf
                 hint="Include all names under which you have been previously employed (e.g., maiden name)"
               />
             </div>
+            <div className="sm:col-span-2">
+              <Input
+                label="Date of Birth"
+                required
+                type="date"
+                value={data.dateOfBirth ?? ''}
+                onChange={update('dateOfBirth')}
+                error={errors.dateOfBirth}
+                hint="You must be at least 18 years old"
+              />
+            </div>
           </div>
 
           {/* Contact */}

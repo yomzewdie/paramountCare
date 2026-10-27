@@ -34,17 +34,11 @@ function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse 
 
 const VALID_REFERENCE = {
   ...defaultEmploymentReference,
-  positionHeld: 'Registered Nurse',
-  employmentDateFrom: '01/2020',
-  employmentDateTo: '06/2023',
-  employerName: "St. Mary's Medical Center",
-  employerCity: 'Los Angeles',
-  employerState: 'CA',
   supervisorName: 'Jane Supervisor',
-  supervisorPhone: '555-000-1111',
   supervisorTitle: 'Nurse Manager',
+  employerName: "St. Mary's Medical Center",
+  supervisorPhone: '555-000-1111',
   permissionGranted: true,
-  eligibleForRehire: true,
 };
 
 function setupSession(session: SessionResponse, saveStepImpl?: jest.Mock) {
@@ -57,15 +51,15 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useEmploymentReferenceForm — loading', () => {
   it('populates fields from the session\'s existing reference at this stepId', () => {
-    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, positionHeld: 'RN' } } } }));
+    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, supervisorName: 'RN' } } } }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
-    expect(result.current.data.positionHeld).toBe('RN');
+    expect(result.current.data.supervisorName).toBe('RN');
   });
 
   it('reads only its OWN stepId, ignoring a different reference stored under the same key', () => {
-    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_2: { ...defaultEmploymentReference, positionHeld: 'Other Ref' } } } }));
+    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_2: { ...defaultEmploymentReference, supervisorName: 'Other Ref' } } } }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
-    expect(result.current.data.positionHeld).toBe('');
+    expect(result.current.data.supervisorName).toBe('');
   });
 
   it('defaults to the shared empty shape when nothing is stored yet', () => {
@@ -86,9 +80,9 @@ describe('useEmploymentReferenceForm — validation', () => {
     setupSession(fakeSession({ formData: {} }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
-    expect(result.current.errors.positionHeld).toBeUndefined();
-    act(() => result.current.blurField('positionHeld'));
-    expect(result.current.errors.positionHeld).toBeTruthy();
+    expect(result.current.errors.supervisorName).toBeUndefined();
+    act(() => result.current.blurField('supervisorName'));
+    expect(result.current.errors.supervisorName).toBeTruthy();
   });
 
   it('setField marks the form dirty', () => {
@@ -96,7 +90,7 @@ describe('useEmploymentReferenceForm — validation', () => {
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
     expect(result.current.isDirty).toBe(false);
-    act(() => result.current.setField('positionHeld', 'RN'));
+    act(() => result.current.setField('supervisorName', 'RN'));
     expect(result.current.isDirty).toBe(true);
   });
 
@@ -107,15 +101,39 @@ describe('useEmploymentReferenceForm — validation', () => {
     act(() => result.current.blurField('supervisorPhone'));
 
     expect(result.current.errors.supervisorPhone).toBe('Enter a valid 10-digit phone number.');
-    expect(result.current.errors.positionHeld).toBeUndefined();
+    expect(result.current.errors.supervisorName).toBeUndefined();
   });
 
-  it('requires rehireDetails only when eligibleForRehire is false', () => {
+  it('rehire eligibility and work-history details are no longer required (they come from the resume / the reference check)', () => {
     setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...VALID_REFERENCE, eligibleForRehire: false, rehireDetails: '' } } } }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+    for (const field of ['rehireDetails', 'eligibleForRehire', 'positionHeld', 'employmentDateFrom', 'employerCity'] as const) {
+      act(() => result.current.blurField(field));
+    }
+    expect(result.current.errors).toEqual({});
+  });
 
-    act(() => result.current.blurField('rehireDetails'));
-    expect(result.current.errors.rehireDetails).toBeTruthy();
+  it('an invalid optional email is flagged once touched; blank is fine', () => {
+    setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: VALID_REFERENCE } } }));
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+    act(() => result.current.blurField('supervisorEmail'));
+    expect(result.current.errors.supervisorEmail).toBeUndefined();
+    act(() => result.current.setField('supervisorEmail', 'nope'));
+    expect(result.current.errors.supervisorEmail).toBeTruthy();
+  });
+
+  it('a reference saved by the old manual form loads, stays valid, and keeps its work-history values on save', async () => {
+    const legacy = { ...VALID_REFERENCE, positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '06/2023', employerCity: 'LA', employerState: 'CA', eligibleForRehire: true };
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentReferences: { employment_ref_1: legacy } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+      stepData: { employment_ref_1: expect.objectContaining({ positionHeld: 'RN', employmentDateFrom: '01/2020', eligibleForRehire: true }) },
+    }));
   });
 
   it('requires the permission consent checkbox to be checked', () => {
@@ -137,7 +155,7 @@ describe('useEmploymentReferenceForm — validation', () => {
 
     expect(outcome).toEqual({ kind: 'invalid' });
     expect(saveStep).not.toHaveBeenCalled();
-    expect(result.current.errors.positionHeld).toBeTruthy();
+    expect(result.current.errors.supervisorName).toBeTruthy();
     expect(result.current.errors.permissionGranted).toBeTruthy();
   });
 });
@@ -150,7 +168,7 @@ describe('useEmploymentReferenceForm — partial save', () => {
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
-    act(() => result.current.setField('positionHeld', 'RN')); // rest still invalid/empty
+    act(() => result.current.setField('supervisorName', 'RN')); // rest still invalid/empty
     await act(async () => {
       await result.current.saveProgress();
     });
@@ -161,14 +179,14 @@ describe('useEmploymentReferenceForm — partial save', () => {
   });
 
   it('preserves a DIFFERENT reference already saved under the same formData key', async () => {
-    const otherRef = { ...defaultEmploymentReference, positionHeld: 'Already Saved Ref 2' };
+    const otherRef = { ...defaultEmploymentReference, supervisorName: 'Already Saved Ref 2' };
     const saveStep = setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_2: otherRef } } }),
       jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
-    act(() => result.current.setField('positionHeld', 'RN'));
+    act(() => result.current.setField('supervisorName', 'RN'));
     await act(async () => {
       await result.current.saveProgress();
     });
@@ -176,7 +194,7 @@ describe('useEmploymentReferenceForm — partial save', () => {
     const [call] = saveStep.mock.calls;
     const stepData = call[0].stepData as Record<string, unknown>;
     expect(stepData.employment_ref_2).toEqual(otherRef);
-    expect((stepData.employment_ref_1 as { positionHeld: string }).positionHeld).toBe('RN');
+    expect((stepData.employment_ref_1 as { supervisorName: string }).supervisorName).toBe('RN');
   });
 
   it('does not downgrade an already-completed step back to in_progress on a plain save', async () => {
@@ -200,7 +218,7 @@ describe('useEmploymentReferenceForm — partial save', () => {
   // ref_1 test above) to prove the same hook works correctly and
   // independently for a second instance, not merely by coincidence.
   it('works identically for employment_ref_2, loading only its own data', async () => {
-    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    const ref1 = { ...defaultEmploymentReference, supervisorName: 'Ref 1 Data' };
     setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1 } } }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_2'));
 
@@ -208,14 +226,14 @@ describe('useEmploymentReferenceForm — partial save', () => {
   });
 
   it('saving employment_ref_2 preserves employment_ref_1\'s already-saved data', async () => {
-    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
+    const ref1 = { ...defaultEmploymentReference, supervisorName: 'Ref 1 Data' };
     const saveStep = setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1 } } }),
       jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_2'));
 
-    act(() => result.current.setField('positionHeld', 'Ref 2 Data'));
+    act(() => result.current.setField('supervisorName', 'Ref 2 Data'));
     await act(async () => {
       await result.current.saveProgress();
     });
@@ -223,7 +241,7 @@ describe('useEmploymentReferenceForm — partial save', () => {
     const [call] = saveStep.mock.calls;
     const stepData = call[0].stepData as Record<string, unknown>;
     expect(stepData.employment_ref_1).toEqual(ref1);
-    expect((stepData.employment_ref_2 as { positionHeld: string }).positionHeld).toBe('Ref 2 Data');
+    expect((stepData.employment_ref_2 as { supervisorName: string }).supervisorName).toBe('Ref 2 Data');
     expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_2' }));
   });
 
@@ -266,14 +284,14 @@ describe('useEmploymentReferenceForm — complete', () => {
 
 describe('useEmploymentReferenceForm — conflict handling', () => {
   it('surfaces a conflict from saveStep and remembers the latest server value for THIS stepId, without touching local edits', async () => {
-    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, positionHeld: 'ServerWon' } } } });
+    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, supervisorName: 'ServerWon' } } } });
     const saveStep = setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_1: VALID_REFERENCE } } }),
       jest.fn().mockResolvedValue({ status: 'conflict', latestSession } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
-    act(() => result.current.setField('positionHeld', 'MyOwnEdit'));
+    act(() => result.current.setField('supervisorName', 'MyOwnEdit'));
 
     let outcome;
     await act(async () => {
@@ -281,19 +299,19 @@ describe('useEmploymentReferenceForm — conflict handling', () => {
     });
 
     expect(outcome).toEqual({ kind: 'conflict' });
-    expect(result.current.conflict?.latest.positionHeld).toBe('ServerWon');
-    expect(result.current.data.positionHeld).toBe('MyOwnEdit');
+    expect(result.current.conflict?.latest.supervisorName).toBe('ServerWon');
+    expect(result.current.data.supervisorName).toBe('MyOwnEdit');
     expect(saveStep).toHaveBeenCalledTimes(1);
   });
 
   it('keepMyChanges dismisses the conflict without altering the form data', async () => {
-    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, positionHeld: 'ServerWon' } } } });
+    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, supervisorName: 'ServerWon' } } } });
     setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_1: VALID_REFERENCE } } }),
       jest.fn().mockResolvedValue({ status: 'conflict', latestSession } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
-    act(() => result.current.setField('positionHeld', 'MyOwnEdit'));
+    act(() => result.current.setField('supervisorName', 'MyOwnEdit'));
     await act(async () => {
       await result.current.saveProgress();
     });
@@ -301,24 +319,24 @@ describe('useEmploymentReferenceForm — conflict handling', () => {
     act(() => result.current.keepMyChanges());
 
     expect(result.current.conflict).toBeNull();
-    expect(result.current.data.positionHeld).toBe('MyOwnEdit');
+    expect(result.current.data.supervisorName).toBe('MyOwnEdit');
   });
 
   it('discardAndReloadLatest replaces local data with the server\'s latest values and clears dirty state', async () => {
-    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, positionHeld: 'ServerWon' } } } });
+    const latestSession = fakeSession({ formData: { employmentReferences: { employment_ref_1: { ...defaultEmploymentReference, supervisorName: 'ServerWon' } } } });
     setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_1: VALID_REFERENCE } } }),
       jest.fn().mockResolvedValue({ status: 'conflict', latestSession } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
-    act(() => result.current.setField('positionHeld', 'MyOwnEdit'));
+    act(() => result.current.setField('supervisorName', 'MyOwnEdit'));
     await act(async () => {
       await result.current.saveProgress();
     });
 
     act(() => result.current.discardAndReloadLatest());
 
-    expect(result.current.data.positionHeld).toBe('ServerWon');
+    expect(result.current.data.supervisorName).toBe('ServerWon');
     expect(result.current.isDirty).toBe(false);
     expect(result.current.conflict).toBeNull();
   });
@@ -357,7 +375,7 @@ describe('useEmploymentReferenceForm — server validation rejection (defense-in
 
     expect(outcome).toEqual({ kind: 'invalid' });
     expect(result.current.saveError).toBeNull();
-    expect(result.current.errors.positionHeld).toBeDefined();
+    expect(result.current.errors.supervisorName).toBeDefined();
     expect(saveStep).toHaveBeenCalledTimes(1);
   });
 
@@ -382,8 +400,8 @@ describe('useEmploymentReferenceForm — server validation rejection (defense-in
 // (rather than building a new component) actually safe, not just convenient.
 describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel RN)', () => {
   it('loads only its own data, independent of Reference #1 and #2', () => {
-    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
-    const ref2 = { ...defaultEmploymentReference, positionHeld: 'Ref 2 Data' };
+    const ref1 = { ...defaultEmploymentReference, supervisorName: 'Ref 1 Data' };
+    const ref2 = { ...defaultEmploymentReference, supervisorName: 'Ref 2 Data' };
     setupSession(fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1, employment_ref_2: ref2 } } }));
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_3'));
 
@@ -391,15 +409,15 @@ describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel 
   });
 
   it('saving employment_ref_3 preserves BOTH Reference #1 and #2\'s already-saved data', async () => {
-    const ref1 = { ...defaultEmploymentReference, positionHeld: 'Ref 1 Data' };
-    const ref2 = { ...defaultEmploymentReference, positionHeld: 'Ref 2 Data' };
+    const ref1 = { ...defaultEmploymentReference, supervisorName: 'Ref 1 Data' };
+    const ref2 = { ...defaultEmploymentReference, supervisorName: 'Ref 2 Data' };
     const saveStep = setupSession(
       fakeSession({ formData: { employmentReferences: { employment_ref_1: ref1, employment_ref_2: ref2 } } }),
       jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_3'));
 
-    act(() => result.current.setField('positionHeld', 'Ref 3 Data'));
+    act(() => result.current.setField('supervisorName', 'Ref 3 Data'));
     await act(async () => {
       await result.current.saveProgress();
     });
@@ -408,7 +426,7 @@ describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel 
     const stepData = call[0].stepData as Record<string, unknown>;
     expect(stepData.employment_ref_1).toEqual(ref1);
     expect(stepData.employment_ref_2).toEqual(ref2);
-    expect((stepData.employment_ref_3 as { positionHeld: string }).positionHeld).toBe('Ref 3 Data');
+    expect((stepData.employment_ref_3 as { supervisorName: string }).supervisorName).toBe('Ref 3 Data');
     expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'employment_ref_3' }));
   });
 
@@ -421,7 +439,7 @@ describe('useEmploymentReferenceForm — employment_ref_3 (M10, optional/Travel 
     );
     const { result } = renderHook(() => useEmploymentReferenceForm('employment_ref_1'));
 
-    act(() => result.current.setField('positionHeld', 'RN'));
+    act(() => result.current.setField('supervisorName', 'RN'));
     await act(async () => {
       await result.current.saveProgress();
     });

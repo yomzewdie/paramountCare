@@ -12,11 +12,21 @@ import {
 const PACKET_IDS = ['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn'];
 
 describe('groupStepsIntoPhases', () => {
-  it('produces exactly four groups, in the fixed applicant-facing order, for every packet', () => {
+  it('produces exactly five groups, in the fixed applicant-facing order, for every packet', () => {
     for (const packetId of PACKET_IDS) {
       const progress = deriveProgress(packetId, {})!;
       const groups = groupStepsIntoPhases(progress.steps);
-      expect(groups.map((g) => g.id)).toEqual(['about_you', 'authorizations', 'pay_health_documents', 'safety_review']);
+      expect(groups.map((g) => g.id)).toEqual(['about_you', 'applicant_details', 'authorizations', 'pay_health_documents', 'safety_review']);
+    }
+  });
+
+  it('resume-first: "About You & Work History" is ONLY the resume upload, for every packet', () => {
+    for (const packetId of PACKET_IDS) {
+      const groups = groupStepsIntoPhases(deriveProgress(packetId, {})!.steps);
+      const aboutYou = groups.find((g) => g.id === 'about_you')!;
+      expect(aboutYou.label).toBe('About You & Work History');
+      expect(aboutYou.steps.map((s) => s.id)).toEqual(['resume']);
+      expect(aboutYou.steps[0]).toMatchObject({ label: 'Upload Your Resume', required: true });
     }
   });
 
@@ -80,15 +90,16 @@ describe('groupStepsIntoPhases', () => {
     );
   });
 
-  describe('General RN / LVN — final four-group mapping (19 steps)', () => {
+  describe('General RN / LVN — five-group mapping (20 steps)', () => {
     it('matches the exact discovered contiguous mapping', () => {
       const progress = deriveProgress('general_rn', {})!;
       const groups = groupStepsIntoPhases(progress.steps);
-      expect(groups.find((g) => g.id === 'about_you')!.steps.map((s) => s.id)).toEqual([
-        'personal_info', 'employment_application', 'application_statement', 'employment_ref_1', 'employment_ref_2',
+      expect(groups.find((g) => g.id === 'about_you')!.steps.map((s) => s.id)).toEqual(['resume']);
+      expect(groups.find((g) => g.id === 'applicant_details')!.steps.map((s) => s.id)).toEqual([
+        'personal_info', 'employment_application', 'employment_ref_1', 'employment_ref_2',
       ]);
       expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual([
-        'background_auth', 'health_info_auth', 'patient_bill_of_rights',
+        'application_statement', 'background_auth', 'health_info_auth', 'patient_bill_of_rights',
       ]);
       expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
         'hep_b_declination', 'tdap_declination', 'flu_declination', 'w4', 'i9', 'direct_deposit', 'documents',
@@ -105,15 +116,16 @@ describe('groupStepsIntoPhases', () => {
     });
   });
 
-  describe('ICU/ER RN — condensed 12-step mapping (no health_info_auth/patient_bill_of_rights/vaccines/jcaho/exam)', () => {
+  describe('ICU/ER RN — condensed 13-step mapping (no health_info_auth/patient_bill_of_rights/vaccines/jcaho/exam)', () => {
     it('matches the exact discovered contiguous mapping', () => {
       for (const packetId of ['icu_rn', 'er_rn']) {
         const progress = deriveProgress(packetId, {})!;
         const groups = groupStepsIntoPhases(progress.steps);
-        expect(groups.find((g) => g.id === 'about_you')!.steps.map((s) => s.id)).toEqual([
-          'personal_info', 'employment_application', 'application_statement', 'employment_ref_1', 'employment_ref_2',
+        expect(groups.find((g) => g.id === 'about_you')!.steps.map((s) => s.id)).toEqual(['resume']);
+        expect(groups.find((g) => g.id === 'applicant_details')!.steps.map((s) => s.id)).toEqual([
+          'personal_info', 'employment_application', 'employment_ref_1', 'employment_ref_2',
         ]);
-        expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['background_auth']);
+        expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['application_statement', 'background_auth']);
         expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
           'w4', 'i9', 'direct_deposit', 'documents',
         ]);
@@ -124,22 +136,22 @@ describe('groupStepsIntoPhases', () => {
     });
   });
 
-  describe('Travel RN — 13-step mapping with optional Employment Reference #3', () => {
-    it('places the optional employment_ref_3 in About You & Work History, immediately after Reference #2, still marked optional', () => {
+  describe('Travel RN — 14-step mapping with optional Employment Reference #3', () => {
+    it('places the optional employment_ref_3 in Applicant Details & References, immediately after Reference #2, still marked optional', () => {
       const progress = deriveProgress('travel_rn', {})!;
       const groups = groupStepsIntoPhases(progress.steps);
-      const aboutYou = groups.find((g) => g.id === 'about_you')!;
-      expect(aboutYou.steps.map((s) => s.id)).toEqual([
-        'personal_info', 'employment_application', 'application_statement', 'employment_ref_1', 'employment_ref_2', 'employment_ref_3',
+      const details = groups.find((g) => g.id === 'applicant_details')!;
+      expect(details.steps.map((s) => s.id)).toEqual([
+        'personal_info', 'employment_application', 'employment_ref_1', 'employment_ref_2', 'employment_ref_3',
       ]);
-      const ref3 = aboutYou.steps.find((s) => s.id === 'employment_ref_3')!;
+      const ref3 = details.steps.find((s) => s.id === 'employment_ref_3')!;
       expect(ref3.required).toBe(false);
     });
 
     it('otherwise matches the same condensed mapping as icu_rn/er_rn for the remaining phases', () => {
       const progress = deriveProgress('travel_rn', {})!;
       const groups = groupStepsIntoPhases(progress.steps);
-      expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['background_auth']);
+      expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['application_statement', 'background_auth']);
       expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
         'w4', 'i9', 'direct_deposit', 'documents',
       ]);
@@ -168,14 +180,14 @@ describe('groupStepsIntoPhases', () => {
 describe('derivePhaseRequiredCounts', () => {
   it('counts only required steps — an incomplete optional step never appears in either number', () => {
     const progress = deriveProgress('travel_rn', {
-      personal_info: 'completed', employment_application: 'completed', application_statement: 'completed',
+      personal_info: 'completed', employment_application: 'completed',
       employment_ref_1: 'completed', employment_ref_2: 'completed',
       // employment_ref_3 (optional) deliberately left not_started
     })!;
-    const aboutYou = groupStepsIntoPhases(progress.steps).find((g) => g.id === 'about_you')!;
-    const counts = derivePhaseRequiredCounts(aboutYou.steps);
-    expect(counts.totalRequired).toBe(5); // excludes employment_ref_3
-    expect(counts.completedRequired).toBe(5);
+    const details = groupStepsIntoPhases(progress.steps).find((g) => g.id === 'applicant_details')!;
+    const counts = derivePhaseRequiredCounts(details.steps);
+    expect(counts.totalRequired).toBe(4); // excludes employment_ref_3
+    expect(counts.completedRequired).toBe(4);
   });
 });
 
@@ -213,16 +225,22 @@ describe('derivePhaseStatus', () => {
 
   it('a phase with a completed optional step but no required activity yet is still "in_progress", not "completed" or "not_started"', () => {
     const progress = deriveProgress('travel_rn', { employment_ref_3: 'completed' })!;
-    const group = groupStepsIntoPhases(progress.steps).find((g) => g.id === 'about_you')!;
+    const group = groupStepsIntoPhases(progress.steps).find((g) => g.id === 'applicant_details')!;
     expect(derivePhaseStatus(group.steps, { employment_ref_3: 'completed' })).toBe('in_progress');
   });
 });
 
 describe('findCurrentPhaseId', () => {
+  it('a fresh applicant starts in About You & Work History, on the resume', () => {
+    const progress = deriveProgress('general_rn', {})!;
+    expect(progress.nextStep?.id).toBe('resume');
+    expect(findCurrentPhaseId(groupStepsIntoPhases(progress.steps), progress.nextStep?.id)).toBe('about_you');
+  });
+
   it('returns the phase containing the authoritative progress.nextStep', () => {
     const progress = deriveProgress('general_rn', {
-      personal_info: 'completed', employment_application: 'completed', application_statement: 'completed',
-      employment_ref_1: 'completed', employment_ref_2: 'completed',
+      resume: 'completed', personal_info: 'completed', employment_application: 'completed',
+      employment_ref_1: 'completed', employment_ref_2: 'completed', application_statement: 'completed',
     })!;
     expect(progress.nextStep?.id).toBe('background_auth');
     const groups = groupStepsIntoPhases(progress.steps);

@@ -258,7 +258,7 @@ export async function submitApplication(sessionId: string, payload: { revision: 
       return { ok: false, conflict: true, incomplete: false, current: body.current };
     }
     if (res.status === 422) {
-      const body = (await res.json()) as { incompleteSteps: IncompleteStepInfo[] };
+      const body = (await res.json()) as { incompleteSteps?: IncompleteStepInfo[] };
       return { ok: false, conflict: false, incomplete: true, incompleteSteps: body.incompleteSteps ?? [] };
     }
     const body = await res.json().catch(() => undefined);

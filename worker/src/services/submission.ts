@@ -5,6 +5,7 @@ import {
   finalizeEmploymentApplication,
   type OnboardingFormData,
   type DirectDepositBankAccount,
+  type PacketStep,
   type StepStates,
 } from '@pcs/shared';
 import { generateApplicationId } from '../utils/applicationId';
@@ -520,6 +521,20 @@ function toI9PdfInput(data: OnboardingFormData, applicationId: string, now: stri
 }
 
 /**
+ * The resume step's `resumeDocument` value is only ever written by the
+ * ownership-verified association route — but the generic session PATCH can
+ * also write any formData key, so for the resume (the one document that is
+ * now the applicant's entire work history) readiness is re-derived from the
+ * upload ledger itself: a live, owned upload occupying the `applicant_resume`
+ * slot of THIS session must exist, or the step is incomplete. Every other
+ * step returns true (unchanged behavior).
+ */
+function hasRequiredLedgerUpload(step: PacketStep, liveUploads: UploadedDocumentRow[]): boolean {
+  if (step.type !== 'document_upload' || step.subtype !== 'resume') return true;
+  return liveUploads.some((doc) => doc.doc_type === 'applicant_resume');
+}
+
+/**
  * The real final-submission boundary for the authenticated mobile/session
  * architecture (M16) — see ADR-029. Mirrors what the existing web
  * `/api/submit-onboarding` route already does for a real Paramount
@@ -618,9 +633,21 @@ export async function submitSession(
   // stepState is expected to summarize, plus a per-step `isStepValid`
   // re-check as defense-in-depth against a stepStates entry claiming
   // 'completed' for data that would no longer actually pass validation.
+  // Only documents that are still "active" for the applicant's FINAL answers
+  // are promoted: a vaccination proof uploaded before the applicant switched
+  // that vaccine to a declination stays on the (now-submitted) session but
+  // never becomes part of the application's documents. Read before the
+  // readiness check because the resume requirement is checked against it.
+  const liveUploads: UploadedDocumentRow[] = (
+    await findLiveUploadsForSession(env.DB, {
+      sessionId: p.sessionId,
+      userId: p.ownerUserId,
+    })
+  ).filter((doc) => isDocumentActiveForSubmission(doc.doc_type, effectiveFormData.acknowledgements));
+
   const requiredSteps = packet.steps.filter((s) => s.required && s.type !== 'review');
   const incompleteSteps: IncompleteStepInfo[] = requiredSteps
-    .filter((s) => stepStates[s.id] !== 'completed' || !isStepValid(s.id, effectiveFormData, s))
+    .filter((s) => stepStates[s.id] !== 'completed' || !isStepValid(s.id, effectiveFormData, s) || !hasRequiredLedgerUpload(s, liveUploads))
     .map((s) => ({ id: s.id, label: s.label }));
 
   if (incompleteSteps.length > 0) {
@@ -667,17 +694,6 @@ export async function submitSession(
       message: 'We could not generate your W-4 form with the information provided. Please contact your onboarding coordinator for help completing this step.',
     };
   }
-
-  // Only documents that are still "active" for the applicant's FINAL answers
-  // are promoted: a vaccination proof uploaded before the applicant switched
-  // that vaccine to a declination stays on the (now-submitted) session but
-  // never becomes part of the application's documents.
-  const liveUploads: UploadedDocumentRow[] = (
-    await findLiveUploadsForSession(env.DB, {
-      sessionId: p.sessionId,
-      userId: p.ownerUserId,
-    })
-  ).filter((doc) => isDocumentActiveForSubmission(doc.doc_type, effectiveFormData.acknowledgements));
 
   const stmts: D1PreparedStatement[] = [
     insertApplicationIfEligibleStmt(env.DB, {

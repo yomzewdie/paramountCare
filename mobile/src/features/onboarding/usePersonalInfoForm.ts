@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { defaultFormData, validatePersonalInfo, type PersonalInfo, type FieldErrors } from '@pcs/shared';
+import { defaultFormData, isoDateToSlash, slashInputToStored, validatePersonalInfo, type PersonalInfo, type FieldErrors } from '@pcs/shared';
 import { useSession } from './SessionContext';
+import { useOptionalAuth } from '../auth/AuthContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
 import { isStepValidationRejection } from './serverValidationError';
@@ -14,9 +15,13 @@ export type SubmitOutcome =
   | { kind: 'invalid' }
   | { kind: 'error'; message: string };
 
-function readStored(formData: Record<string, unknown> | undefined): PersonalInfo {
+/** `accountEmail` (the verified address the applicant registered with)
+ * pre-fills Email only while nothing has been saved there yet — a saved
+ * value, even a different one, always wins. */
+function readStored(formData: Record<string, unknown> | undefined, accountEmail?: string): PersonalInfo {
   const stored = (formData?.[FORM_DATA_KEY] ?? {}) as Partial<PersonalInfo>;
-  return { ...defaultFormData.personalInfo, ...stored };
+  const data = { ...defaultFormData.personalInfo, ...stored };
+  return !data.email.trim() && accountEmail ? { ...data, email: accountEmail } : data;
 }
 
 /**
@@ -31,8 +36,9 @@ function readStored(formData: Record<string, unknown> | undefined): PersonalInfo
  */
 export function usePersonalInfoForm() {
   const { session, saveStep } = useSession();
+  const accountEmail = useOptionalAuth()?.user?.email;
 
-  const [data, setData] = useState<PersonalInfo>(() => readStored(session?.formData));
+  const [data, setData] = useState<PersonalInfo>(() => readStored(session?.formData, accountEmail));
   const [touched, setTouched] = useState<Partial<Record<keyof PersonalInfo, boolean>>>({});
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -55,6 +61,12 @@ export function usePersonalInfoForm() {
   function setField(field: keyof PersonalInfo, value: string): void {
     setData((d) => ({ ...d, [field]: value }));
     setIsDirty(true);
+  }
+
+  /** Date of birth is typed as MM/DD/YYYY (slashes inserted automatically)
+   * and stored as YYYY-MM-DD once complete and real. */
+  function setDateOfBirthInput(text: string): void {
+    setField('dateOfBirth', slashInputToStored(text));
   }
 
   function blurField(field: keyof PersonalInfo): void {
@@ -130,6 +142,9 @@ export function usePersonalInfoForm() {
   return {
     data,
     setField,
+    setDateOfBirthInput,
+    /** Applicant-facing MM/DD/YYYY form of the stored date of birth. */
+    dateOfBirthDisplay: isoDateToSlash(data.dateOfBirth ?? ''),
     blurField,
     errors: shownErrors,
     isDirty,

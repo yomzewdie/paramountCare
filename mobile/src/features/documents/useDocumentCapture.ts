@@ -3,7 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DocumentScanner, { ResponseType } from 'react-native-document-scanner-plugin';
 import { File } from 'expo-file-system';
-import type { DocumentRequirement } from './documentRequirements';
+import { mimeTypeForPickedDocument, type DocumentRequirement } from './documentRequirements';
 import type { PickedFile } from '../onboarding/uploadApi';
 import { isHeicOrHeif, normalizeHeicToJpeg } from './imageFormat';
 
@@ -42,7 +42,7 @@ function validateCommon(requirement: DocumentRequirement, type: string, size: nu
     return IMAGE_PREPARATION_FAILED_MESSAGE;
   }
   if (!requirement.allowedMimeTypes.includes(type)) {
-    return 'That file type isn’t supported. Please attach a PDF, JPG, or PNG.';
+    return `That file type isn’t supported. Please attach ${requirement.allowedTypesDescription ?? 'a PDF, JPG, or PNG'}.`;
   }
   if (size !== undefined && size > requirement.maxSizeBytes) {
     return 'That file is too large. Please attach a file under 10 MB.';
@@ -182,7 +182,7 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
     const result = await DocumentPicker.getDocumentAsync({ type: requirement.allowedMimeTypes });
     const asset = result.canceled ? undefined : result.assets?.[0];
     if (!asset) return;
-    const picked: PickedFile = { uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/pdf', size: asset.size ?? undefined };
+    const picked: PickedFile = { uri: asset.uri, name: asset.name, type: mimeTypeForPickedDocument(asset.name, asset.mimeType), size: asset.size ?? undefined };
     // PDFs never go through camera-framing/dimension logic (M13 hardening
     // §16) — only the type/size checks every path shares.
     setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: false });

@@ -54,7 +54,7 @@ function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse 
 const VALID_PERSONAL_INFO = {
   firstName: 'Jane', lastName: 'Doe', middleInitial: '', otherLastNames: '',
   email: 'jane@example.com', phone: '555-123-4567',
-  address: '123 Main St', aptNumber: '', city: 'Los Angeles', state: 'CA', zip: '90001',
+  address: '123 Main St', aptNumber: '', city: 'Los Angeles', state: 'CA', zip: '90001', dateOfBirth: '1990-01-01',
 };
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -394,9 +394,8 @@ describe('SessionContext', () => {
 describe('SessionContext — progress uses the current rules (Home)', () => {
   const VALID_APPLICATION = {
     ...defaultFormData.employmentApplication,
-    positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
+    positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
     licenseType: 'RN', licenseNumber: 'RN1', licenseState: 'CA', licenseExpiration: '2028-03-15',
-    yearsExperience: '3-5', primarySpecialty: 'icu',
     authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
     emergencyContactName: 'Jane', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',
   };
@@ -406,17 +405,17 @@ describe('SessionContext — progress uses the current rules (Home)', () => {
   };
   const VALID_REFERENCE = {
     ...defaultEmploymentReference,
-    positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
-    employerName: 'Hospital', employerCity: 'LA', employerState: 'CA',
+    employerName: 'Hospital',
     supervisorName: 'Pat', supervisorPhone: '555-000-1111', supervisorTitle: 'Nurse Manager',
-    permissionGranted: true, eligibleForRehire: true,
+    permissionGranted: true,
   };
   const { supervisorTitle: _omit, ...referenceWithoutTitle } = VALID_REFERENCE;
   const LEGACY_REFERENCE = { ...referenceWithoutTitle, reasonForLeaving: 'Relocation' };
-  const STEP_STATES = { personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed' };
+  const STEP_STATES = { resume: 'completed', personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed' };
+  const RESUME = { name: 'resume.pdf', size: 100, type: 'application/pdf', objectKey: 'uploads/1/x-resume.pdf', uploadedAt: '2026-01-01T00:00:00.000Z' };
 
-  async function loadProgress(formData: Record<string, unknown>) {
-    const session = fakeSession({ stepStates: STEP_STATES, formData: { personalInfo: VALID_PERSONAL_INFO, ...formData } });
+  async function loadProgress(formData: Record<string, unknown>, stepStates: Record<string, string> = STEP_STATES) {
+    const session = fakeSession({ stepStates, formData: { personalInfo: VALID_PERSONAL_INFO, resumeDocument: RESUME, ...formData } });
     const before = JSON.stringify(session);
     mockEnsure.mockResolvedValue({ ok: true, session });
     const { result } = renderHook(() => useSession(), { wrapper });
@@ -431,6 +430,23 @@ describe('SessionContext — progress uses the current rules (Home)', () => {
     expect(completed('employment_ref_1')).toBe(true);
     expect(result.current.progress!.nextStep?.id).toBe('employment_application');
     expect(result.current.progress!.isComplete).toBe(false);
+  });
+
+  it('a session from the manual (v5) flow keeps its completed About You steps; the resume is next', async () => {
+    const { supervisorTitle: _t, ...rest } = VALID_REFERENCE;
+    const { result, completed } = await loadProgress(
+      { resumeDocument: null, employmentApplication: { ...VALID_APPLICATION, yearsExperience: '3-5', primarySpecialty: 'icu' }, employmentReferences: { employment_ref_1: { ...rest, supervisorTitle: 'Charge RN', positionHeld: 'RN', employmentDateFrom: '01/2020' } } },
+      { personal_info: 'completed', employment_application: 'completed', employment_ref_1: 'completed' },
+    );
+    expect(completed('employment_application')).toBe(true);
+    expect(completed('employment_ref_1')).toBe(true);
+    expect(completed('resume')).toBe(false);
+    expect(result.current.progress!.nextStep?.id).toBe('resume');
+  });
+
+  it('a resume step stored as completed with no resume on file is NOT complete on Home', async () => {
+    const { completed } = await loadProgress({ resumeDocument: null, employmentApplication: VALID_APPLICATION, employmentReferences: { employment_ref_1: VALID_REFERENCE } });
+    expect(completed('resume')).toBe(false);
   });
 
   it('a legacy Employment Reference without supervisorTitle stored as completed is NOT complete on Home', async () => {

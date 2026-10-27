@@ -23,7 +23,7 @@ export function getStepShortLabel(step: PacketStep): string {
   // Internal forms use subtype
   if (step.type === 'internal_form') {
     const subtypeLabels: Record<string, string> = {
-      employment_application: 'Application',
+      employment_application: 'Details',
       direct_deposit:         'Direct Dep.',
     };
     return subtypeLabels[step.subtype ?? ''] ?? step.label;
@@ -44,6 +44,8 @@ export function getStepShortLabel(step: PacketStep): string {
     };
     return idLabels[step.id] ?? 'Agreement';
   }
+
+  if (step.type === 'document_upload' && step.subtype === 'resume') return 'Resume';
 
   const typeLabels: Record<string, string> = {
     personal_info:        'Personal',

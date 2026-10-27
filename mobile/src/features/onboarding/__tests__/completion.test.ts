@@ -11,14 +11,19 @@ import { computeOverallCompletion, computeStepCompletion, defaultFormData, getPa
 
 const VALID_APPLICATION = {
   ...defaultFormData.employmentApplication,
-  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: 'per_diem_assignment',
+  positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
   licenseType: 'RN', licenseNumber: 'RN123', licenseState: 'CA', licenseExpiration: '2027-01-01',
-  yearsExperience: '3-5', primarySpecialty: 'med_surg',
   authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
   emergencyContactName: 'Jane Smith', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',
 };
 
 const VALID_REFERENCE = {
+  supervisorName: 'Test Supervisor', supervisorTitle: 'Charge RN', employerName: 'Test Hospital',
+  supervisorPhone: '555-000-1111', supervisorEmail: '', permissionGranted: true,
+};
+
+/** A reference as the pre-resume (v5) manual form saved it. */
+const LEGACY_REFERENCE = {
   positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022',
   employerName: 'Test Hospital', employerCity: 'Test City', employerState: 'CA',
   supervisorName: 'Test Supervisor', supervisorPhone: '555-000-1111', supervisorTitle: 'Charge RN',
@@ -36,7 +41,7 @@ const VALID_UPLOAD = { name: 'file.pdf', size: 100, type: 'application/pdf' };
  * prove each packet only counts what it actually contains. */
 const FULLY_COMPLETE_FORM_DATA: OnboardingFormData = {
   ...defaultFormData,
-  personalInfo: { ...defaultFormData.personalInfo, firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com', phone: '555-000-1111', address: '123 Main St', city: 'LA', state: 'CA', zip: '90001' },
+  personalInfo: { ...defaultFormData.personalInfo, firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com', phone: '555-000-1111', address: '123 Main St', city: 'LA', state: 'CA', zip: '90001', dateOfBirth: '1990-01-01' },
   employmentApplication: VALID_APPLICATION,
   w4Data: { ...defaultFormData.w4Data, firstNameMI: 'Jane', lastName: 'Doe', ssn: '123-45-6789', address: '123 Main St', cityStateZip: 'LA, CA 90001', filingStatus: 'single_mfs', typedSignature: 'Jane Doe', signedDate: '01/01/2026' },
   i9Data: { ...defaultFormData.i9Data, dateOfBirth: '01/01/1990', citizenshipStatus: 'citizen', i9SignatureType: 'typed', i9TypedSignature: 'Jane Doe' },
@@ -72,7 +77,37 @@ const FULLY_COMPLETE_FORM_DATA: OnboardingFormData = {
     typedSignature: 'Jane Doe', signedDate: '01/01/2026',
   },
   directDepositProofDocument: VALID_UPLOAD,
+  resumeDocument: VALID_UPLOAD,
 };
+
+describe('completion — resume-first (packet v6)', () => {
+  it('the resume step is complete only once a resume is associated', () => {
+    expect(computeStepCompletion(defaultFormData).resume).toMatchObject({ completed: 0, total: 1 });
+    expect(computeStepCompletion(FULLY_COMPLETE_FORM_DATA).resume).toMatchObject({ completed: 1, total: 1 });
+  });
+
+  it('a missing resume blocks 100% for every packet', () => {
+    const withoutResume: OnboardingFormData = { ...FULLY_COMPLETE_FORM_DATA, resumeDocument: null };
+    for (const packetId of Object.keys(PACKETS)) {
+      expect(computeOverallCompletion(getPacket(packetId)!, withoutResume)).toBeLessThan(100);
+    }
+  });
+
+  it('a reference counts only who to contact + permission (5 items) — no work-history fields', () => {
+    const data: OnboardingFormData = { ...defaultFormData, employmentReferences: { employment_ref_1: VALID_REFERENCE } };
+    expect(computeStepCompletion(data).employment_ref_1).toMatchObject({ completed: 5, total: 5 });
+  });
+
+  it('a reference saved by the old manual form is still 100% complete', () => {
+    const data: OnboardingFormData = { ...defaultFormData, employmentReferences: { employment_ref_1: LEGACY_REFERENCE } };
+    expect(computeStepCompletion(data).employment_ref_1.percent).toBe(100);
+  });
+
+  it('the optional reference email is never part of the denominator', () => {
+    const data: OnboardingFormData = { ...defaultFormData, employmentReferences: { employment_ref_1: { ...VALID_REFERENCE, supervisorEmail: 'boss@example.com' } } };
+    expect(computeStepCompletion(data).employment_ref_1).toMatchObject({ completed: 5, total: 5 });
+  });
+});
 
 describe('computeOverallCompletion — fully packet-aware (M11)', () => {
   it('all required, content-bearing steps complete → 100%, for General RN', () => {

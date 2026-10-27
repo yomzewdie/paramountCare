@@ -65,13 +65,15 @@ describe('packet ordering is unchanged', () => {
   // Pinned from packets.ts (untouched by the vaccine-proof change): the proof
   // upload lives INSIDE each existing vaccine step, so no step was added,
   // removed, or reordered.
+  // Resume-first (packet v6) adds `resume` first and moves application_statement after the references.
   const EXPECTED_ORDER: Record<string, string[]> = {
-    general_rn: ["personal_info", "employment_application", "application_statement", "employment_ref_1", "employment_ref_2", "background_auth", "health_info_auth", "patient_bill_of_rights", "hep_b_declination", "tdap_declination", "flu_declination", "w4", "i9", "direct_deposit", "documents", "jcaho_review", "safety_acknowledgements", "safety_exam", "review"],
-    icu_rn: ["personal_info", "employment_application", "application_statement", "employment_ref_1", "employment_ref_2", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
-    er_rn: ["personal_info", "employment_application", "application_statement", "employment_ref_1", "employment_ref_2", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
-    lvn: ["personal_info", "employment_application", "application_statement", "employment_ref_1", "employment_ref_2", "background_auth", "health_info_auth", "patient_bill_of_rights", "hep_b_declination", "tdap_declination", "flu_declination", "w4", "i9", "direct_deposit", "documents", "jcaho_review", "safety_acknowledgements", "safety_exam", "review"],
-    travel_rn: ["personal_info", "employment_application", "application_statement", "employment_ref_1", "employment_ref_2", "employment_ref_3", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
+    general_rn: ["resume", "personal_info", "employment_application", "employment_ref_1", "employment_ref_2", "application_statement", "background_auth", "health_info_auth", "patient_bill_of_rights", "hep_b_declination", "tdap_declination", "flu_declination", "w4", "i9", "direct_deposit", "documents", "jcaho_review", "safety_acknowledgements", "safety_exam", "review"],
+    icu_rn: ["resume", "personal_info", "employment_application", "employment_ref_1", "employment_ref_2", "application_statement", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
+    er_rn: ["resume", "personal_info", "employment_application", "employment_ref_1", "employment_ref_2", "application_statement", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
+    lvn: ["resume", "personal_info", "employment_application", "employment_ref_1", "employment_ref_2", "application_statement", "background_auth", "health_info_auth", "patient_bill_of_rights", "hep_b_declination", "tdap_declination", "flu_declination", "w4", "i9", "direct_deposit", "documents", "jcaho_review", "safety_acknowledgements", "safety_exam", "review"],
+    travel_rn: ["resume", "personal_info", "employment_application", "employment_ref_1", "employment_ref_2", "employment_ref_3", "application_statement", "background_auth", "w4", "i9", "direct_deposit", "documents", "safety_acknowledgements", "review"],
   };
+
 
   it.each(Object.keys(EXPECTED_ORDER))('%s keeps its exact step order', (packetId) => {
     expect(getPacket(packetId)!.steps.map((s) => s.id)).toEqual(EXPECTED_ORDER[packetId]);

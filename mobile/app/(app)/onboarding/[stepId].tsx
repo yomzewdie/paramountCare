@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { Screen } from '../../../src/components/Screen';
 import { Button } from '../../../src/components/Button';
 import { EmptyState } from '../../../src/components/StatusStates';
@@ -7,6 +7,7 @@ import { OnboardingHeader } from '../../../src/components/OnboardingHeader';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
 import { groupStepsIntoPhases } from '../../../src/features/onboarding/phases';
+import { useStepNavigation } from '../../../src/features/onboarding/stepNavigation';
 import type { StepDisplayItem } from '../../../src/features/onboarding/steps';
 import PersonalInfoScreen from '../../../src/features/onboarding/PersonalInfoScreen';
 import EmploymentApplicationScreen from '../../../src/features/onboarding/EmploymentApplicationScreen';
@@ -17,6 +18,7 @@ import I9Screen from '../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
+import ResumeScreen from '../../../src/features/onboarding/ResumeScreen';
 import SafetyAcknowledgementsScreen from '../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 import ReviewScreen from '../../../src/features/onboarding/ReviewScreen';
 
@@ -130,7 +132,11 @@ import ReviewScreen from '../../../src/features/onboarding/ReviewScreen';
 // Exported (not just used locally) so the registry mapping itself is
 // directly unit-testable without a full screen render — see
 // __tests__/stepId.test.ts.
+// resume (packet v6) is every packet's first step and the whole "About You &
+// Work History" phase — a single PDF upload replacing manual work-history
+// entry (see packets.ts).
 export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
+  resume: ResumeScreen,
   personal_info: PersonalInfoScreen,
   employment_application: EmploymentApplicationScreen,
   application_statement: AcknowledgementScreen,
@@ -183,9 +189,9 @@ export function computePhaseStepPosition(steps: StepDisplayItem[] | undefined, s
 
 export default function OnboardingStep() {
   const theme = useTheme();
-  const router = useRouter();
   const { progress } = useSession();
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
+  const nav = useStepNavigation();
 
   const RealScreen = stepId ? REAL_STEP_SCREENS[stepId] : undefined;
   const stepPosition = computePhaseStepPosition(progress?.steps, stepId);
@@ -201,7 +207,7 @@ export default function OnboardingStep() {
                   phaseLabel={stepPosition.phaseLabel}
                   stepNumber={stepPosition.stepNumber}
                   totalSteps={stepPosition.totalSteps}
-                  onBack={() => router.back()}
+                  onBack={nav.leave}
                 />
               ),
             }}
@@ -221,7 +227,7 @@ export default function OnboardingStep() {
         message="This step will be available in an upcoming mobile release. Please check back soon."
       />
       <View style={{ marginTop: theme.spacing.lg }}>
-        <Button label="Back to Onboarding" variant="secondary" onPress={() => router.back()} />
+        <Button label="Back to Onboarding" variant="secondary" onPress={nav.leave} />
       </View>
     </Screen>
   );

@@ -2,12 +2,16 @@ import type { ElementType, ReactNode } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, Download, FileSignature } from 'lucide-react';
 import type { ApplicationDetail } from '@/lib/admin-api';
+import type { ApplicationFormat } from '@/lib/admin-display';
 import {
+  APPLICATION_FORMAT_LABELS,
+  applicationFormat,
   displayValue,
   employmentApplicationRows,
   employmentReferenceRows,
   flattenForDisplay,
   formatDate,
+  personalInfoRows,
   formatFileSize,
   humanizeKey,
 } from '@/lib/admin-display';
@@ -51,12 +55,16 @@ const PAYLOAD_GROUPS: { key: string; title: string }[] = [
 // A curated, allowlisted read-only summary of the submitted application.
 // Every value passes through displayValue(), which hides SSN/bank/token-like
 // keys and data: URIs even if the stored payload ever contained them.
-function PayloadSummary({ payload }: { payload: Record<string, unknown> | null }) {
+function PayloadSummary({ payload, format }: { payload: Record<string, unknown> | null; format: ApplicationFormat }) {
   if (!payload) return <p className="text-sm text-slate-400 italic">No submitted application data available.</p>;
 
   const groups = PAYLOAD_GROUPS.map(({ key, title }) => {
     const value = payload[key] as Record<string, unknown> | undefined;
-    return { title, rows: key === 'employmentApplication' ? employmentApplicationRows(value) : flattenForDisplay(value) };
+    if (key === 'employmentApplication') {
+      return { title: format === 'resume' ? 'Applicant details' : title, rows: employmentApplicationRows(value) };
+    }
+    if (key === 'personalInfo') return { title, rows: personalInfoRows(value) };
+    return { title, rows: flattenForDisplay(value) };
   }).filter((g) => g.rows.length > 0);
 
   const refs = payload.employmentReferences as Record<string, Record<string, unknown>> | undefined;
@@ -109,6 +117,8 @@ function DownloadLink({ href, label, filename }: { href: string; label: string; 
 export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
   const id = encodeURIComponent(app.id);
   const fullName = [app.firstName, app.lastName].filter(Boolean).join(' ') || '—';
+  const format = applicationFormat(app.payload, app.documents);
+  const resume = app.documents.find((d) => d.docType === 'applicant_resume');
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -120,6 +130,13 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
         <span className="text-slate-300">/</span>
         <span className="text-sm font-semibold text-slate-800">{fullName}</span>
         <StatusBadge status={app.status} />
+        <span
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            format === 'resume' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-600'
+          }`}
+        >
+          {APPLICATION_FORMAT_LABELS[format]}
+        </span>
         <div className="sm:ml-auto text-right">
           <p className="text-xs text-slate-400">Submitted</p>
           <p className="text-sm font-medium text-slate-700">{formatDate(app.submittedAt)}</p>
@@ -143,11 +160,28 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
             </Section>
 
             <Section title="Application / onboarding" icon={ClipboardList}>
-              <PayloadSummary payload={app.payload} />
+              <PayloadSummary payload={app.payload} format={format} />
             </Section>
           </div>
 
           <div className="space-y-6">
+            <Section title="Resume" icon={FileText}>
+              {resume ? (
+                <div className="space-y-2">
+                  <DownloadLink href={`/api/admin/documents/${id}/${resume.id}`} label="Download Resume" filename={resume.fileName} />
+                  <p className="text-xs text-slate-500 truncate">
+                    {resume.fileName} · {formatFileSize(resume.fileSize)}
+                  </p>
+                </div>
+              ) : format === 'manual' ? (
+                <p className="text-sm text-slate-500">
+                  Submitted before resume upload was introduced — work history was entered manually and appears in the application details.
+                </p>
+              ) : (
+                <p className="text-sm text-slate-400 italic">Resume file not found for this application.</p>
+              )}
+            </Section>
+
             <Section title="Generated forms" icon={FileSignature}>
               <div className="space-y-3">
                 <DownloadLink href={`/api/admin/w4-pdf/${id}`} label="Download Signed W-4" filename={`W4-${app.id}.pdf`} />

@@ -2,6 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { getWorkerBaseUrl } from '@/lib/server-config';
 import { describeDelivery, canResend, canRevoke, STATUS_META } from '@/lib/invitations';
 import {
+  personalInfoRows,
+  APPLICATION_FORMAT_LABELS,
+  applicationFormat,
   displayValue,
   employmentApplicationRows,
   employmentReferenceRows,
@@ -113,6 +116,8 @@ describe('display safety', () => {
   });
 });
 
+const SPEC = 'Specialty / Unit Preference (applicant-selected)';
+
 describe('employment application display (UAT field changes)', () => {
   const rowMap = (rows: [string, string][]) => Object.fromEntries(rows);
 
@@ -123,7 +128,7 @@ describe('employment application display (UAT field changes)', () => {
       primarySpecialty: 'other', primarySpecialtyOther: 'Pediatrics', hasCPR: true,
     }));
     expect(rows['Position Applied For']).toBe('RN');
-    expect(rows['Unit Preferences']).toBe('ICU, L&D, Anesthesia Tech.');
+    expect(rows[SPEC]).toBe('ICU, L&D / Post-Partum, Anesthesia Tech');
     expect(rows['Shift Preferences']).toBe('AM, PM');
     expect(rows['Employment Type']).toBe('Travel Assignment');
     expect(rows['License Expiration Date']).toBe('03-15-2028');
@@ -136,7 +141,7 @@ describe('employment application display (UAT field changes)', () => {
   });
 
   it('CNA: unit preference is shown as not asked', () => {
-    expect(rowMap(employmentApplicationRows({ positionApplied: 'CNA', specialtyPreference: [] }))['Unit Preferences']).toBe('Not asked (CNA)');
+    expect(rowMap(employmentApplicationRows({ positionApplied: 'CNA', specialtyPreference: [] }))[SPEC]).toBe('Not asked (CNA)');
   });
 
   it('a pre-change submission renders its historical values readably', () => {
@@ -145,7 +150,7 @@ describe('employment application display (UAT field changes)', () => {
       employmentType: 'full_time', primarySpecialty: 'Critical Care', licenseExpiration: '2027-01-01',
     }));
     expect(rows['Position Applied For']).toBe('RN — Med/Surg');
-    expect(rows['Unit Preferences']).toBe('ICU, Peds');
+    expect(rows[SPEC]).toBe('ICU, Peds');
     expect(rows['Shift Preferences']).toBe('Day');
     expect(rows['Employment Type']).toBe('Full-Time');
     expect(rows['Primary Clinical Specialty']).toBe('Critical Care');
@@ -155,10 +160,59 @@ describe('employment application display (UAT field changes)', () => {
   it('references show Supervisor Title; historical Reason for Leaving stays readable, empty leftovers are hidden', () => {
     const current = rowMap(employmentReferenceRows({ supervisorName: 'Pat', supervisorTitle: 'Nurse Manager', reasonForLeaving: '' }));
     expect(current['Supervisor Title']).toBe('Nurse Manager');
-    expect(current).not.toHaveProperty('Reason For Leaving');
+    expect(current).not.toHaveProperty('Reason for Leaving');
 
     const historical = rowMap(employmentReferenceRows({ supervisorName: 'Pat', reasonForLeaving: 'Relocation' }));
-    expect(historical['Reason For Leaving']).toBe('Relocation');
+    expect(historical['Reason for Leaving']).toBe('Relocation');
+  });
+});
+
+describe('resume-first display', () => {
+  const rowMap = (rows: [string, string][]) => Object.fromEntries(rows);
+
+  it('a resume-based application shows no empty legacy experience rows', () => {
+    const rows = rowMap(employmentApplicationRows({ positionApplied: 'RN', specialtyPreference: ['icu'], licenseExpiration: '2028-03-15' }));
+    expect(rows).not.toHaveProperty('Primary Clinical Specialty');
+    expect(JSON.stringify(rows)).not.toMatch(/Years Experience|Has C P R|Currently Employed/);
+  });
+
+  it('a resume-based reference shows contact + permission only — no empty work-history rows', () => {
+    const rows = rowMap(employmentReferenceRows({
+      supervisorName: 'Pat', supervisorTitle: 'Charge RN', employerName: 'St. Mary', supervisorPhone: '5551112222', supervisorEmail: '', permissionGranted: true,
+    }));
+    expect(rows).toEqual({
+      'Supervisor': 'Pat', 'Supervisor Title': 'Charge RN', 'Facility / Employer': 'St. Mary',
+      'Supervisor Phone': '5551112222', 'Permission to Contact': 'Yes',
+    });
+  });
+
+  it('a manual (legacy) reference still shows its work history', () => {
+    const rows = rowMap(employmentReferenceRows({
+      supervisorName: 'Pat', supervisorTitle: 'Charge RN', employerName: 'St. Mary', supervisorPhone: '5551112222', permissionGranted: true,
+      positionHeld: 'RN', employmentDateFrom: '01/2020', employmentDateTo: '01/2022', employerCity: 'LA', employerState: 'CA',
+      eligibleForRehire: false, rehireDetails: 'Policy', comments: '',
+    }));
+    expect(rows).toMatchObject({
+      'Position Held': 'RN', 'Employment From': '01/2020', 'Employment To': '01/2022', 'Employer City': 'LA',
+      'Employer State': 'CA', 'Eligible for Rehire': 'No', 'Rehire Details': 'Policy',
+    });
+    expect(rows).not.toHaveProperty('Comments');
+  });
+
+  it('distinguishes resume-based from manual applications without exposing codes', () => {
+    expect(applicationFormat({ resumeDocument: { name: 'r.pdf' } }, [])).toBe('resume');
+    expect(applicationFormat(null, [{ docType: 'applicant_resume' }])).toBe('resume');
+    expect(applicationFormat({ employmentReferences: {} }, [{ docType: 'list_a' }, { docType: null }])).toBe('manual');
+    expect(APPLICATION_FORMAT_LABELS.resume).toBe('Resume-based application');
+    expect(APPLICATION_FORMAT_LABELS.manual).toBe('Manual work-history application (legacy)');
+  });
+
+  it('labels the resume by its recorded docType, or by the payload reference on an older row', () => {
+    const byType = labelDocuments([{ id: 1, docType: 'applicant_resume', objectKey: 'k/r', fileName: 'r.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }], null);
+    expect(byType[0]).toMatchObject({ label: 'Resume', docType: 'applicant_resume' });
+    const byPayload = labelDocuments([{ id: 2, objectKey: 'k/r2', fileName: 'r2.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }], { resumeDocument: { objectKey: 'k/r2' } });
+    expect(byPayload[0].label).toBe('Resume');
+    expect(JSON.stringify([byType, byPayload])).not.toContain('k/');
   });
 });
 
@@ -232,4 +286,37 @@ describe('invitation-client (browser → same-origin proxy)', () => {
     expect(r).toMatchObject({ ok: false, status: 0 });
     expect(JSON.stringify(r)).not.toContain('secret-host');
   });
+});
+
+describe('UAT follow-up display', () => {
+  const rowMap = (rows: [string, string][]) => Object.fromEntries(rows);
+
+  it('Tech, position-specific specialties, multi-select employment type and shift — labels, never codes', () => {
+    const rows = rowMap(employmentApplicationRows({
+      positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['cst', 'rrt'],
+      employmentType: ['per_diem_assignment', 'travel_assignment'], shiftPreference: ['am', 'pm'],
+    }));
+    expect(rows['Position Applied For']).toBe('Tech');
+    expect(rows[SPEC]).toBe('Certified Surgical Tech (CST), Registered Respiratory Therapist');
+    expect(rows['Employment Type']).toBe('Per-Diem Assignment, Travel Assignment');
+    expect(rows['Shift Preferences']).toBe('AM, PM');
+    expect(rows['License / Certification Type']).toBe('Tech — Allied Health Technician / Technologist');
+    expect(JSON.stringify(rows)).not.toMatch(/per_diem_assignment|rrt"|"cst/);
+  });
+
+  it('a CNA shows the canonical CNA value; an older CNA application still says "Not asked"', () => {
+    expect(rowMap(employmentApplicationRows({ positionApplied: 'CNA', specialtyPreference: ['cna'] }))[SPEC]).toBe('CNA');
+    expect(rowMap(employmentApplicationRows({ positionApplied: 'CNA', specialtyPreference: [] }))[SPEC]).toBe('Not asked (CNA)');
+  });
+
+  it('a historical single employment type and legacy "other" license still render', () => {
+    const rows = rowMap(employmentApplicationRows({ employmentType: 'per_diem_assignment', licenseType: 'other' }));
+    expect(rows['Employment Type']).toBe('Per-Diem Assignment');
+    expect(rows['License / Certification Type']).toBe('Other');
+  });
+
+  it('date of birth is shown as MM/DD/YYYY', () => {
+    expect(rowMap(personalInfoRows({ firstName: 'Jane', dateOfBirth: '1990-03-15' }))['Date of Birth']).toBe('03/15/1990');
+  });
+
 });

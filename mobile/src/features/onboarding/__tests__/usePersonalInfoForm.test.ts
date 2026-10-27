@@ -4,9 +4,14 @@ import { usePersonalInfoForm } from '../usePersonalInfoForm';
 import { useSession } from '../SessionContext';
 import type { SaveStepResult } from '../SessionContext';
 import type { SessionResponse } from '../sessionApi';
+import { useOptionalAuth } from '../../auth/AuthContext';
 
 jest.mock('../SessionContext', () => ({
   useSession: jest.fn(),
+}));
+
+jest.mock('../../auth/AuthContext', () => ({
+  useOptionalAuth: jest.fn(() => null),
 }));
 
 const mockedUseSession = useSession as jest.Mock;
@@ -42,6 +47,7 @@ const VALID_PERSONAL_INFO = {
   city: 'Los Angeles',
   state: 'CA',
   zip: '90001',
+  dateOfBirth: '1990-01-01',
 };
 
 function setupSession(session: SessionResponse, saveStepImpl?: jest.Mock) {
@@ -364,5 +370,53 @@ describe('usePersonalInfoForm — server validation rejection (defense-in-depth)
 
     expect(outcome).toEqual({ kind: 'error', message: 'Please check the highlighted fields and try again.' });
     expect(result.current.saveError).toBe('Please check the highlighted fields and try again.');
+  });
+});
+
+describe('usePersonalInfoForm — account email reuse (resume-first)', () => {
+  const mockedUseOptionalAuth = useOptionalAuth as jest.Mock;
+  afterEach(() => mockedUseOptionalAuth.mockReturnValue(null));
+
+  it('pre-fills Email from the registered account when nothing has been saved yet', () => {
+    mockedUseOptionalAuth.mockReturnValue({ user: { email: 'invited@example.com', role: 'applicant' } });
+    setupSession(fakeSession({ formData: {} }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+    expect(result.current.data.email).toBe('invited@example.com');
+    expect(result.current.isDirty).toBe(false);
+  });
+
+  it('never overrides an email the applicant already saved', () => {
+    mockedUseOptionalAuth.mockReturnValue({ user: { email: 'invited@example.com', role: 'applicant' } });
+    setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, email: 'personal@example.com' } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+    expect(result.current.data.email).toBe('personal@example.com');
+  });
+
+  it('still works with no signed-in account context', () => {
+    setupSession(fakeSession({ formData: {} }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+    expect(result.current.data.email).toBe('');
+  });
+});
+
+describe('usePersonalInfoForm — date of birth (UAT)', () => {
+  it('auto-inserts slashes while typing and stores the canonical ISO date once complete', () => {
+    setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, dateOfBirth: '' } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+    act(() => result.current.setDateOfBirthInput('0315'));
+    expect(result.current.dateOfBirthDisplay).toBe('03/15');
+    act(() => result.current.setDateOfBirthInput('03151990'));
+    expect(result.current.data.dateOfBirth).toBe('1990-03-15');
+    expect(result.current.dateOfBirthDisplay).toBe('03/15/1990');
+  });
+
+  it('blocks Continue for an applicant under 18, with the age message', async () => {
+    const saveStep = setupSession(fakeSession({ formData: { personalInfo: { ...VALID_PERSONAL_INFO, dateOfBirth: `${new Date().getUTCFullYear() - 17}-01-01` } } }));
+    const { result } = renderHook(() => usePersonalInfoForm());
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(saveStep).not.toHaveBeenCalled();
+    expect(result.current.errors.dateOfBirth).toBe('You must be at least 18 years old to apply.');
   });
 });

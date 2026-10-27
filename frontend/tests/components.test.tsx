@@ -119,6 +119,44 @@ describe('Applications list', () => {
   });
 });
 
+describe('Application detail — resume-based application', () => {
+  const app: ApplicationDetail = {
+    id: 'APP-777', status: 'pending_review', firstName: 'Rae', lastName: 'Sume', email: 'rae@example.com', phone: '555-0177',
+    submittedAt: '2026-10-20T15:00:00.000Z',
+    payload: {
+      resumeDocument: { name: 'Rae Sume Resume.pdf', size: 4096, type: 'application/pdf', objectKey: 'uploads/9/abc-rae-sume-resume.pdf', uploadedAt: '2026-10-20T14:00:00.000Z' },
+      employmentApplication: { positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: 'travel_assignment', licenseNumber: 'RN999', licenseExpiration: '2029-01-01' },
+      employmentReferences: { employment_ref_1: { supervisorName: 'Pat Boss', supervisorTitle: 'Nurse Manager', employerName: 'Mercy', supervisorPhone: '5551112222', permissionGranted: true } },
+    },
+    documents: [
+      { id: 21, docType: 'applicant_resume', label: 'Resume', fileName: 'Rae Sume Resume.pdf', fileSize: 4096, uploadedAt: '2026-10-20T14:00:00.000Z' },
+    ],
+    auditLogs: [],
+  };
+  const html = renderToStaticMarkup(<ApplicationDetailView app={app} />);
+
+  it('shows the format, a Resume section, and a protected download by document id', () => {
+    expect(html).toContain('Resume-based application');
+    expect(html).toContain('Download Resume');
+    expect(html).toContain('href="/api/admin/documents/APP-777/21"');
+    expect(html).toContain('Rae Sume Resume.pdf');
+  });
+
+  it('shows the structured applicant details and references, with no empty legacy work-history rows', () => {
+    for (const s of ['Applicant details', 'Travel Assignment', 'RN999', 'Pat Boss', 'Mercy', 'Permission to Contact']) expect(html).toContain(s);
+    for (const s of ['Position Held', 'Employment From', 'Primary Clinical Specialty', 'Eligible for Rehire', 'Years Experience']) expect(html).not.toContain(s);
+  });
+
+  it('labels the preference as applicant-selected and shows no resume-derived analysis', () => {
+    expect(html).toContain('Specialty / Unit Preference (applicant-selected)');
+    for (const s of ['Resume review', 'resume-derived', 'Primary Clinical Specialty']) expect(html).not.toContain(s);
+  });
+
+  it('never exposes the resume storage key or raw codes', () => {
+    for (const s of ['uploads/9', 'objectKey', 'applicant_resume', 'travel_assignment', 'resumeDocument']) expect(html).not.toContain(s);
+  });
+});
+
 describe('Application detail', () => {
   const app: ApplicationDetail = {
     id: 'APP-123', status: 'submitted', firstName: 'Jane', lastName: 'Nurse', email: 'jane@example.com', phone: '555-0100',
@@ -133,8 +171,8 @@ describe('Application detail', () => {
       employmentReferences: { employment_ref_1: { name: 'Ref One', phone: '555-0101', supervisorTitle: 'Charge RN' } },
     },
     documents: [
-      { id: 7, label: 'Direct deposit — bank account verification', fileName: 'check.jpg', fileSize: 2048, uploadedAt: '2026-09-26T14:00:00.000Z' },
-      { id: 8, label: null, fileName: 'hepb.pdf', fileSize: 500, uploadedAt: '2026-09-26T14:05:00.000Z' },
+      { id: 7, docType: 'direct_deposit_voided_check', label: 'Direct deposit — bank account verification', fileName: 'check.jpg', fileSize: 2048, uploadedAt: '2026-09-26T14:00:00.000Z' },
+      { id: 8, docType: null, label: null, fileName: 'hepb.pdf', fileSize: 500, uploadedAt: '2026-09-26T14:05:00.000Z' },
     ],
     auditLogs: [{ id: 1, action: 'application_submitted', metadata: { documentCount: 2 }, createdAt: '2026-09-26T15:00:00.000Z' }],
   };
@@ -161,7 +199,7 @@ describe('Application detail', () => {
   });
   it('shows vaccination evidence only for documents the application actually contains (a declined vaccine has none)', () => {
     const withProof = renderToStaticMarkup(
-      <ApplicationDetailView app={{ ...app, documents: [{ id: 9, label: 'Hepatitis B vaccination proof', fileName: 'hepb.pdf', fileSize: 10, uploadedAt: '2026-09-26T14:00:00.000Z' }] }} />,
+      <ApplicationDetailView app={{ ...app, documents: [{ id: 9, docType: 'hep_b_vaccination_proof', label: 'Hepatitis B vaccination proof', fileName: 'hepb.pdf', fileSize: 10, uploadedAt: '2026-09-26T14:00:00.000Z' }] }} />,
     );
     expect(withProof).toContain('Hepatitis B vaccination proof');
     expect(withProof).toContain('href="/api/admin/documents/APP-123/9"');
@@ -171,6 +209,13 @@ describe('Application detail', () => {
     expect(declined).not.toContain('vaccination proof');
     expect(declined).toContain('No documents uploaded.');
   });
+  it('marks a submission with no resume as a manual (legacy) application and says why there is no resume', () => {
+    expect(html).toContain('Manual work-history application (legacy)');
+    expect(html).toContain('Submitted before resume upload was introduced');
+    expect(html).toContain('Employment application');
+    expect(html).not.toContain('Download Resume');
+  });
+
   it('never renders SSNs, bank/routing numbers, data URLs, or storage keys', () => {
     for (const s of ['123-45-6789', '9988776655', '021000021', 'data:image', 'AAAA', 'BBBB', 'uploads/', 'objectKey', 'object_key']) {
       expect(html).not.toContain(s);

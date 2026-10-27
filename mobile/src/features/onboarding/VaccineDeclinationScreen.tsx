@@ -1,7 +1,8 @@
 import { useRef } from 'react';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import { Screen } from '../../components/Screen';
+import { RevealOnShow } from '../../components/RevealOnShow';
 import { DocumentSlotCard } from '../../components/DocumentSlotCard';
 import { TextField } from '../../components/TextField';
 import { CheckboxField } from '../../components/CheckboxField';
@@ -11,6 +12,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { useVaccineDeclinationForm } from './useVaccineDeclinationForm';
@@ -68,7 +70,7 @@ function paragraphsOf(text: string): string[] {
 
 export default function VaccineDeclinationScreen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
   const form = useVaccineDeclinationForm(stepId ?? '');
@@ -85,6 +87,9 @@ export default function VaccineDeclinationScreen() {
 
   const scrollRef = useRef<ScrollView>(null);
   const signatureRef = useRef<TextInput>(null);
+  // The required next action each answer reveals — scrolled into view on reveal.
+  const declineActionRef = useRef<View>(null);
+  const proofActionRef = useRef<View>(null);
   const proofOffset = useRef<number | undefined>(undefined);
 
   function scrollToProofError() {
@@ -93,12 +98,12 @@ export default function VaccineDeclinationScreen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.afterComplete();
     else if (outcome.kind === 'invalid' && form.data.decision === 'providing_proof') scrollToProofError();
   }
 
@@ -163,12 +168,15 @@ export default function VaccineDeclinationScreen() {
         ) : null}
       </FormSection>
 
-      {form.data.decision === 'declining' ? (
+      {/* Revealed by the decision above: scrolled into view when chosen. */}
+      <RevealOnShow when={form.data.decision === 'declining'} target={declineActionRef} testID="decline-reveal">
         <FormSection title="Declination Statement">
+          {/* Grows with its content and scrolls with the page (no inner
+              ScrollView — see AcknowledgementScreen's statement for why). */}
           <View
             accessibilityRole="text"
+            testID="statement"
             style={{
-              maxHeight: 280,
               borderWidth: 1,
               borderColor: theme.colors.border,
               borderRadius: theme.radii.sm,
@@ -177,22 +185,23 @@ export default function VaccineDeclinationScreen() {
               marginBottom: theme.spacing.md,
             }}
           >
-            <ScrollView nestedScrollEnabled>
-              {paragraphsOf(form.statementText).map((para, i) => (
-                <Text key={i} style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{para}</Text>
-              ))}
-            </ScrollView>
+            {paragraphsOf(form.statementText).map((para, i) => (
+              <Text key={i} style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{para}</Text>
+            ))}
           </View>
 
+          <View ref={form.requiresSignature ? undefined : declineActionRef} testID={form.requiresSignature ? undefined : 'decline-required-action'}>
           <CheckboxField
             label={`I have read and understand the above declination statement. I voluntarily decline ${form.heading} vaccination at this time and acknowledge all risks associated with declining this vaccine.`}
             value={form.data.checked}
             onChange={form.toggleChecked}
             error={form.errors.checked}
           />
+          </View>
 
           {form.requiresSignature ? (
             <>
+              <View ref={declineActionRef} testID="decline-required-action">
               <TextField
                 ref={signatureRef}
                 label="Electronic Signature"
@@ -205,30 +214,33 @@ export default function VaccineDeclinationScreen() {
                 autoCapitalize="words"
                 returnKeyType="done"
               />
+              </View>
               <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: -theme.spacing.sm }]}>
                 By typing your name you are electronically signing this declination. Your signature carries the same legal weight as a handwritten signature and will be retained in your occupational health record.
               </Text>
             </>
           ) : null}
         </FormSection>
-      ) : null}
+      </RevealOnShow>
 
-      {form.data.decision === 'providing_proof' ? (
-        <View onLayout={(e: LayoutChangeEvent) => { proofOffset.current = e.nativeEvent.layout.y; }}>
+      <RevealOnShow when={form.data.decision === 'providing_proof'} target={proofActionRef} testID="proof-reveal" onLayout={(e: LayoutChangeEvent) => { proofOffset.current = e.nativeEvent.layout.y; }}>
+        <View>
           <FormSection title="Vaccination Proof">
             <Text style={[theme.typography.body, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{meta.proofInstructions}</Text>
             <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.md }]}>
               Acceptable documents: {meta.acceptableDocs}. Originals or certified copies may be requested at the time of your orientation or first assignment.
             </Text>
-            <DocumentSlotCard
-              slot={{ label: 'Upload vaccination proof' }}
-              hook={form.proofSlot}
-              required
-              error={form.errors.vaccineProofDocument}
-            />
+            <View ref={proofActionRef} testID="proof-required-action">
+              <DocumentSlotCard
+                slot={{ label: 'Upload vaccination proof' }}
+                hook={form.proofSlot}
+                required
+                error={form.errors.vaccineProofDocument}
+              />
+            </View>
           </FormSection>
         </View>
-      ) : null}
+      </RevealOnShow>
 
     </Screen>
   );

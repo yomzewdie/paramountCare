@@ -78,7 +78,7 @@ export default function OnboardingOverview() {
               isCurrent={isCurrent}
               stepStates={stepStates}
               defaultExpanded={isCurrent}
-              onStepPress={(stepId) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId } })}
+              onStepPress={(stepId) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId, origin: 'onboarding' } })}
             />
           );
         })}

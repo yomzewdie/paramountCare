@@ -33,6 +33,7 @@ export function DocumentSlotCard({
   badge,
   required,
   error,
+  documentOnly,
 }: {
   slot: DocumentSlotCardSlot;
   hook: ReturnType<typeof useDocumentSlot>;
@@ -41,6 +42,9 @@ export function DocumentSlotCard({
   required?: boolean;
   /** Inline validation message (e.g. "Please upload your proof…"). */
   error?: string;
+  /** File-picker only (no scanner/camera/photo paths) — for a slot whose
+   * requirement accepts only document files, e.g. the resume. */
+  documentOnly?: boolean;
 }) {
   const theme = useTheme();
   const { capture, status, file, errorMessage } = hook;
@@ -84,7 +88,7 @@ export function DocumentSlotCard({
 
       {capture.pending ? (
         <View>
-          {capture.pending.picked.type === 'application/pdf' ? (
+          {!capture.pending.picked.type.startsWith('image/') ? (
             <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{capture.pending.picked.name}</Text>
           ) : (
             <Image
@@ -114,7 +118,11 @@ export function DocumentSlotCard({
         </View>
       ) : null}
 
-      {!capture.pending && status === 'idle' ? (
+      {!capture.pending && status === 'idle' && documentOnly ? (
+        <Button label="Choose a File" onPress={capture.pickDocument} accessibilityHint="Opens your files to choose a document" />
+      ) : null}
+
+      {!capture.pending && status === 'idle' && !documentOnly ? (
         <View style={{ gap: theme.spacing.xs }}>
           <Button label="Scan Document" onPress={capture.scan} accessibilityHint="Opens your device's document scanner" />
           <Button label="Take a Photo" variant="secondary" onPress={capture.takePhoto} />
@@ -133,7 +141,7 @@ export function DocumentSlotCard({
           <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>{formatBytes(file.size)} — Uploaded</Text>
           <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
             <View style={{ flex: 1 }}>
-              <Button label="Replace" variant="secondary" onPress={capture.scan} />
+              <Button label="Replace" variant="secondary" onPress={documentOnly ? capture.pickDocument : capture.scan} />
             </View>
             <View style={{ flex: 1 }}>
               <Button label="Remove" variant="danger" onPress={hook.remove} />

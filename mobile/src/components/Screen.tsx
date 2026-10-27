@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Platform, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type ViewProps } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeProvider';
@@ -86,6 +86,25 @@ export const Screen = forwardRef<ScrollView | View, ScreenProps>(function Screen
     });
   }, [scroll, margin]);
 
+  const ensureViewVisible = useCallback(
+    (view: View) => {
+      if (!scroll) return;
+      const scrollNode = contentRef.current as ScrollView | null;
+      const viewport = scrollNode?.getNativeScrollRef?.();
+      if (!scrollNode || !viewport) return;
+      view.measureInWindow((_vx, vy, _vw, vh) => {
+        viewport.measureInWindow((_sx, sy, _sw, sh) => {
+          const delta = computeScrollDelta({ inputTop: vy, inputBottom: vy + vh, viewportTop: sy, viewportBottom: sy + sh, margin });
+          if (delta !== 0) scrollNode.scrollTo({ y: Math.max(0, scrollY.current + delta), animated: true });
+        });
+      });
+    },
+    [scroll, margin],
+  );
+
+  // A signature stroke in progress must not become a scroll gesture.
+  const [scrollLocked, setScrollLocked] = useState(false);
+
   // The keyboard just appeared/changed: once the padded layout has settled,
   // make sure the field being edited is still visible.
   useEffect(() => {
@@ -94,7 +113,10 @@ export const Screen = forwardRef<ScrollView | View, ScreenProps>(function Screen
     return () => cancelAnimationFrame(id);
   }, [keyboardVisible, overlap, ensureFocusedInputVisible]);
 
-  const keyboardScroll = useMemo(() => ({ ensureFocusedInputVisible }), [ensureFocusedInputVisible]);
+  const keyboardScroll = useMemo(
+    () => ({ ensureFocusedInputVisible, ensureViewVisible, setScrollLocked }),
+    [ensureFocusedInputVisible, ensureViewVisible],
+  );
 
   const handleContentLayout = useCallback(
     (e: LayoutChangeEvent) => {
@@ -116,6 +138,7 @@ export const Screen = forwardRef<ScrollView | View, ScreenProps>(function Screen
         keyboardDismissMode: Platform.OS === 'ios' ? ('interactive' as const) : ('on-drag' as const),
         onScroll: handleScroll,
         scrollEventThrottle: 16,
+        scrollEnabled: !scrollLocked,
       }
     : { style: [styles.content, { padding: theme.spacing.lg }] };
   const Content = scroll ? ScrollView : View;

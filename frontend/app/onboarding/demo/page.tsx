@@ -186,6 +186,19 @@ function StepRenderer({ step, formData, errors, updateFormData, onEditStep }: St
       return <ComingSoonStep step={step} />;
 
     case 'document_upload':
+      // The resume (packet v6) is uploaded through the authenticated mobile
+      // app; this unauthenticated legacy demo has no applicant session to
+      // associate an upload with (see ADR-025 on its uploads).
+      if (step.subtype === 'resume') {
+        return (
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-6 shadow-sm space-y-2">
+            <p className="text-sm font-medium text-slate-700">{step.label}</p>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              Resume upload is available in the Paramount Care mobile app. This web demo cannot upload documents.
+            </p>
+          </div>
+        );
+      }
       return (
         <UploadSection
           data={formData.uploadedDocuments}

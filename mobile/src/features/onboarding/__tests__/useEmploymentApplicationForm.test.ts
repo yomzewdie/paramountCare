@@ -37,13 +37,11 @@ const VALID_APPLICATION = {
   positionApplied: 'RN',
   specialtyPreference: ['med_surg'],
   shiftPreference: ['am'],
-  employmentType: 'per_diem_assignment',
+  employmentType: ['per_diem_assignment'],
   licenseType: 'RN',
   licenseNumber: 'RN123456',
   licenseState: 'CA',
   licenseExpiration: '2027-01-01',
-  yearsExperience: '3-5',
-  primarySpecialty: 'med_surg',
   authorizedToWork: true,
   hasConviction: false,
   hasLicenseDiscipline: false,
@@ -355,7 +353,7 @@ describe('useEmploymentApplicationForm — UAT feedback fields', () => {
     let outcome;
     await act(async () => { outcome = await result.current.complete(); });
     expect(outcome).toEqual({ kind: 'invalid' });
-    expect(result.current.errors.specialtyPreference).toBe('Select at least one unit preference');
+    expect(result.current.errors.specialtyPreference).toBe('Select at least one specialty / unit preference');
 
     act(() => result.current.toggleSelection('specialtyPreference', 'pacu'));
     expect(result.current.errors.specialtyPreference).toBeUndefined();
@@ -397,25 +395,75 @@ describe('useEmploymentApplicationForm — UAT feedback fields', () => {
     expect(result.current.errors.licenseExpiration).toBe('Enter a valid date (MM-DD-YYYY)');
   });
 
-  it('Primary specialty "Other" requires text; switching away removes the requirement but keeps the text', () => {
+  it('UAT: employment type is multi-select — one, both, or toggled off again', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, employmentType: [] } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.toggleSelection('employmentType', 'per_diem_assignment'));
+    act(() => result.current.toggleSelection('employmentType', 'travel_assignment'));
+    expect(result.current.data.employmentType).toEqual(['per_diem_assignment', 'travel_assignment']);
+    act(() => result.current.toggleSelection('employmentType', 'per_diem_assignment'));
+    expect(result.current.data.employmentType).toEqual(['travel_assignment']);
+  });
+
+  it('UAT: a legacy single-value employment type loads as a one-item selection', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, employmentType: 'travel_assignment' } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    expect(result.current.data.employmentType).toEqual(['travel_assignment']);
+    expect(result.current.errors.employmentType).toBeUndefined();
+  });
+
+  it('UAT: saving a CNA stores the canonical CNA specialty (never an empty list) and keeps drafts', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: 'CNA', licenseType: 'CNA', specialtyPreference: ['icu'] } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({ stepData: expect.objectContaining({ specialtyPreference: ['cna', 'icu'] }) }));
+  });
+
+  it('UAT: ordinary dates are typed MM/DD/YYYY with slashes inserted and stored as YYYY-MM-DD', () => {
     setupSession(fakeSession({ formData: { employmentApplication: VALID_APPLICATION } }));
     const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.setSlashDateInput('availableStartDate', '0315'));
+    expect(result.current.slashDateDisplay('availableStartDate')).toBe('03/15');
+    act(() => result.current.setSlashDateInput('availableStartDate', '03152027'));
+    expect(result.current.data.availableStartDate).toBe('2027-03-15');
+    expect(result.current.slashDateDisplay('availableStartDate')).toBe('03/15/2027');
+    // License Expiration keeps its own MM-DD-YYYY format.
+    act(() => result.current.setLicenseExpirationInput('03152028'));
+    expect(result.current.licenseExpirationDisplay).toBe('03-15-2028');
+    expect(result.current.data.licenseExpiration).toBe('2028-03-15');
+  });
 
-    act(() => result.current.setField('primarySpecialty', 'other'));
-    act(() => result.current.blurField('primarySpecialtyOther'));
-    expect(result.current.errors.primarySpecialtyOther).toBe('Please specify your primary specialty');
+  it('resume-first: completes with no experience fields, and never asks for them', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentApplication: VALID_APPLICATION } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    expect(result.current.data).not.toHaveProperty('yearsExperience');
+    expect(result.current.data).not.toHaveProperty('primarySpecialty');
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'saved' });
+    const { stepData } = saveStep.mock.calls[0][0] as { stepData: Record<string, unknown> };
+    for (const key of ['yearsExperience', 'primarySpecialty', 'primarySpecialtyOther', 'currentlyEmployed', 'previouslyWorkedHere', 'hasCPR']) {
+      expect(stepData).not.toHaveProperty(key); // no placeholders invented for removed fields
+    }
+  });
 
-    act(() => result.current.setField('primarySpecialtyOther', 'Pediatrics'));
-    expect(result.current.errors.primarySpecialtyOther).toBeUndefined();
-
-    act(() => result.current.setField('primarySpecialtyOther', ''));
-    act(() => result.current.setField('primarySpecialty', 'icu'));
-    expect(result.current.errors.primarySpecialtyOther).toBeUndefined();
-    expect(result.current.errors.primarySpecialty).toBeUndefined();
-
-    act(() => result.current.setField('primarySpecialtyOther', 'Pediatrics'));
-    act(() => result.current.setField('primarySpecialty', 'other'));
-    expect(result.current.data.primarySpecialtyOther).toBe('Pediatrics'); // restored on switching back
+  it('a session from the manual flow keeps its legacy experience answers through a save', async () => {
+    const saveStep = setupSession(
+      fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, yearsExperience: '3-5', primarySpecialty: 'icu', hasCPR: true } } }),
+      jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult),
+    );
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+      stepData: expect.objectContaining({ yearsExperience: '3-5', primarySpecialty: 'icu', hasCPR: true }),
+    }));
   });
 
   it('loads a pre-UAT session safely: string unit/shift become arrays, free-text specialty becomes Other', () => {
@@ -431,12 +479,15 @@ describe('useEmploymentApplicationForm — UAT feedback fields', () => {
     const { result } = renderHook(() => useEmploymentApplicationForm());
     expect(result.current.data.specialtyPreference).toEqual(['icu', 'med_surg']);
     expect(result.current.data.shiftPreference).toEqual([]);
-    expect(result.current.data.employmentType).toBe('full_time');
+    // A legacy single value that is no longer an option can't be shown in the
+    // multi-select, so it is dropped from the editing UI (the stored session
+    // is untouched until the applicant saves) and must be re-selected.
+    expect(result.current.data.employmentType).toEqual([]);
     expect(result.current.data.primarySpecialty).toBe('other');
     expect(result.current.data.primarySpecialtyOther).toBe('Critical Care');
 
     act(() => result.current.blurField('employmentType'));
-    expect(result.current.errors.employmentType).toBe('Select Per-Diem Assignment or Travel Assignment');
+    expect(result.current.errors.employmentType).toBe('Select at least one employment type');
   });
 
   it('drops multi-select values that are not current options on load (they could never be deselected)', () => {

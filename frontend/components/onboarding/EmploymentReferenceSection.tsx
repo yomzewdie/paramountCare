@@ -5,56 +5,13 @@ import type { EmploymentReference } from '@/types/onboarding';
 import type { FieldErrors } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { Input, Select, Textarea, FieldWrapper } from '@/components/ui/FormField';
-
-const US_STATES = [
-  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
-  'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
-  'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
-  'VA','WA','WV','WI','WY','DC',
-];
+import { Input } from '@/components/ui/FormField';
 
 interface EmploymentReferenceSectionProps {
   data: EmploymentReference;
   onChange: (data: EmploymentReference) => void;
   errors?: FieldErrors;
   referenceNumber?: number;
-}
-
-function YesNoField({
-  label,
-  value,
-  onChange,
-  error,
-  required,
-}: {
-  label: string;
-  value: boolean | null;
-  onChange: (v: boolean) => void;
-  error?: string;
-  required?: boolean;
-}) {
-  return (
-    <FieldWrapper label={label} required={required} error={error}>
-      <div className="flex gap-3 pt-0.5">
-        {([true, false] as const).map((opt) => (
-          <button
-            key={String(opt)}
-            type="button"
-            onClick={() => onChange(opt)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${
-              value === opt
-                ? 'bg-blue-600 border-blue-600 text-white'
-                : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-blue-300'
-            }`}
-          >
-            {value === opt && <Check size={13} strokeWidth={3} />}
-            {opt ? 'Yes' : 'No'}
-          </button>
-        ))}
-      </div>
-    </FieldWrapper>
-  );
 }
 
 export function EmploymentReferenceSection({ data, onChange, errors = {}, referenceNumber }: EmploymentReferenceSectionProps) {
@@ -72,9 +29,9 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
       <div className="flex items-start gap-3 p-4 bg-violet-50 border border-violet-100 rounded-xl">
         <Info size={16} className="text-violet-500 mt-0.5 flex-shrink-0" />
         <p className="text-sm text-violet-700 leading-relaxed">
-          <span className="font-semibold">Clinical reference requirements:</span> References must provide dates of
-          employment, a rating of work history, and the position or specialty you worked. Your reference must be
-          someone you reported to directly on the floor unit — such as a Charge RN, RN Supervisor, DON, or Nurse Manager.
+          <span className="font-semibold">Clinical reference requirements:</span> Your reference must be someone you
+          reported to directly on the floor unit — such as a Charge RN, RN Supervisor, DON, or Nurse Manager. Your
+          dates and positions come from your resume; Paramount verifies them with your reference.
         </p>
       </div>
 
@@ -83,76 +40,15 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
         <SectionHeader
           icon={<Briefcase size={20} />}
           title={`Employment Reference Check ${refLabel}`}
-          description="Provide contact details for a clinical supervisor who can verify your employment history."
+          description="Provide contact details for a clinical supervisor Paramount can contact to verify your employment."
           iconColor="bg-violet-50 text-violet-600"
         />
         <CardBody>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <Input
-              label="Position Held"
-              required
-              placeholder="Registered Nurse — Med/Surg"
-              value={data.positionHeld}
-              onChange={update('positionHeld')}
-              error={errors.positionHeld}
-              hint="The title / specialty of the role you held"
-            />
-
-            <div className="grid grid-cols-2 gap-3 sm:col-span-1">
-              <Input
-                label="Employment From"
-                required
-                type="month"
-                value={data.employmentDateFrom}
-                onChange={update('employmentDateFrom')}
-                error={errors.employmentDateFrom}
-              />
-              <Input
-                label="Employment To"
-                required
-                type="month"
-                placeholder="Present"
-                value={data.employmentDateTo}
-                onChange={update('employmentDateTo')}
-                error={errors.employmentDateTo}
-              />
-            </div>
-
-            <Input
-              label="Current / Former Employer"
-              required
-              placeholder="St. Mary's Medical Center"
-              value={data.employerName}
-              onChange={update('employerName')}
-              error={errors.employerName}
-              className="sm:col-span-2"
-            />
-
-            <Input
-              label="City"
-              required
-              placeholder="Los Angeles"
-              value={data.employerCity}
-              onChange={update('employerCity')}
-              error={errors.employerCity}
-            />
-            <Select
-              label="State"
-              required
-              value={data.employerState}
-              onChange={update('employerState')}
-              error={errors.employerState}
-            >
-              <option value="">Select state</option>
-              {US_STATES.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </Select>
-
-            <Input
               label="Supervisor's Name"
               required
-              placeholder="Dr. Sarah Johnson, RN Supervisor"
+              placeholder="Sarah Johnson"
               value={data.supervisorName}
               onChange={update('supervisorName')}
               error={errors.supervisorName}
@@ -166,6 +62,15 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
               error={errors.supervisorTitle}
             />
             <Input
+              label="Facility / Employer"
+              required
+              placeholder="St. Mary's Medical Center"
+              value={data.employerName}
+              onChange={update('employerName')}
+              error={errors.employerName}
+              hint="Where you reported to this supervisor"
+            />
+            <Input
               label="Supervisor's Phone"
               required
               type="tel"
@@ -174,34 +79,13 @@ export function EmploymentReferenceSection({ data, onChange, errors = {}, refere
               onChange={update('supervisorPhone')}
               error={errors.supervisorPhone}
             />
-          </div>
-
-          <div className="mt-5 pt-5 border-t border-slate-100 space-y-5">
-            <div className="space-y-3">
-              <YesNoField
-                label="Were you eligible for rehire at this employer?"
-                required
-                value={data.eligibleForRehire}
-                onChange={(v) => set('eligibleForRehire', v)}
-                error={errors.eligibleForRehire}
-              />
-              {data.eligibleForRehire === false && (
-                <Textarea
-                  label="Please explain"
-                  required
-                  placeholder="Describe the circumstances that affected your rehire eligibility…"
-                  value={data.rehireDetails}
-                  onChange={update('rehireDetails')}
-                  error={errors.rehireDetails}
-                />
-              )}
-            </div>
-
-            <Textarea
-              label="Additional Comments / Notes"
-              placeholder="Any other information relevant to this reference…"
-              value={data.comments}
-              onChange={update('comments')}
+            <Input
+              label="Supervisor's Email"
+              type="email"
+              placeholder="name@facility.org"
+              value={data.supervisorEmail ?? ''}
+              onChange={update('supervisorEmail')}
+              error={errors.supervisorEmail}
               hint="Optional"
             />
           </div>

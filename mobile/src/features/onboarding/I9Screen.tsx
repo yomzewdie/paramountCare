@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import type { AlienWorkAuthType, CitizenshipStatus, I9Data } from '@pcs/shared';
+import { maskSlashDateInput, maskSlashDateOrNotApplicable, type AlienWorkAuthType, type CitizenshipStatus, type I9Data } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
 import { SensitiveField } from '../../components/SensitiveField';
@@ -12,6 +11,7 @@ import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { US_STATE_OPTIONS } from '../../constants/usStates';
@@ -67,7 +67,7 @@ function ChoiceCard({ label, selected, onSelect }: { label: string; selected: bo
 
 export default function I9Screen() {
   const theme = useTheme();
-  const router = useRouter();
+  const nav = useStepNavigation();
   const { isConnected } = useNetworkStatus();
   const form = useI9Form();
   const [sigMode, setSigMode] = useState<'draw' | 'type'>(() => (form.data.i9SignatureType === 'typed' ? 'type' : 'draw'));
@@ -99,13 +99,13 @@ export default function I9Screen() {
 
   async function handleSaveProgress() {
     const outcome = await form.saveProgress();
-    if (outcome.kind === 'saved') router.back();
+    if (outcome.kind === 'saved') nav.leave();
   }
 
   async function handleComplete() {
     const outcome = await form.complete();
     if (outcome.kind === 'saved') {
-      router.back();
+      nav.afterComplete();
     } else if (outcome.kind === 'invalid') {
       scrollToFirstError();
     }
@@ -177,7 +177,12 @@ export default function I9Screen() {
       </FormSection>
 
       <FormSection title="Identity Verification">
-        <TextField label="Date of Birth" required hint="MM/DD/YYYY" placeholder="MM/DD/YYYY" returnKeyType="next" onSubmitEditing={() => focusNext('dateOfBirth')} {...field('dateOfBirth')} />
+        <TextField
+          label="Date of Birth" required hint="MM/DD/YYYY" placeholder="MM/DD/YYYY" keyboardType="number-pad" maxLength={10}
+          returnKeyType="next" onSubmitEditing={() => focusNext('dateOfBirth')}
+          {...field('dateOfBirth')}
+          onChangeText={(v) => form.setField('dateOfBirth', maskSlashDateInput(v))}
+        />
         <View onLayout={(e) => setFieldOffset('ssn', e)}>
           <SensitiveField
             label="Social Security Number"
@@ -210,7 +215,12 @@ export default function I9Screen() {
         {form.data.citizenshipStatus === 'alien_authorized' ? (
           <>
             <View onLayout={(e) => setFieldOffset('alienWorkAuthExpiration', e)}>
-              <TextField label="Work Authorization Expiration Date" required hint="MM/DD/YYYY, or enter N/A if not applicable" placeholder="MM/DD/YYYY or N/A" returnKeyType="done" onSubmitEditing={() => {}} {...field('alienWorkAuthExpiration')} />
+              <TextField
+                label="Work Authorization Expiration Date" required hint="MM/DD/YYYY, or enter N/A if not applicable" placeholder="MM/DD/YYYY or N/A"
+                maxLength={10} autoCapitalize="characters" returnKeyType="done" onSubmitEditing={() => {}}
+                {...field('alienWorkAuthExpiration')}
+                onChangeText={(v) => form.setField('alienWorkAuthExpiration', maskSlashDateOrNotApplicable(v))}
+              />
             </View>
             <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>
               How will you verify your work authorization? <Text style={{ color: theme.colors.danger }}>*</Text>

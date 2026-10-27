@@ -59,9 +59,44 @@ describe('employment_application completion - new contract', () => {
     ['a legacy free-text position', { positionApplied: 'RN — Med/Surg' }],
     ['an impossible license expiration date', { licenseExpiration: '2028-02-30' }],
     ['a display-format (non-canonical) license expiration date', { licenseExpiration: '01-01-2028' }],
-    ['Other specialty without the Other text', { primarySpecialty: 'other', primarySpecialtyOther: '' }],
   ])('rejects completion with %s', async (_label, override) => {
     const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('ea-reject'));
+    const session = await createTestSession(accessToken, 'general_rn');
+    const res = await completeEmploymentApplication(accessToken, session, { ...VALID_EMPLOYMENT_APPLICATION, ...override });
+    expect(res.status).toBe(422);
+  });
+});
+
+describe('employment_application completion - resume-first (work history comes from the resume)', () => {
+  it('accepts completion without any experience/work-history field', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('ea-resume-first'));
+    const session = await createTestSession(accessToken, 'general_rn');
+    expect(VALID_EMPLOYMENT_APPLICATION).not.toHaveProperty('yearsExperience');
+    expect(VALID_EMPLOYMENT_APPLICATION).not.toHaveProperty('primarySpecialty');
+    const res = await completeEmploymentApplication(accessToken, session, VALID_EMPLOYMENT_APPLICATION);
+    expect(res.status).toBe(200);
+  });
+
+  it('never rejects a legacy experience value, even one the old rules would have (Other without text)', async () => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('ea-legacy-specialty'));
+    const session = await createTestSession(accessToken, 'general_rn');
+    const res = await completeEmploymentApplication(accessToken, session, {
+      ...VALID_EMPLOYMENT_APPLICATION, yearsExperience: '', primarySpecialty: 'other', primarySpecialtyOther: '',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    ['position', { positionApplied: '' }],
+    ['employment type', { employmentType: '' }],
+    ['shift preference', { shiftPreference: [] }],
+    ['license number', { licenseNumber: '' }],
+    ['license expiration', { licenseExpiration: '' }],
+    ['work authorization answer', { authorizedToWork: null }],
+    ['conviction answer', { hasConviction: null }],
+    ['emergency contact phone', { emergencyContactPhone: '' }],
+  ])('still requires the relocated structured field: %s', async (_label, override) => {
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('ea-still-required'));
     const session = await createTestSession(accessToken, 'general_rn');
     const res = await completeEmploymentApplication(accessToken, session, { ...VALID_EMPLOYMENT_APPLICATION, ...override });
     expect(res.status).toBe(422);
@@ -138,7 +173,7 @@ describe('sessions saved before the UAT changes', () => {
 });
 
 describe('submitted application snapshot - final answers only', () => {
-  it('drops hidden CNA unit selections and stale Other text, keeps arrays, and keeps legacy reference data readable', async () => {
+  it('replaces hidden CNA unit selections with the canonical CNA value, drops stale Other text, keeps arrays, and keeps legacy reference data readable', async () => {
     const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('snapshot-final'));
     const completed = await completePacketExceptReview(accessToken, 'icu_rn');
 
@@ -174,7 +209,7 @@ describe('submitted application snapshot - final answers only', () => {
       employmentReferences: Record<string, Record<string, unknown>>;
     };
     expect(payload.employmentApplication.positionApplied).toBe('CNA');
-    expect(payload.employmentApplication.specialtyPreference).toEqual([]);
+    expect(payload.employmentApplication.specialtyPreference).toEqual(['cna']); // canonical CNA value, never []
     expect(payload.employmentApplication.shiftPreference).toEqual(['am', 'pm']);
     expect(payload.employmentApplication.primarySpecialty).toBe('icu');
     expect(payload.employmentApplication.primarySpecialtyOther).toBe('');
