@@ -96,6 +96,8 @@ export async function proxyAdminUpload(path: string, req: Request, method: 'POST
 }
 
 /** Stream a protected file from the Worker without exposing storage keys. */
+const HTML_FALLBACK_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'";
+
 export async function proxyAdminDownload(
   path: string,
   fallback: { contentType: string; disposition: string } | null,
@@ -119,12 +121,17 @@ export async function proxyAdminDownload(
   }
 
   const bytes = await upstream.arrayBuffer();
-  return new NextResponse(bytes, {
-    headers: {
-      'Content-Type': upstream.headers.get('content-type') ?? fallback?.contentType ?? 'application/octet-stream',
-      'Content-Disposition': upstream.headers.get('content-disposition') ?? fallback?.disposition ?? 'attachment',
-      'Cache-Control': 'private, no-store',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  const contentType = upstream.headers.get('content-type') ?? fallback?.contentType ?? 'application/octet-stream';
+  const headers: Record<string, string> = {
+    'Content-Type': contentType,
+    'Content-Disposition': upstream.headers.get('content-disposition') ?? fallback?.disposition ?? 'attachment',
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  // A rendered Word preview carries the Worker's sandbox policy; HTML never
+  // leaves this route without one, even if the upstream header went missing.
+  const csp = upstream.headers.get('content-security-policy');
+  if (csp) headers['Content-Security-Policy'] = csp;
+  else if (contentType.toLowerCase().startsWith('text/html')) headers['Content-Security-Policy'] = HTML_FALLBACK_CSP;
+  return new NextResponse(bytes, { headers });
 }

@@ -3,15 +3,18 @@
 // proxy routes, by application id and numeric document id — never a storage
 // key or a public URL.
 
-export type PreviewKind = 'pdf' | 'image';
+export type PreviewKind = 'pdf' | 'image' | 'document';
 
 /** The only types the viewer renders. The Worker decides from the type it
  * recorded when the file was stored and refuses anything else (415); this is
- * the browser's own second check on the response it actually received. */
+ * the browser's own second check on the response it actually received. A Word
+ * document arrives as HTML the Worker rendered and sanitized itself, and is
+ * shown in a fully sandboxed frame (no scripts, no network, no same-origin). */
 const PREVIEW_KINDS: Record<string, PreviewKind> = {
   'application/pdf': 'pdf',
   'image/jpeg': 'image',
   'image/png': 'image',
+  'text/html': 'document',
 };
 
 export function previewKind(contentType: string | null | undefined): PreviewKind | null {
@@ -24,6 +27,24 @@ export const FILE_TYPE_LABELS: Record<string, string> = {
   'image/jpeg': 'JPEG image',
   'image/png': 'PNG image',
 };
+
+const EXTENSION_LABELS: Record<string, string> = {
+  pdf: 'PDF',
+  jpg: 'JPEG image',
+  jpeg: 'JPEG image',
+  png: 'PNG image',
+  doc: 'Word document (.doc)',
+  docx: 'Word document (.docx)',
+};
+
+/** The original file's type, for the viewer's header — from its name, since a
+ * Word preview arrives as rendered HTML. */
+export function fileTypeLabel(fileName: string): string | null {
+  const match = /\.([a-z0-9]+)$/i.exec(fileName.trim());
+  return match ? EXTENSION_LABELS[match[1].toLowerCase()] ?? null : null;
+}
+
+export const SIMPLIFIED_FORMATTING_NOTE = 'Shown with simplified formatting. Download the original for the exact layout.';
 
 export const PREVIEW_UNAVAILABLE_MESSAGE = 'Preview is not available for this file type.';
 

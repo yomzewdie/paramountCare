@@ -121,6 +121,33 @@ describe('document preview proxy', () => {
     expect(await res.text()).toBe('pdf-bytes');
   });
 
+  it('passes a rendered Word preview through with the Worker\'s sandbox policy', async () => {
+    const csp = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; frame-ancestors 'self'";
+    stubFetch(() => new Response('<!doctype html><p>Jane</p>', { headers: { 'content-type': 'text/html; charset=utf-8', 'content-disposition': 'inline; filename="resume.docx"', 'content-security-policy': csp } }));
+    const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(res.headers.get('content-security-policy')).toBe(csp);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toBe('<!doctype html><p>Jane</p>');
+  });
+
+  it('never serves HTML without a sandbox policy, even if the upstream header is missing', async () => {
+    stubFetch(() => new Response('<p>x</p>', { headers: { 'content-type': 'text/html' } }));
+    const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));
+    expect(res.headers.get('content-security-policy')).toMatch(/^sandbox;.*default-src 'none'/);
+    stubFetch(() => new Response('pdf', { headers: { 'content-type': 'application/pdf' } }));
+    const pdf = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));
+    expect(pdf.headers.get('content-security-policy')).toBeNull();
+  });
+
+  it('relays an unreadable Word document (422) with only its short message', async () => {
+    stubFetch(() => jsonResponse({ error: 'This Word document could not be displayed. Download the original to open it.' }, 422));
+    const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: 'This Word document could not be displayed. Download the original to open it.' });
+  });
+
   it('relays the Worker refusing to preview a file type (415), with only its short message', async () => {
     stubFetch(() => jsonResponse({ error: 'Preview is not available for this file type.' }, 415));
     const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DocumentViewerDialog, PreviewBody, type PreviewState } from '@/app/admin/applications/[applicationId]/DocumentViewer';
 import {
-  PREVIEW_UNAVAILABLE_MESSAGE, attachmentPosition, canGoNext, canGoPrevious, downloadUrl, previewKind, previewUrl, stepIndex, stepZoom,
+  PREVIEW_UNAVAILABLE_MESSAGE, SIMPLIFIED_FORMATTING_NOTE, attachmentPosition, fileTypeLabel, canGoNext, canGoPrevious, downloadUrl, previewKind, previewUrl, stepIndex, stepZoom,
 } from '@/lib/document-viewer';
 
 const documents = [
@@ -24,11 +24,13 @@ function dialog(index: number, docs = documents) {
 const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*>(?:(?!</button>).)*?${label}(?:(?!</button>).)*</button>`))?.[0] ?? '';
 
 describe('what the viewer may render', () => {
-  it('renders only PDF, JPEG and PNG', () => {
+  it('renders PDF, JPEG, PNG, and a Word document the Worker rendered to HTML', () => {
     expect(previewKind('application/pdf')).toBe('pdf');
     expect(previewKind('image/jpeg')).toBe('image');
     expect(previewKind('image/png; charset=binary')).toBe('image');
-    for (const type of ['text/html', 'image/svg+xml', 'application/javascript', 'application/msword',
+    expect(previewKind('text/html; charset=utf-8')).toBe('document');
+    // The raw Word bytes are never handed to the browser to render.
+    for (const type of ['image/svg+xml', 'application/javascript', 'application/msword', 'application/xhtml+xml',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'application/octet-stream', '', null]) {
       expect(previewKind(type)).toBeNull();
     }
@@ -101,7 +103,7 @@ describe('moving between attachments', () => {
     const html = dialog(0, [documents[0]]);
     expect(html).not.toContain('Previous');
     expect(html).not.toContain('Attachment 1');
-    expect(html).toContain('>Download<');
+    expect(html).toContain('>Download Original<');
     expect(html).toContain('>Close<');
   });
 
@@ -136,10 +138,38 @@ describe('preview states', () => {
     expect(stepZoom(1, -1)).toBe(1);
   });
 
-  it('a Word document (or any non-previewable file) offers its download instead', () => {
+  it('a Word document renders in a frame sandboxed to nothing, from the rendered HTML itself', () => {
+    const rendered = '<!doctype html><html><body><p>Jane Nurse</p><p>&lt;script&gt;alert(1)&lt;/script&gt;</p></body></html>';
+    const html = body({ status: 'ready', kind: 'document', html: rendered, contentType: 'text/html' });
+    const frame = html.match(/<iframe[^>]*>/)![0];
+    expect(frame).toContain('sandbox=""');
+    expect(frame).toContain('referrerPolicy="no-referrer"');
+    expect(frame).toContain('title="Preview of resume.docx"');
+    // The document goes in srcdoc (attribute-escaped), never a URL to a file.
+    expect(frame).toMatch(/srcDoc="[^"]*Jane Nurse/);
+    expect(frame).not.toMatch(/\ssrc=/);
+    expect(html).not.toContain('<script');
+    expect(html).toContain(SIMPLIFIED_FORMATTING_NOTE);
+  });
+
+  it('labels the original file\'s type from its name', () => {
+    expect(fileTypeLabel('resume.docx')).toBe('Word document (.docx)');
+    expect(fileTypeLabel('Old CV.DOC')).toBe('Word document (.doc)');
+    expect(fileTypeLabel('scan.jpeg')).toBe('JPEG image');
+    expect(fileTypeLabel('cpr.pdf')).toBe('PDF');
+    expect(fileTypeLabel('notes')).toBeNull();
+    expect(fileTypeLabel('x.exe')).toBeNull();
+    const html = dialog(0, [{ id: 9, fileName: 'resume.docx' }]);
+    expect(html).toContain('resume.docx');
+    expect(html).toContain('Word document (.docx)');
+    expect(html).toContain('>Download Original<');
+    expect(html).toContain('href="/api/admin/documents/APP-888/9"');
+  });
+
+  it('a file type that cannot be previewed offers its original download instead', () => {
     const html = body({ status: 'unavailable' });
     expect(html).toContain(PREVIEW_UNAVAILABLE_MESSAGE);
-    expect(html).toContain('Download Document');
+    expect(html).toContain('Download Original');
     expect(html).toContain('href="/api/admin/documents/APP-1/5"');
     expect(html).not.toContain('<iframe');
     expect(html).not.toContain('<img');
@@ -149,7 +179,7 @@ describe('preview states', () => {
     const html = body({ status: 'error', message: 'Document not found for this application' });
     expect(html).toContain('role="alert"');
     expect(html).toContain('Document not found for this application');
-    expect(html).toContain('Download Document');
+    expect(html).toContain('Download Original');
   });
 
   it('shows loading first', () => {

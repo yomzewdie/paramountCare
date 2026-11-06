@@ -3,22 +3,24 @@ import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, loginAsAdmin, registerVerifyAndLoginApplicant } from './helpers';
 import { insertAdminDocumentStmt } from '../src/db/queries/documents';
 import { seedApplication } from './clinicianFixtures';
+import { RESUME_DOC_BASE64, RESUME_DOCX_BASE64, fromBase64 } from './fixtures/wordFixtures';
 
 // The Admin document viewer's protected preview: the same lookup and
 // authorization as the download, served inline only for a PDF, JPEG or PNG
-// recorded when the file was stored. Everything else stays download-only.
+// recorded when the file was stored, and rendered to sanitized HTML for a Word
+// document. Everything else stays download-only.
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const BYTES = new Uint8Array([37, 80, 68, 70, 1, 2, 3]);
 
-async function applicationWithDocument(label: string, doc: { fileName: string; contentType: string | null; docType?: string; storeObject?: boolean }) {
+async function applicationWithDocument(label: string, doc: { fileName: string; contentType: string | null; docType?: string; storeObject?: boolean; bytes?: Uint8Array }) {
   const applicationId = await seedApplication({ firstName: 'Pre', lastName: 'View', email: uniqueEmail(label), submittedAt: new Date().toISOString() });
   const objectKey = `uploads/test/${crypto.randomUUID()}-${doc.fileName}`;
   if (doc.storeObject !== false) {
-    await env.UPLOADS_BUCKET.put(objectKey, BYTES, doc.contentType ? { httpMetadata: { contentType: doc.contentType } } : undefined);
+    await env.UPLOADS_BUCKET.put(objectKey, doc.bytes ?? BYTES, doc.contentType ? { httpMetadata: { contentType: doc.contentType } } : undefined);
   }
   const inserted = await insertAdminDocumentStmt(env.DB, {
-    applicationId, objectKey, fileName: doc.fileName, fileSize: BYTES.byteLength, uploadedAt: new Date().toISOString(), docType: doc.docType ?? 'cpr_cert',
+    applicationId, objectKey, fileName: doc.fileName, fileSize: (doc.bytes ?? BYTES).byteLength, uploadedAt: new Date().toISOString(), docType: doc.docType ?? 'cpr_cert',
   }).run();
   return { applicationId, objectKey, documentId: inserted.meta.last_row_id };
 }
@@ -57,22 +59,70 @@ describe('GET /api/admin/application/:id/documents/:documentId/preview', () => {
   });
 
   it.each([
-    ['DOC', 'application/msword', 'resume.doc'],
-    ['DOCX', DOCX, 'resume.docx'],
-  ])('a %s resume is never rendered inline, and stays downloadable', async (_label, contentType, fileName) => {
+    ['DOC', 'application/msword', 'resume.doc', RESUME_DOC_BASE64],
+    ['DOCX', DOCX, 'resume.docx', RESUME_DOCX_BASE64],
+  ])('a %s resume is rendered in the portal as sandboxed HTML, and the original stays downloadable', async (_label, contentType, fileName, b64) => {
     const cookie = await loginAsAdmin();
-    const { applicationId, documentId } = await applicationWithDocument('preview-word', { fileName, contentType, docType: 'applicant_resume' });
+    const bytes = fromBase64(b64);
+    const { applicationId, documentId, objectKey } = await applicationWithDocument('preview-word', { fileName, contentType, docType: 'applicant_resume', bytes });
 
     const res = await preview(applicationId, documentId, { cookie });
-    expect(res.status).toBe(415);
-    expect(res.headers.get('content-disposition')).toBeNull();
-    expect(await res.json()).toEqual({ error: 'Preview is not available for this file type.' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(res.headers.get('content-disposition')).toMatch(/^inline;/);
+    expect(res.headers.get('content-security-policy')).toMatch(/^sandbox;/);
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    const html = await res.text();
+    expect(html).toContain('Jane Nurse');
+    expect(html).toContain('ICU specialist');
+    expect(html).toContain('Mercy Hospital, ICU, 2020–2024');
+    // The document's own text is escaped, never markup.
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    // No storage key or file URL anywhere in the response.
+    const everything = html + JSON.stringify([...res.headers]);
+    expect(everything).not.toContain(objectKey);
+    expect(everything).not.toMatch(/uploads\/|r2\.dev|r2\.cloudflarestorage|https?:\/\//);
 
     const file = await download(applicationId, documentId, { cookie });
     expect(file.status).toBe(200);
     expect(file.headers.get('content-type')).toBe(contentType);
-    expect(file.headers.get('content-disposition')).toMatch(/^attachment;/);
+    expect(file.headers.get('content-disposition')).toMatch(new RegExp(`^attachment; filename="${fileName}"`));
+    expect(file.headers.get('content-security-policy')).toBeNull();
+    expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(Array.from(bytes));
+  });
+
+  it.each([
+    ['DOC', 'application/msword', 'broken.doc'],
+    ['DOCX', DOCX, 'broken.docx'],
+  ])('an unreadable %s explains itself, and the original stays downloadable', async (_label, contentType, fileName) => {
+    const cookie = await loginAsAdmin();
+    const { applicationId, documentId } = await applicationWithDocument('preview-word-broken', { fileName, contentType, docType: 'applicant_resume' });
+
+    const res = await preview(applicationId, documentId, { cookie });
+    expect(res.status).toBe(422);
+    expect(res.headers.get('content-disposition')).toBeNull();
+    expect(await res.json()).toEqual({ error: 'This Word document could not be displayed. Download the original to open it.' });
+
+    const file = await download(applicationId, documentId, { cookie });
+    expect(file.status).toBe(200);
+    expect(file.headers.get('content-type')).toBe(contentType);
     await file.arrayBuffer();
+  });
+
+  it('a Word preview is refused to applicants and anonymous callers, and to another application', async () => {
+    const cookie = await loginAsAdmin();
+    const a = await applicationWithDocument('preview-word-a', { fileName: 'a.docx', contentType: DOCX, docType: 'applicant_resume', bytes: fromBase64(RESUME_DOCX_BASE64) });
+    const b = await applicationWithDocument('preview-word-b', { fileName: 'b.doc', contentType: 'application/msword', docType: 'applicant_resume', bytes: fromBase64(RESUME_DOC_BASE64) });
+    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('preview-word-applicant'));
+
+    expect((await preview(a.applicationId, a.documentId)).status).toBe(401);
+    expect((await preview(a.applicationId, a.documentId, { Authorization: `Bearer ${accessToken}` })).status).toBe(403);
+    expect((await preview(a.applicationId, b.documentId, { cookie })).status).toBe(404);
+    expect((await preview(a.applicationId, 987654321, { cookie })).status).toBe(404);
+    expect((await preview(a.applicationId, 'nope', { cookie })).status).toBe(400);
   });
 
   it.each([

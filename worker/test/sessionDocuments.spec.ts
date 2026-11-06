@@ -2,6 +2,7 @@ import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, loginAsAdmin, registerVerifyAndLoginApplicant } from './helpers';
 import { createTestSession, fakeFile, patch, removeDoc, uploadFile, type TestSession } from './submissionFixtures';
+import { RESUME_DOC_BASE64, RESUME_DOCX_BASE64, fromBase64 } from './fixtures/wordFixtures';
 import type { OnboardingSummary } from '../src/services/clinicians';
 
 // Recruiters viewing what an applicant still onboarding has uploaded, before
@@ -69,24 +70,32 @@ describe('viewing an in-progress applicant\'s documents', () => {
   });
 
   it.each([
-    ['DOC', 'application/msword', 'resume.doc'],
-    ['DOCX', DOCX, 'resume.docx'],
-  ])('a %s resume is download-only', async (_label, type, fileName) => {
+    ['DOC', 'application/msword', 'resume.doc', RESUME_DOC_BASE64],
+    ['DOCX', DOCX, 'resume.docx', RESUME_DOCX_BASE64],
+  ])('a %s resume is previewed as sandboxed HTML, and the original stays downloadable', async (_label, type, fileName, b64) => {
     const { accessToken, session } = await applicant('session-docs-word');
-    const current = await attach(accessToken, session, 'applicant_resume', fakeFile(fileName, type, 120));
+    const bytes = fromBase64(b64);
+    const current = await attach(accessToken, session, 'applicant_resume', new File([bytes], fileName, { type }));
     const cookie = await loginAsAdmin();
     const [resume] = (await summaryOf(current.sessionId, cookie)).documents;
 
     const preview = await get(fileUrl(current.sessionId, resume.id, 'preview'), { cookie });
-    expect(preview.status).toBe(415);
-    expect(preview.headers.get('content-disposition')).toBeNull();
-    expect(await preview.json()).toEqual({ error: 'Preview is not available for this file type.' });
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(preview.headers.get('content-security-policy')).toMatch(/^sandbox;/);
+    const html = await preview.text();
+    expect(html).toContain('Jane Nurse');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toMatch(/uploads\/|r2\.dev|https?:\/\//);
+
+    // The applicant who uploaded it can't use the recruiter's preview.
+    expect((await get(fileUrl(current.sessionId, resume.id, 'preview'), { Authorization: `Bearer ${accessToken}` })).status).toBe(403);
 
     const download = await get(fileUrl(current.sessionId, resume.id, 'download'), { cookie });
     expect(download.status).toBe(200);
     expect(download.headers.get('content-type')).toBe(type);
     expect(download.headers.get('content-disposition')).toMatch(/^attachment;/);
-    await download.arrayBuffer();
+    expect(Array.from(new Uint8Array(await download.arrayBuffer()))).toEqual(Array.from(bytes));
   });
 
   it('lists every attachment of a multi-file requirement in the applicant\'s order, each viewable', async () => {

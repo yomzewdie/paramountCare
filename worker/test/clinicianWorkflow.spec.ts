@@ -6,8 +6,9 @@ import { isRecentlyOnboarded, onboardingQueue, type ClinicianPage } from '../src
 import { clearClinician, loadClinicianContext } from '../src/services/clinicianWorkflow';
 import { seedApplication } from './clinicianFixtures';
 import {
-  adminApi, auditActions, clinicianIdForEmail, loginAsSuperAdmin, registerInvited, resumeFile, uploadCandidateResume, type Detail,
+  adminApi, auditActions, clinicianIdForEmail, loginAsSuperAdmin, registerInvited, uploadCandidateResume, type Detail,
 } from './workflowFixtures';
+import { RESUME_DOCX_BASE64, fromBase64 } from './fixtures/wordFixtures';
 
 // The recruiter's clinician workflow: New Applicants before an invitation,
 // On Hold, internal verification, clearance — keyed by the clinician record.
@@ -216,10 +217,21 @@ describe('New Applicants', () => {
     expect(key).toMatch(new RegExp(`^candidates/${id}/`));
     expect(await env.DB.prepare('SELECT 1 FROM uploaded_documents WHERE object_key = ?').bind(key).first()).toBeNull();
 
-    // A DOCX resume is stored, but stays download-only.
-    await api.ok(uploadCandidateResume(cookie, id, resumeFile('resume.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')));
+    // A DOCX resume replaces it, and is previewed in the portal as sandboxed HTML.
+    const docx = fromBase64(RESUME_DOCX_BASE64);
+    await api.ok(uploadCandidateResume(cookie, id, new File([docx], 'resume.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })));
     expect(await env.UPLOADS_BUCKET.head(key)).toBeNull();
-    expect((await api.get(`/${id}/resume/preview`)).status).toBe(415);
+    const wordPreview = await api.get(`/${id}/resume/preview`);
+    expect(wordPreview.status).toBe(200);
+    expect(wordPreview.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(wordPreview.headers.get('content-security-policy')).toMatch(/^sandbox;/);
+    const html = await wordPreview.text();
+    expect(html).toContain('Jane Nurse');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toMatch(/candidates\/|uploads\/|https?:\/\//);
+    const original = await api.get(`/${id}/resume/download`);
+    expect(original.headers.get('content-disposition')).toMatch(/^attachment; filename="resume.docx"/);
+    expect(Array.from(new Uint8Array(await original.arrayBuffer()))).toEqual(Array.from(docx));
     expect((await auditActions(id)).filter((a) => a.action === 'candidate_resume_uploaded')).toHaveLength(2);
   });
 

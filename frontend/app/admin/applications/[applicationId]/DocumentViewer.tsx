@@ -1,29 +1,32 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Download, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, X, ZoomIn, ZoomOut } from 'lucide-react';
 import {
   FILE_TYPE_LABELS,
   IMAGE_ZOOM_LEVELS,
   PREVIEW_UNAVAILABLE_MESSAGE,
+  SIMPLIFIED_FORMATTING_NOTE,
   attachmentPosition,
   canGoNext,
   canGoPrevious,
   downloadUrl,
+  fileTypeLabel,
   previewKind,
   previewUrl,
   stepIndex,
   stepZoom,
   type DocumentSource,
-  type PreviewKind,
 } from '@/lib/document-viewer';
 
 // The one document viewer in the Admin Portal: applicant uploads (single
 // files and multi-file requirements), the resume, and the Verified License all
 // open here — for a submitted application, and for an applicant still
 // onboarding. Files come only from the protected, same-origin preview route by
-// document id; a PDF, JPEG or PNG renders inline, anything else (Word
-// resumes, unknown types) offers its protected download instead.
+// document id; a PDF, JPEG or PNG renders inline, a Word document (DOC or
+// DOCX) renders as the sanitized HTML the Worker made from it, in a frame
+// sandboxed to nothing, and anything else offers its protected download. The
+// original file is always downloadable from the footer.
 
 export interface ViewerDocument {
   id: number;
@@ -32,7 +35,9 @@ export interface ViewerDocument {
 
 export type PreviewState =
   | { status: 'loading' }
-  | { status: 'ready'; kind: PreviewKind; url: string; contentType: string }
+  | { status: 'ready'; kind: 'pdf' | 'image'; url: string; contentType: string }
+  /** A Word document, as the Worker rendered it: escaped text in its own markup. */
+  | { status: 'ready'; kind: 'document'; html: string; contentType: string }
   | { status: 'unavailable' }
   | { status: 'error'; message: string };
 
@@ -72,7 +77,25 @@ export function PreviewBody({
         <p role={preview.status === 'error' ? 'alert' : undefined} className="text-sm text-slate-600">
           {preview.status === 'error' ? preview.message : PREVIEW_UNAVAILABLE_MESSAGE}
         </p>
-        <DownloadButton href={downloadHref} fileName={fileName} label="Download Document" />
+        <DownloadButton href={downloadHref} fileName={fileName} label="Download Original" />
+      </div>
+    );
+  }
+  if (preview.kind === 'document') {
+    return (
+      <div className="relative w-full h-full flex flex-col">
+        <p className="flex items-center gap-1.5 px-3 py-2 bg-white border-b border-slate-200 text-xs text-slate-500">
+          <FileText size={14} aria-hidden="true" />
+          {SIMPLIFIED_FORMATTING_NOTE}
+        </p>
+        {/* sandbox="" grants nothing: no scripts, forms, popups, navigation or same-origin access. */}
+        <iframe
+          sandbox=""
+          srcDoc={preview.html}
+          referrerPolicy="no-referrer"
+          title={`Preview of ${fileName}`}
+          className="flex-1 w-full border-0 bg-white"
+        />
       </div>
     );
   }
@@ -133,6 +156,7 @@ function DocumentPreview({ source, doc }: { source: DocumentSource; doc: ViewerD
         const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
         const kind = previewKind(contentType);
         if (!kind) return setPreview({ status: 'unavailable' });
+        if (kind === 'document') return setPreview({ status: 'ready', kind, html: await res.text(), contentType });
         const blob = await res.blob();
         objectUrl = URL.createObjectURL(new Blob([blob], { type: contentType }));
         setPreview({ status: 'ready', kind, url: objectUrl, contentType });
@@ -182,6 +206,7 @@ export function DocumentViewerDialog({
   const doc = documents[index];
   const position = attachmentPosition(index, documents.length);
   const several = documents.length > 1;
+  const typeLabel = fileTypeLabel(doc.fileName);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-2 sm:p-6" onClick={onClose}>
@@ -198,6 +223,7 @@ export function DocumentViewerDialog({
             <p className="text-xs text-slate-500 truncate">
               {position && <span className="font-medium text-slate-600">{position} · </span>}
               {doc.fileName}
+              {typeLabel && <span className="text-slate-400"> · {typeLabel}</span>}
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800">
@@ -223,7 +249,7 @@ export function DocumentViewerDialog({
             </>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <DownloadButton href={downloadUrl(source, doc.id)} fileName={doc.fileName} label="Download" />
+            <DownloadButton href={downloadUrl(source, doc.id)} fileName={doc.fileName} label="Download Original" />
             <button type="button" onClick={onClose} className="px-3 py-2 text-sm font-medium text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50">
               Close
             </button>
