@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin } from './helpers';
+import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin, withStorageKeys } from './helpers';
 import { associateDoc, fakeFile, deleteUpload, removeDoc, submittedSession, uploadFile, createTestSession } from './submissionFixtures';
 
 // The Admin Portal's own Verified License: recruiter-provided, stored beside
@@ -20,7 +20,8 @@ interface Detail {
 }
 
 async function detailOf(applicationId: string, cookie: string): Promise<Detail> {
-  return (await SELF.fetch(`${BASE}/api/admin/application/${applicationId}`, { headers: { cookie } })).json();
+  const detail = (await (await SELF.fetch(`${BASE}/api/admin/application/${applicationId}`, { headers: { cookie } })).json()) as Detail;
+  return { ...detail, documents: await withStorageKeys(detail.documents) };
 }
 
 describe('Verified License — admin upload', () => {

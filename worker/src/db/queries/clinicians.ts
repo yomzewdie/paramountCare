@@ -1,3 +1,6 @@
+import { listClinicianRecords, type ClinicianRecordRow } from './clinicianRecords';
+import { findAllReviews, type DocumentReviewRow } from './documentReviews';
+
 // Read-only views over the existing onboarding lifecycle tables, for the
 // Admin clinician list: an invitation (onboarding_invites), an account
 // (users), an onboarding session (onboarding_sessions) and a submitted
@@ -6,6 +9,8 @@
 
 export interface ClinicianSessionRow {
   session_id: string;
+  user_id: number | null;
+  revision: number;
   packet_id: string;
   first_name: string | null;
   last_name: string | null;
@@ -44,6 +49,8 @@ export interface ClinicianUserRow {
 export interface ClinicianInviteRow {
   id: number;
   email: string;
+  clinician_id: number | null;
+  use_candidate_resume: number;
   created_at: string;
   expires_at: string;
   used_at: string | null;
@@ -57,10 +64,13 @@ export interface ClinicianSources {
   usersWithoutSession: ClinicianUserRow[];
   /** Newest first. */
   invites: ClinicianInviteRow[];
+  /** The lifecycle root (migrations/0007): one per clinician. */
+  records: ClinicianRecordRow[];
+  reviews: DocumentReviewRow[];
 }
 
 const SESSION_COLUMNS = `
-  s.session_id, s.packet_id, s.first_name, s.last_name, s.email, s.status, s.application_id,
+  s.session_id, s.user_id, s.revision, s.packet_id, s.first_name, s.last_name, s.email, s.status, s.application_id,
   s.created_at, s.updated_at, s.form_data_json, s.step_states_json, u.email AS account_email`;
 
 const APPLICATION_COLUMNS = `
@@ -70,10 +80,10 @@ const APPLICATION_COLUMNS = `
   CASE WHEN EXISTS (SELECT 1 FROM onboarding_sessions s WHERE s.application_id = a.application_id)
        THEN NULL ELSE a.payload_json END AS legacy_payload_json`;
 
-const INVITE_COLUMNS = 'id, email, created_at, expires_at, used_at, revoked_at';
+const INVITE_COLUMNS = 'id, email, clinician_id, use_candidate_resume, created_at, expires_at, used_at, revoked_at';
 
 export async function loadClinicianSources(db: D1Database): Promise<ClinicianSources> {
-  const [sessions, applications, usersWithoutSession, invites] = await Promise.all([
+  const [sessions, applications, usersWithoutSession, invites, records, reviews] = await Promise.all([
     db.prepare(`SELECT ${SESSION_COLUMNS} FROM onboarding_sessions s LEFT JOIN users u ON u.id = s.user_id`).all<ClinicianSessionRow>(),
     db.prepare(`SELECT ${APPLICATION_COLUMNS} FROM applications a`).all<ClinicianApplicationRow>(),
     db.prepare(
@@ -81,12 +91,16 @@ export async function loadClinicianSources(db: D1Database): Promise<ClinicianSou
        WHERE NOT EXISTS (SELECT 1 FROM onboarding_sessions s WHERE s.user_id = u.id)`,
     ).all<ClinicianUserRow>(),
     db.prepare(`SELECT ${INVITE_COLUMNS} FROM onboarding_invites ORDER BY created_at DESC, id DESC`).all<ClinicianInviteRow>(),
+    listClinicianRecords(db),
+    findAllReviews(db),
   ]);
   return {
     sessions: sessions.results,
     applications: applications.results,
     usersWithoutSession: usersWithoutSession.results,
     invites: invites.results,
+    records,
+    reviews,
   };
 }
 
@@ -135,5 +149,19 @@ const SESSION_UPLOADS = `
 
 export async function findSessionUploads(db: D1Database, sessionId: string): Promise<SessionUploadRow[]> {
   const result = await db.prepare(`${SESSION_UPLOADS} ORDER BY d.id ASC`).bind(sessionId).all<SessionUploadRow>();
+  return result.results;
+}
+
+export async function findSessionIdForUser(db: D1Database, userId: number): Promise<string | null> {
+  const row = await db.prepare('SELECT session_id FROM onboarding_sessions WHERE user_id = ? LIMIT 1').bind(userId).first<{ session_id: string }>();
+  return row?.session_id ?? null;
+}
+
+/** Invitations for a clinician — linked, or (before linking existed) by email — newest first. */
+export async function findInvitesForClinician(db: D1Database, record: Pick<ClinicianRecordRow, 'id' | 'email'>): Promise<ClinicianInviteRow[]> {
+  const result = await db
+    .prepare(`SELECT ${INVITE_COLUMNS} FROM onboarding_invites WHERE clinician_id = ? OR lower(email) = ? ORDER BY created_at DESC, id DESC`)
+    .bind(record.id, record.email)
+    .all<ClinicianInviteRow>();
   return result.results;
 }

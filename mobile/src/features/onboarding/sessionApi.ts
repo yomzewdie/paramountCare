@@ -275,3 +275,31 @@ export async function submitApplication(sessionId: string, payload: { revision: 
     return { ok: false, conflict: false, incomplete: false, error: networkFailureToAppError(err) };
   }
 }
+
+/** A document a Paramount recruiter asked the applicant to correct
+ * (worker/src/services/documentReviews.ts's OpenCorrection). Read-only here —
+ * only the Admin Portal can change a review. */
+export interface OpenCorrection {
+  /** The logical requirement: a doc type, or 'i9_identity' (List A, or B + C). */
+  requirement: string;
+  label: string;
+  docTypes: string[];
+  /** needs_correction until a new file is uploaded; pending once sent back for review. */
+  status: 'needs_correction' | 'pending' | 'accepted';
+  note: string | null;
+  requestedAt: string | null;
+}
+
+/** `GET /api/sessions/:sessionId/corrections` */
+export async function getCorrections(sessionId: string): Promise<ApiResult<OpenCorrection[]>> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}/corrections`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: ((await res.json()) as { corrections: OpenCorrection[] }).corrections };
+  } catch (err) {
+    return { ok: false, error: networkFailureToAppError(err) };
+  }
+}

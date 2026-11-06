@@ -2,8 +2,10 @@
 
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
-import { Search, CalendarRange } from 'lucide-react';
-import { DATE_FILTERS, POSITION_FILTER_OPTIONS, SORT_OPTIONS, SPECIALTY_FILTER_OPTIONS } from '@/lib/clinicians';
+import { Search, CalendarRange, ListFilter } from 'lucide-react';
+import {
+  DATE_FILTERS, POSITION_FILTER_OPTIONS, REVIEW_STATUS_OPTIONS, SORT_OPTIONS, SPECIALTY_FILTER_OPTIONS, VERIFICATIONS, VERIFICATION_STATUS_OPTIONS,
+} from '@/lib/clinicians';
 
 const selectClass =
   'py-2 pl-3 pr-8 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer';
@@ -54,6 +56,7 @@ export function ClinicianFilters() {
   otherFilters.delete('search');
   otherFilters.delete('page');
   const datesActive = DATE_FILTERS.some(({ key }) => searchParams.get(`${key}From`) || searchParams.get(`${key}To`));
+  const workflowActive = ['recentlyOnboarded', 'documentReview', ...VERIFICATIONS.map((v) => v.param)].some((key) => searchParams.get(key));
 
   return (
     <div className={`flex flex-col gap-3 transition-opacity ${isPending ? 'opacity-60' : ''}`}>
@@ -105,6 +108,36 @@ export function ClinicianFilters() {
               </fieldset>
             ))}
             <p className="text-xs text-slate-400">Dates are whole days in UTC.</p>
+          </div>
+        </details>
+
+        <details className="relative" open={workflowActive || undefined}>
+          <summary className="list-none inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-600 cursor-pointer hover:bg-slate-50">
+            <ListFilter size={14} />
+            Workflow{workflowActive ? ' (on)' : ''}
+          </summary>
+          <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-lg space-y-3">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" defaultChecked={searchParams.get('recentlyOnboarded') === 'true'}
+                onChange={(e) => update({ recentlyOnboarded: e.target.checked ? 'true' : '' })} />
+              Recently onboarded (cleared in the last 14 days)
+            </label>
+            {VERIFICATIONS.map(({ param, label }) => (
+              <label key={param} className="flex items-center justify-between gap-2 text-sm text-slate-700">
+                {label}
+                <select aria-label={label} defaultValue={searchParams.get(param) ?? ''} onChange={(e) => update({ [param]: e.target.value })} className={selectClass}>
+                  <option value="">Any</option>
+                  {VERIFICATION_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+            ))}
+            <label className="flex items-center justify-between gap-2 text-sm text-slate-700">
+              Documents
+              <select aria-label="Document review" defaultValue={searchParams.get('documentReview') ?? ''} onChange={(e) => update({ documentReview: e.target.value })} className={selectClass}>
+                <option value="">Any</option>
+                {REVIEW_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>Has {o.label.toLowerCase()}</option>)}
+              </select>
+            </label>
           </div>
         </details>
 

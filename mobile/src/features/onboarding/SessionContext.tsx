@@ -9,12 +9,15 @@ import {
   removeDocument,
   submitApplication,
   getSession,
+  getCorrections,
   type AssociateDocumentOptions,
+  type OpenCorrection,
   type SessionResponse,
   type SubmitApplicationSuccess,
   type IncompleteStepInfo,
 } from './sessionApi';
 import { appError, type AppError } from '../../utils/errors';
+import { CorrectionsContext } from './CorrectionsContext';
 
 export type SessionStatus = 'loading' | 'ready' | 'error';
 
@@ -77,6 +80,8 @@ interface SessionContextValue {
    * afterward, never a locally-reconstructed guess.
    */
   submitApplication: () => Promise<SubmitResult>;
+  /** Documents a recruiter asked the applicant to correct (CorrectionsContext). */
+  corrections: OpenCorrection[];
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -85,6 +90,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SessionStatus>('loading');
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [error, setError] = useState<AppError | null>(null);
+  const [corrections, setCorrections] = useState<OpenCorrection[]>([]);
+
+  // Best-effort: a failed fetch keeps whatever was last known — corrections
+  // are guidance, and the Worker enforces what can actually be changed.
+  const loadCorrections = useCallback(async (sessionId: string): Promise<void> => {
+    const result = await getCorrections(sessionId);
+    if (result.ok) setCorrections(result.data);
+  }, []);
 
   // One ensurer per Provider instance, not a module-level singleton — see
   // ensureSession.ts's own comment for why: a fresh instance every time this
@@ -121,12 +134,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (outcome.ok) {
         setSession(outcome.session);
         setStatus('ready');
+        void loadCorrections(outcome.session.sessionId);
       } else {
         setError(outcome.error);
         setStatus('error');
       }
     });
-  }, []);
+  }, [loadCorrections]);
 
   useEffect(() => {
     load();
@@ -188,15 +202,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const current = sessionRef.current;
     if (!current) return { status: 'error', error: appError('unknown') };
     const result = await associateDocument(current.sessionId, docType, { objectKey, revision: current.revision, ...options });
-    return applyUpdateResult(result);
-  }, []);
+    const applied = applyUpdateResult(result);
+    // A changed document may have answered a correction.
+    if (applied.status === 'saved') void loadCorrections(current.sessionId);
+    return applied;
+  }, [loadCorrections]);
 
   const removeDocumentFn = useCallback(async (docType: string, objectKey?: string): Promise<SaveStepResult> => {
     const current = sessionRef.current;
     if (!current) return { status: 'error', error: appError('unknown') };
     const result = await removeDocument(current.sessionId, docType, { revision: current.revision, ...(objectKey ? { objectKey } : {}) });
-    return applyUpdateResult(result);
-  }, []);
+    const applied = applyUpdateResult(result);
+    if (applied.status === 'saved') void loadCorrections(current.sessionId);
+    return applied;
+  }, [loadCorrections]);
 
   const submitApplicationFn = useCallback(async (): Promise<SubmitResult> => {
     const current = sessionRef.current;
@@ -234,12 +253,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () => ({
       status, session, progress, error, refresh: load, saveStep,
       associateDocument: associateDocumentFn, removeDocument: removeDocumentFn,
-      submitApplication: submitApplicationFn,
+      submitApplication: submitApplicationFn, corrections,
     }),
-    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn, submitApplicationFn],
+    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn, submitApplicationFn, corrections],
   );
+  const correctionsValue = useMemo(() => ({ corrections }), [corrections]);
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  return (
+    <SessionContext.Provider value={value}>
+      <CorrectionsContext.Provider value={correctionsValue}>{children}</CorrectionsContext.Provider>
+    </SessionContext.Provider>
+  );
 }
 
 export function useSession(): SessionContextValue {

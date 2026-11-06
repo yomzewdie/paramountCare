@@ -8,6 +8,7 @@ import { getWorkerBaseUrl } from './server-config';
 import type { InvitesPage } from './invitations';
 import { DOC_TYPE_LABELS } from './document-labels';
 import type { ClinicianPage, ClinicianQueryParams, OnboardingSummary } from './clinicians';
+import type { ClinicianWorkflow } from './clinician-workflow';
 
 function getApiBase(): string {
   return getWorkerBaseUrl();
@@ -28,10 +29,10 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-// The Worker's detail response includes each document's R2 `objectKey`; it is
-// used here only to label the document (see labelDocuments) and is then
-// dropped — it never reaches a rendered page. Downloads go through
-// /api/admin/documents/<applicationId>/<documentId>, by numeric id only.
+// The Worker's detail response carries no storage locations: each document has
+// its id (every view and download goes through /api/admin/documents/
+// <applicationId>/<documentId>) and, for labelling, the snapshot field that
+// references it (`payloadRef`).
 export interface DocumentRecord {
   id: number;
   /** Upload slot (e.g. 'applicant_resume'); null for generated forms and legacy rows. */
@@ -40,6 +41,9 @@ export interface DocumentRecord {
   fileName: string;
   fileSize: number;
   uploadedAt: string;
+  /** Set when a targeted correction replaced or removed this submitted file
+   * (kept, but no longer current). */
+  supersededAt?: string | null;
 }
 
 export interface AuditLogRecord {
@@ -57,6 +61,8 @@ export interface ApplicationDetail {
   email: string;
   phone: string;
   submittedAt: string;
+  /** The clinician whose session submitted it; null for a historical web application. */
+  clinicianRecordId?: number | null;
   payload: Record<string, unknown> | null;
   documents: DocumentRecord[];
   auditLogs: AuditLogRecord[];
@@ -72,6 +78,14 @@ export async function fetchClinicians(params: ClinicianQueryParams = {}, pageSiz
   return res.json() as Promise<ClinicianPage>;
 }
 
+/** One clinician's recruiter workflow; null when there is no such clinician. */
+export async function fetchClinicianWorkflow(clinicianId: number): Promise<ClinicianWorkflow | null> {
+  const res = await adminFetch(`/api/admin/clinicians/${clinicianId}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch clinician: ${res.status}`);
+  return res.json() as Promise<ClinicianWorkflow>;
+}
+
 /** A clinician's read-only onboarding summary; null when no such session exists. */
 export async function fetchOnboardingSummary(sessionId: string): Promise<OnboardingSummary | null> {
   const res = await adminFetch(`/api/admin/sessions/${encodeURIComponent(sessionId)}`);
@@ -84,10 +98,12 @@ interface WorkerDocumentRecord {
   id: number;
   /** Slot the applicant uploaded it for (application_documents.doc_type); null on legacy rows. */
   docType?: string | null;
-  objectKey: string;
+  /** The submitted snapshot field that references this file, e.g. 'uploadedDocuments.listA'. */
+  payloadRef?: string | null;
   fileName: string;
   fileSize: number;
   uploadedAt: string;
+  supersededAt?: string | null;
 }
 
 export { DOC_TYPE_LABELS } from './document-labels';
@@ -106,48 +122,33 @@ const VACCINE_STEP_LABELS: Record<string, string> = {
   flu_declination: DOC_TYPE_LABELS.flu_vaccination_proof,
 };
 
+/** The label for a snapshot field that references a document. */
+function labelForPayloadRef(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  if (ref === 'resumeDocument') return DOC_TYPE_LABELS.applicant_resume;
+  if (ref === 'directDepositProofDocument') return DOC_TYPE_LABELS.direct_deposit_voided_check;
+  const [field, slot] = ref.split('.');
+  if (field === 'vaccineProofDocuments') return VACCINE_STEP_LABELS[slot] ?? 'Vaccination proof';
+  if (field === 'uploadedDocuments') return UPLOADED_DOCUMENT_LABELS[slot] ?? slot;
+  return null;
+}
+
 /**
  * Human label for an uploaded document. Primary source is the recorded
  * `docType` (authoritative — set server-side only by the ownership-verified
- * association route); for older rows without one, falls back to where the
- * applicant's submitted payload references the document. Purely
- * presentational — the storage key is never returned. A document neither
- * source identifies simply has no label (the page shows its file name).
+ * association route); for older rows without one, falls back to the snapshot
+ * field that references the document. A document neither source identifies
+ * simply has no label (the page shows its file name).
  */
-export function labelDocuments(
-  docs: WorkerDocumentRecord[],
-  payload: Record<string, unknown> | null,
-): DocumentRecord[] {
-  const labelByKey = new Map<string, string>();
-  const ref = (file: unknown, label: string) => {
-    const key = file && typeof file === 'object' ? (file as { objectKey?: unknown }).objectKey : undefined;
-    if (typeof key === 'string' && key) labelByKey.set(key, label);
-  };
-
-  if (payload) {
-    ref(payload.resumeDocument, DOC_TYPE_LABELS.applicant_resume);
-    ref(payload.directDepositProofDocument, DOC_TYPE_LABELS.direct_deposit_voided_check);
-    const vaccines = payload.vaccineProofDocuments;
-    if (vaccines && typeof vaccines === 'object') {
-      for (const [step, file] of Object.entries(vaccines as Record<string, unknown>)) {
-        ref(file, VACCINE_STEP_LABELS[step] ?? 'Vaccination proof');
-      }
-    }
-    const uploaded = payload.uploadedDocuments;
-    if (uploaded && typeof uploaded === 'object') {
-      for (const [slot, file] of Object.entries(uploaded as Record<string, unknown>)) {
-        ref(file, UPLOADED_DOCUMENT_LABELS[slot] ?? slot);
-      }
-    }
-  }
-
+export function labelDocuments(docs: WorkerDocumentRecord[]): DocumentRecord[] {
   return docs.map((d) => ({
     id: d.id,
     docType: d.docType ?? null,
-    label: (d.docType ? DOC_TYPE_LABELS[d.docType] : undefined) ?? labelByKey.get(d.objectKey) ?? null,
+    label: (d.docType ? DOC_TYPE_LABELS[d.docType] : undefined) ?? labelForPayloadRef(d.payloadRef) ?? null,
     fileName: d.fileName,
     fileSize: d.fileSize,
     uploadedAt: d.uploadedAt,
+    supersededAt: d.supersededAt ?? null,
   }));
 }
 
@@ -158,7 +159,7 @@ export async function fetchApplicationDetail(
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to fetch application: ${res.status}`);
   const raw = (await res.json()) as Omit<ApplicationDetail, 'documents'> & { documents: WorkerDocumentRecord[] };
-  return { ...raw, documents: labelDocuments(raw.documents ?? [], raw.payload) };
+  return { ...raw, documents: labelDocuments(raw.documents ?? []) };
 }
 
 export async function fetchInvites(params: { page?: number; pageSize?: number } = {}): Promise<InvitesPage> {

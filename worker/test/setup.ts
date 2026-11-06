@@ -50,14 +50,17 @@ beforeAll(async () => {
     )
   `).run();
 
+  // As rebuilt by migrations/0007_clinician_lifecycle.sql: application_id is
+  // nullable, so events can be audited before submission, against a clinician.
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS audit_logs (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      application_id TEXT NOT NULL,
+      application_id TEXT REFERENCES applications(application_id),
       action         TEXT NOT NULL,
       metadata_json  TEXT,
       created_at     TEXT NOT NULL,
-      FOREIGN KEY (application_id) REFERENCES applications(application_id)
+      session_id     TEXT,
+      clinician_id   INTEGER
     )
   `).run();
 
@@ -233,6 +236,63 @@ beforeAll(async () => {
   await db.prepare(
     `CREATE INDEX IF NOT EXISTS idx_uploaded_documents_session_doctype ON uploaded_documents(session_id, doc_type)`,
   ).run();
+
+  // ── Clinicians, workflow, candidates and document review ─────────────────
+  // Mirrors migrations/0007_clinician_lifecycle.sql and
+  // 0008_candidates_and_document_review.sql (whose own tests, against the real
+  // migration files, are test/node/migrations.spec.ts).
+  const workflowStatus = (column: string) =>
+    `${column} TEXT NOT NULL DEFAULT 'not_started' CHECK (${column} IN ('not_started', 'pending', 'complete', 'needs_review'))`;
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS clinicians (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      email               TEXT NOT NULL UNIQUE,
+      first_name          TEXT,
+      last_name           TEXT,
+      phone               TEXT,
+      position            TEXT,
+      user_id             INTEGER UNIQUE REFERENCES users(id),
+      on_hold_at          TEXT,
+      on_hold_by          INTEGER REFERENCES admin_users(id),
+      on_hold_reason      TEXT,
+      ${workflowStatus('background_check_status')},
+      ${workflowStatus('reference_verification_status')},
+      ${workflowStatus('i9_verification_status')},
+      ${workflowStatus('w4_verification_status')},
+      cleared_at          TEXT,
+      cleared_by          INTEGER REFERENCES admin_users(id),
+      created_by          INTEGER REFERENCES admin_users(id),
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL,
+      recruiter_notes     TEXT,
+      interview_status    TEXT CHECK (interview_status IS NULL OR interview_status IN ('pending', 'completed')),
+      resume_object_key   TEXT,
+      resume_file_name    TEXT,
+      resume_file_size    INTEGER,
+      resume_content_type TEXT,
+      resume_uploaded_at  TEXT
+    )
+  `).run();
+  await db.prepare(`ALTER TABLE onboarding_invites ADD COLUMN clinician_id INTEGER REFERENCES clinicians(id)`).run();
+  await db.prepare(`ALTER TABLE onboarding_invites ADD COLUMN use_candidate_resume INTEGER NOT NULL DEFAULT 0`).run();
+  await db.prepare(`ALTER TABLE application_documents ADD COLUMN superseded_at TEXT`).run();
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS document_reviews (
+      id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+      clinician_id            INTEGER NOT NULL REFERENCES clinicians(id),
+      requirement             TEXT NOT NULL,
+      status                  TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'needs_correction')),
+      note                    TEXT,
+      reviewed_by             INTEGER REFERENCES admin_users(id),
+      reviewed_at             TEXT,
+      changed_after_review    INTEGER NOT NULL DEFAULT 0,
+      correction_open         INTEGER NOT NULL DEFAULT 0,
+      correction_requested_at TEXT,
+      correction_notified_at  TEXT,
+      updated_at              TEXT NOT NULL,
+      UNIQUE (clinician_id, requirement)
+    )
+  `).run();
 
   // W-4 PDF generation (see services/w4pdf.ts / services/submission.ts's
   // renderW4Pdf) has no fallback layout the way I-9's does — a missing

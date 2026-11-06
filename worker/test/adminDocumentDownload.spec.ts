@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import { BASE, uniqueEmail, loginAsAdmin } from './helpers';
+import { BASE, uniqueEmail, loginAsAdmin, withStorageKeys } from './helpers';
 import { buildContentDisposition } from '../src/routes/admin';
 import { insertDocumentStmt } from '../src/db/queries/documents';
 
@@ -53,7 +53,7 @@ async function getDocuments(applicationId: string, cookie: string): Promise<Admi
   const res = await SELF.fetch(`${BASE}/api/admin/application/${applicationId}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   const body = await res.json() as { documents: AdminDocument[] };
-  return body.documents;
+  return withStorageKeys(body.documents);
 }
 
 function downloadUrl(applicationId: string, documentId: number | string): string {

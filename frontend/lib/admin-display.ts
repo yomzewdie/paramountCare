@@ -27,6 +27,14 @@ export function formatDate(iso: string | null | undefined): string {
   }) + ' UTC';
 }
 
+/** Date only (UTC), for compact table cells. */
+export function formatShortDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso.includes('T') || iso.endsWith('Z') ? iso : iso.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

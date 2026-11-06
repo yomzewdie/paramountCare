@@ -7,6 +7,7 @@ import { Button } from '../../src/components/Button';
 import { ProgressBar } from '../../src/components/ProgressBar';
 import { PersonalizedGreeting } from '../../src/components/PersonalizedGreeting';
 import { ContinueOnboardingCard } from '../../src/components/ContinueOnboardingCard';
+import { CorrectionsCard } from '../../src/components/CorrectionsCard';
 import { OnboardingPhaseHeader } from '../../src/components/OnboardingPhaseHeader';
 import { LoadingState, ErrorState, SuccessState } from '../../src/components/StatusStates';
 import { useTheme } from '../../src/theme/ThemeProvider';
@@ -31,7 +32,8 @@ import { groupStepsIntoPhases, derivePhaseStatus, derivePhaseRequiredCounts, fin
 export default function Home() {
   const theme = useTheme();
   const router = useRouter();
-  const { status, session, progress, error, refresh } = useSession();
+  const { status, session, progress, error, refresh, corrections } = useSession();
+  const fixDocument = (requirement: string) => router.push({ pathname: '/(app)/correction/[requirement]', params: { requirement } });
   const { isConnected } = useNetworkStatus();
 
   if (status === 'loading') {
@@ -77,6 +79,7 @@ export default function Home() {
   if (session.status === 'submitted' && session.applicationId) {
     return (
       <Screen scroll={false}>
+        <CorrectionsCard corrections={corrections} onFix={fixDocument} />
         <SuccessState
           message={`Application submitted. Your reference number is ${session.applicationId}. Documents received — Paramount Care Staffing, LLC will review your application within 1–2 business days.`}
         />
@@ -107,6 +110,8 @@ export default function Home() {
       <View style={{ marginBottom: theme.spacing.lg }}>
         <ProgressBar percent={completionPercent} />
       </View>
+
+      <CorrectionsCard corrections={corrections} onFix={fixDocument} />
 
       {progress.isComplete ? (
         <Card style={{ marginBottom: theme.spacing.lg, borderColor: theme.colors.success }}>

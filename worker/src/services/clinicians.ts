@@ -25,44 +25,71 @@ import {
 } from '../db/queries/clinicians';
 import { isDocumentActiveForSubmission } from './vaccineProof';
 import { inviteStatus, type InviteStatus } from '../db/queries/onboardingInvites';
+import { VERIFICATION_COLUMNS, VERIFICATION_KINDS, type ClinicianRecordRow, type InterviewStatus, type VerificationKind, type VerificationStatus } from '../db/queries/clinicianRecords';
+import type { DocumentReviewRow, ReviewStatus } from '../db/queries/documentReviews';
+import { requirementReviewStates, summarizeReviewStates, type DocumentReviewSummary } from './documentReviews';
 import { toIsoTimestamp } from '../utils/time';
 
 // ── The Admin clinician list ─────────────────────────────────────────────────
 //
-// One row per clinician across the existing onboarding lifecycle, combined
-// from the records that already exist — never stored:
-//   invitation → account → onboarding session → submitted application.
-// A session (one per account) is the clinician from the moment onboarding
-// starts, and carries its application once submitted. Before that, an account
-// with no session, or an invitation no account has claimed yet, stands in.
-// A submitted application with no session behind it (a historical web
-// submission) is its own row.
+// One row per clinician across the whole lifecycle:
+//   New Applicant → invitation → account → onboarding session → submitted
+//   application → internal verification → cleared.
+// The `clinicians` record (migrations/0007) is the root: it exists from the
+// moment a recruiter records someone, before any invitation, and carries the
+// recruiter's own workflow state. Everything the applicant answered stays in
+// their session / application and is read from there. Data with no clinician
+// record (an account or invitation from before the record existed, a
+// historical web application) is still listed, read-only, from what it has.
 //
 // Every value is calculated on read with the shared rules: completion is
 // computeOverallCompletion, documents are requiredDocumentGroups, and the
-// queue follows from those. Volume is small enough to filter, sort and page
-// in the Worker.
+// queue follows from those and the recruiter's state. Volume is small enough
+// to filter, sort and page in the Worker.
 
-export type OnboardingQueue = 'invited' | 'in_progress' | 'almost_done' | 'application_completed';
+export type OnboardingQueue =
+  | 'new_applicant' | 'invited' | 'in_progress' | 'almost_done' | 'application_completed' | 'cleared' | 'on_hold';
 
-export const ONBOARDING_QUEUES: readonly OnboardingQueue[] = ['invited', 'in_progress', 'almost_done', 'application_completed'];
+export const ONBOARDING_QUEUES: readonly OnboardingQueue[] = [
+  'new_applicant', 'invited', 'in_progress', 'almost_done', 'application_completed', 'cleared', 'on_hold',
+];
 
 /** Almost Done: at least this complete AND at most this many documents left. */
 export const ALMOST_DONE_MIN_COMPLETION_PERCENT = 80;
 export const ALMOST_DONE_MAX_DOCUMENTS_REMAINING = 5;
 
+/**
+ * Precedence: On Hold → Cleared → Application Completed → Almost Done →
+ * In Progress → Invited → New Applicant. On Hold and Cleared are recruiter
+ * decisions; the rest follow from the applicant's own progress.
+ */
 export function onboardingQueue(p: {
   submitted: boolean;
   started: boolean;
   completionPercent: number | null;
   documentsRemaining: number | null;
+  onHold?: boolean;
+  cleared?: boolean;
+  /** False only for someone recorded but never sent an invitation. */
+  invited?: boolean;
 }): OnboardingQueue {
+  if (p.onHold) return 'on_hold';
+  if (p.cleared) return 'cleared';
   if (p.submitted) return 'application_completed';
-  if (!p.started) return 'invited';
+  if (!p.started) return p.invited === false ? 'new_applicant' : 'invited';
   const almostDone =
     p.completionPercent !== null && p.completionPercent >= ALMOST_DONE_MIN_COMPLETION_PERCENT &&
     p.documentsRemaining !== null && p.documentsRemaining <= ALMOST_DONE_MAX_DOCUMENTS_REMAINING;
   return almostDone ? 'almost_done' : 'in_progress';
+}
+
+/** Recently Onboarded: cleared within the last 14 days (inclusive). */
+export const RECENTLY_ONBOARDED_DAYS = 14;
+
+export function isRecentlyOnboarded(clearedAt: string | null, now: number): boolean {
+  if (!clearedAt) return false;
+  const cleared = Date.parse(clearedAt);
+  return cleared <= now && now - cleared <= RECENTLY_ONBOARDED_DAYS * 24 * 60 * 60 * 1000;
 }
 
 export interface ClinicianInvitation {
@@ -99,7 +126,32 @@ export interface ClinicianListItem {
   /** Files recorded on the submitted application. */
   documentCount: number | null;
   invitation: ClinicianInvitation | null;
+  /** The clinician record id; null for data that has none (read-only). */
+  clinicianRecordId: number | null;
+  onHold: { since: string; reason: string | null } | null;
+  clearedAt: string | null;
+  /** The four internal verifications; null when there is no clinician record. */
+  verifications: Record<VerificationKind, VerificationStatus> | null;
+  /** Review counts over the documents the applicant has uploaded. */
+  documentReview: DocumentReviewSummary | null;
+  interviewStatus: InterviewStatus | null;
+  hasCandidateResume: boolean;
 }
+
+/** The recruiter's own state for a clinician record; defaults for data without one. */
+function workflowFields(record: ClinicianRecordRow | null): Pick<ClinicianListItem, 'clinicianRecordId' | 'onHold' | 'clearedAt' | 'verifications' | 'interviewStatus' | 'hasCandidateResume'> {
+  if (!record) return { clinicianRecordId: null, onHold: null, clearedAt: null, verifications: null, interviewStatus: null, hasCandidateResume: false };
+  return {
+    clinicianRecordId: record.id,
+    onHold: record.on_hold_at ? { since: toIsoTimestamp(record.on_hold_at)!, reason: record.on_hold_reason } : null,
+    clearedAt: toIsoTimestamp(record.cleared_at),
+    verifications: Object.fromEntries(VERIFICATION_KINDS.map((kind) => [kind, record[VERIFICATION_COLUMNS[kind]]])) as Record<VerificationKind, VerificationStatus>,
+    interviewStatus: record.interview_status,
+    hasCandidateResume: !!record.resume_object_key,
+  };
+}
+
+const recruiterPosition = (record: ClinicianRecordRow | null) => (record?.position && isOptionValue(POSITION_OPTIONS, record.position) ? record.position : null);
 
 export function parseObject(json: string | null | undefined): Record<string, unknown> {
   if (!json) return {};
@@ -170,18 +222,26 @@ export function sessionClinician(
   session: ClinicianSessionRow,
   application: ClinicianApplicationRow | null,
   invite: ClinicianInviteRow | undefined,
+  record: ClinicianRecordRow | null = null,
+  reviews: readonly DocumentReviewRow[] = [],
 ): ClinicianListItem {
   const formData = parseObject(session.form_data_json);
   const progress = sessionProgress(session.packet_id, formData);
   const submitted = session.status === 'submitted' || !!application;
+  const profile = clinicianProfile(formData.employmentApplication);
   return {
-    clinicianId: `session:${session.session_id}`,
-    // The submitted application's snapshot is authoritative once there is one.
-    firstName: nameOrNull(application?.first_name ?? session.first_name),
-    lastName: nameOrNull(application?.last_name ?? session.last_name),
-    ...emails(session.account_email, application?.email ?? session.email),
-    ...clinicianProfile(formData.employmentApplication),
-    queue: onboardingQueue({ submitted, started: true, ...progress, documentsRemaining: progress.requiredDocuments?.remaining ?? null }),
+    clinicianId: record ? `clinician:${record.id}` : `session:${session.session_id}`,
+    // The submitted application's snapshot is authoritative once there is
+    // one; the applicant's own answers come before what a recruiter entered.
+    firstName: nameOrNull(application?.first_name ?? session.first_name) ?? nameOrNull(record?.first_name),
+    lastName: nameOrNull(application?.last_name ?? session.last_name) ?? nameOrNull(record?.last_name),
+    ...emails(session.account_email ?? record?.email ?? null, application?.email ?? session.email),
+    ...profile,
+    position: profile.position ?? recruiterPosition(record),
+    queue: onboardingQueue({
+      submitted, started: true, ...progress, documentsRemaining: progress.requiredDocuments?.remaining ?? null,
+      onHold: !!record?.on_hold_at, cleared: !!record?.cleared_at,
+    }),
     ...progress,
     startedAt: toIsoTimestamp(session.created_at),
     lastActiveAt: toIsoTimestamp(session.updated_at),
@@ -190,20 +250,39 @@ export function sessionClinician(
     sessionId: session.session_id,
     documentCount: application ? application.document_count : null,
     invitation: invitationOf(invite),
+    ...workflowFields(record),
+    documentReview: record ? reviewSummary(session.packet_id, formData, reviews) : null,
   };
 }
 
-function notStarted(clinicianId: string, email: string, invite: ClinicianInviteRow | undefined): ClinicianListItem {
+function reviewSummary(packetId: string, formData: Record<string, unknown>, reviews: readonly DocumentReviewRow[]): DocumentReviewSummary | null {
+  try {
+    return summarizeReviewStates(requirementReviewStates(packetId, formData, reviews));
+  } catch (e) {
+    console.warn('[clinicians] could not evaluate document reviews:', e);
+    return null;
+  }
+}
+
+/** Someone who hasn't started onboarding: a recorded candidate, an invitee,
+ * or an account with no session yet. */
+export function notStartedClinician(clinicianId: string, email: string, invite: ClinicianInviteRow | undefined, record: ClinicianRecordRow | null = null): ClinicianListItem {
+  const invited = !!invite && inviteStatus(invite) !== 'revoked';
   return {
     clinicianId,
-    firstName: null,
-    lastName: null,
+    firstName: nameOrNull(record?.first_name),
+    lastName: nameOrNull(record?.last_name),
     email,
     contactEmail: null,
-    position: null,
+    position: recruiterPosition(record),
     specialtyPreference: [],
     primaryClinicalSpecialty: [],
-    queue: 'invited',
+    queue: onboardingQueue({
+      submitted: false, started: false, completionPercent: null, documentsRemaining: null,
+      onHold: !!record?.on_hold_at, cleared: !!record?.cleared_at,
+      // An account means an invitation was used, even one this row can't see.
+      invited: invited || !!record?.user_id || !record,
+    }),
     completionPercent: null,
     requiredDocuments: null,
     startedAt: null,
@@ -213,6 +292,8 @@ function notStarted(clinicianId: string, email: string, invite: ClinicianInviteR
     sessionId: null,
     documentCount: null,
     invitation: invitationOf(invite),
+    ...workflowFields(record),
+    documentReview: null,
   };
 }
 
@@ -236,6 +317,8 @@ function historicalApplicationClinician(application: ClinicianApplicationRow): C
     sessionId: null,
     documentCount: application.document_count,
     invitation: null,
+    ...workflowFields(null),
+    documentReview: null,
   };
 }
 
@@ -249,30 +332,61 @@ export function latestInviteByEmail(invites: readonly ClinicianInviteRow[]): Map
   return latest;
 }
 
+/** The newest invitation per clinician record. `invites` must be newest first. */
+function latestInviteByClinician(invites: readonly ClinicianInviteRow[]): Map<number, ClinicianInviteRow> {
+  const latest = new Map<number, ClinicianInviteRow>();
+  for (const invite of invites) {
+    if (invite.clinician_id !== null && !latest.has(invite.clinician_id)) latest.set(invite.clinician_id, invite);
+  }
+  return latest;
+}
+
 /** Every clinician, once each. */
 export function buildClinicians(sources: ClinicianSources): ClinicianListItem[] {
-  const invites = latestInviteByEmail(sources.invites);
+  const invitesByEmail = latestInviteByEmail(sources.invites);
+  const invitesByRecord = latestInviteByClinician(sources.invites);
   const applications = new Map(sources.applications.map((a) => [a.application_id, a]));
+  const recordsByUser = new Map(sources.records.filter((r) => r.user_id !== null).map((r) => [r.user_id!, r]));
+  const recordsByEmail = new Map(sources.records.map((r) => [r.email, r]));
+  const reviewsByRecord = new Map<number, DocumentReviewRow[]>();
+  for (const review of sources.reviews) reviewsByRecord.set(review.clinician_id, [...(reviewsByRecord.get(review.clinician_id) ?? []), review]);
+
+  const listedRecords = new Set<number>();
   const accountEmails = new Set<string>();
   const clinicians: ClinicianListItem[] = [];
+  const recordFor = (userId: number | null, email: string) => {
+    const record = (userId !== null ? recordsByUser.get(userId) : undefined) ?? recordsByEmail.get(email) ?? null;
+    if (record) listedRecords.add(record.id);
+    return record;
+  };
+  const inviteFor = (record: ClinicianRecordRow | null, email: string) => (record ? invitesByRecord.get(record.id) : undefined) ?? invitesByEmail.get(email);
 
   for (const session of sources.sessions) {
     const email = emailKey(session.account_email ?? session.email);
     if (email) accountEmails.add(email);
+    const record = recordFor(session.user_id, email);
     const application = session.application_id ? applications.get(session.application_id) ?? null : null;
-    clinicians.push(sessionClinician(session, application, invites.get(email)));
+    clinicians.push(sessionClinician(session, application, inviteFor(record, email), record, record ? reviewsByRecord.get(record.id) ?? [] : []));
   }
   for (const user of sources.usersWithoutSession) {
     const email = emailKey(user.email);
     accountEmails.add(email);
-    clinicians.push(notStarted(`user:${user.id}`, user.email, invites.get(email)));
+    const record = recordFor(user.id, email);
+    clinicians.push(notStartedClinician(record ? `clinician:${record.id}` : `user:${user.id}`, user.email, inviteFor(record, email), record));
   }
-  // An invitation nobody has registered with yet. A revoked one was withdrawn;
-  // a used one is represented by its account above.
-  for (const [email, invite] of invites) {
+  // Clinicians who haven't registered: New Applicants and invitees.
+  for (const record of sources.records) {
+    if (listedRecords.has(record.id)) continue;
+    accountEmails.add(record.email);
+    clinicians.push(notStartedClinician(`clinician:${record.id}`, record.email, inviteFor(record, record.email), record));
+  }
+  // An invitation with no clinician record and nobody registered (data from
+  // before records existed). A revoked one was withdrawn; a used one is
+  // represented by its account above.
+  for (const [email, invite] of invitesByEmail) {
     if (accountEmails.has(email)) continue;
     const status = inviteStatus(invite);
-    if (status === 'pending' || status === 'expired') clinicians.push(notStarted(`invite:${invite.id}`, invite.email, invite));
+    if (status === 'pending' || status === 'expired') clinicians.push(notStartedClinician(`invite:${invite.id}`, invite.email, invite));
   }
   for (const application of sources.applications) {
     if (!application.has_session) clinicians.push(historicalApplicationClinician(application));
@@ -300,6 +414,11 @@ export interface ClinicianQuery {
   started?: DateRange;
   lastActive?: DateRange;
   completed?: DateRange;
+  /** Cleared within the last 14 days. */
+  recentlyOnboarded?: boolean;
+  verifications?: Partial<Record<VerificationKind, VerificationStatus>>;
+  /** Has at least one uploaded document in this review state. */
+  documentReview?: ReviewStatus;
   sort: ClinicianSort;
   page: number;
   pageSize: number;
@@ -342,8 +461,17 @@ function inRange(timestamp: string | null, range: DateRange | undefined): boolea
   return true;
 }
 
-function matchesFilters(clinician: ClinicianListItem, query: ClinicianQuery): boolean {
+const REVIEW_COUNT_FIELD: Record<ReviewStatus, keyof DocumentReviewSummary> = {
+  pending: 'pending', accepted: 'accepted', needs_correction: 'needsCorrection',
+};
+
+function matchesFilters(clinician: ClinicianListItem, query: ClinicianQuery, now: number): boolean {
   if (query.search && !matchesSearch(clinician, query.search)) return false;
+  if (query.recentlyOnboarded && !isRecentlyOnboarded(clinician.clearedAt, now)) return false;
+  for (const [kind, status] of Object.entries(query.verifications ?? {}) as [VerificationKind, VerificationStatus][]) {
+    if (clinician.verifications?.[kind] !== status) return false;
+  }
+  if (query.documentReview && !(clinician.documentReview && clinician.documentReview[REVIEW_COUNT_FIELD[query.documentReview]] > 0)) return false;
   if (query.position && clinician.position !== query.position) return false;
   if (query.specialty && !clinician.specialtyPreference.includes(query.specialty) && !clinician.primaryClinicalSpecialty.includes(query.specialty)) return false;
   return inRange(clinician.startedAt, query.started) && inRange(clinician.lastActiveAt, query.lastActive) && inRange(clinician.completedAt, query.completed);
@@ -378,9 +506,9 @@ export function compareClinicians(sort: ClinicianSort): (a: ClinicianListItem, b
 }
 
 /** Filters and sorts the complete set first, then pages it. */
-export function queryClinicians(clinicians: readonly ClinicianListItem[], query: ClinicianQuery): ClinicianPage {
-  const filtered = clinicians.filter((c) => matchesFilters(c, query));
-  const queueCounts: QueueCounts = { all: filtered.length, invited: 0, in_progress: 0, almost_done: 0, application_completed: 0 };
+export function queryClinicians(clinicians: readonly ClinicianListItem[], query: ClinicianQuery, now: number = Date.now()): ClinicianPage {
+  const filtered = clinicians.filter((c) => matchesFilters(c, query, now));
+  const queueCounts: QueueCounts = { all: filtered.length, ...(Object.fromEntries(ONBOARDING_QUEUES.map((q) => [q, 0])) as Record<OnboardingQueue, number>) };
   for (const c of filtered) queueCounts[c.queue] += 1;
 
   const inQueue = query.queue ? filtered.filter((c) => c.queue === query.queue) : filtered;
@@ -436,18 +564,18 @@ export interface OnboardingSummary {
   documents: OnboardingUploadSummary[];
 }
 
-/** The session's attached files a recruiter may view: applicant document
- * slots only, minus a vaccination proof whose answer is now a declination
+/** The session's attached files a recruiter may view: the applicant's current
+ * documents only, minus a vaccination proof whose answer is now a declination
  * (the same rule final submission promotes by). Ordered as the applicant
  * arranged each document's attachments. */
 export function visibleSessionUploads(session: Pick<ClinicianSessionRow, 'form_data_json'>, uploads: readonly SessionUploadRow[]): SessionUploadRow[] {
   const formData = parseObject(session.form_data_json);
   const acknowledgements = formData.acknowledgements as Parameters<typeof isDocumentActiveForSubmission>[1];
-  const visible = uploads.filter((u) => isApplicantDocType(u.doc_type) && isDocumentActiveForSubmission(u.doc_type, acknowledgements));
-  const position = (u: SessionUploadRow) => {
-    const index = documentAttachmentsFor(formData, u.doc_type).findIndex((file) => file.objectKey === u.object_key);
-    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-  };
+  const position = (u: SessionUploadRow) => documentAttachmentsFor(formData, u.doc_type).findIndex((file) => file.objectKey === u.object_key);
+  // Only files the session currently holds: a file replaced during a
+  // post-submission correction keeps its ledger row (submitted files are
+  // never deleted) but is no longer one of the applicant's documents.
+  const visible = uploads.filter((u) => isApplicantDocType(u.doc_type) && isDocumentActiveForSubmission(u.doc_type, acknowledgements) && position(u) !== -1);
   return [...visible].sort((a, b) => (a.doc_type === b.doc_type ? position(a) - position(b) || a.id - b.id : a.id - b.id));
 }
 
@@ -456,8 +584,10 @@ export function onboardingSummary(
   application: ClinicianApplicationRow | null,
   invites: readonly ClinicianInviteRow[],
   uploads: readonly SessionUploadRow[],
+  record: ClinicianRecordRow | null = null,
+  reviews: readonly DocumentReviewRow[] = [],
 ): OnboardingSummary {
-  const clinician = sessionClinician(session, application, latestInviteByEmail(invites).values().next().value);
+  const clinician = sessionClinician(session, application, latestInviteByEmail(invites).values().next().value, record, reviews);
   const documents = visibleSessionUploads(session, uploads).map((u) => ({
     id: u.id, docType: u.doc_type, fileName: u.file_name, fileSize: u.file_size, uploadedAt: toIsoTimestamp(u.uploaded_at) ?? u.uploaded_at,
   }));

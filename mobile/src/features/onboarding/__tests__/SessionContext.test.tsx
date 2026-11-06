@@ -21,6 +21,7 @@ jest.mock('../sessionApi', () => ({
   removeDocument: jest.fn(),
   submitApplication: jest.fn(),
   getSession: jest.fn(),
+  getCorrections: jest.fn(),
 }));
 
 const mockEnsure = jest.fn();
@@ -29,6 +30,7 @@ const mockedAssociateDocument = sessionApi.associateDocument as jest.Mock;
 const mockedRemoveDocument = sessionApi.removeDocument as jest.Mock;
 const mockedSubmitApplication = sessionApi.submitApplication as jest.Mock;
 const mockedGetSession = sessionApi.getSession as jest.Mock;
+const mockedGetCorrections = sessionApi.getCorrections as jest.Mock;
 
 function fakeSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
   return {
@@ -61,7 +63,10 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <SessionProvider>{children}</SessionProvider>;
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockedGetCorrections.mockResolvedValue({ ok: true, data: [] });
+});
 
 describe('SessionContext', () => {
   it('starts loading, then becomes ready with the session and derived progress', async () => {
@@ -525,5 +530,38 @@ describe('SessionContext — progress uses the current rules (Home)', () => {
     );
     expect(homeState.employment_application).toBe(false);
     expect(homeState.employment_ref_1).toBe(false);
+  });
+});
+
+describe('SessionContext corrections', () => {
+  const CORRECTION = { requirement: 'cpr_cert', label: 'CPR / BLS certification', docTypes: ['cpr_cert'], status: 'needs_correction', note: 'Card is expired', requestedAt: '2026-11-01T00:00:00.000Z' };
+
+  it('loads the documents a recruiter sent back with the session', async () => {
+    mockEnsure.mockResolvedValue({ ok: true, session: fakeSession() });
+    mockedGetCorrections.mockResolvedValue({ ok: true, data: [CORRECTION] });
+    const { result } = renderHook(() => useSession(), { wrapper });
+    await waitFor(() => expect(result.current.corrections).toEqual([CORRECTION]));
+    expect(mockedGetCorrections).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('re-reads them after a document is saved, and keeps the last known list if a read fails', async () => {
+    mockEnsure.mockResolvedValue({ ok: true, session: fakeSession() });
+    mockedGetCorrections.mockResolvedValueOnce({ ok: true, data: [CORRECTION] });
+    const { result } = renderHook(() => useSession(), { wrapper });
+    await waitFor(() => expect(result.current.corrections).toHaveLength(1));
+
+    mockedAssociateDocument.mockResolvedValue({ ok: true, data: fakeSession({ revision: 4 }) });
+    mockedGetCorrections.mockResolvedValueOnce({ ok: true, data: [{ ...CORRECTION, status: 'pending' }] });
+    await act(async () => {
+      await result.current.associateDocument('cpr_cert', 'uploads/1/new.jpg');
+    });
+    await waitFor(() => expect(result.current.corrections[0].status).toBe('pending'));
+
+    mockedRemoveDocument.mockResolvedValue({ ok: true, data: fakeSession({ revision: 5 }) });
+    mockedGetCorrections.mockResolvedValueOnce({ ok: false, error: appError('network') });
+    await act(async () => {
+      await result.current.removeDocument('cpr_cert');
+    });
+    expect(result.current.corrections[0].status).toBe('pending');
   });
 });

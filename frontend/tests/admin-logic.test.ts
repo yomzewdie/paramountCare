@@ -210,9 +210,9 @@ describe('resume-first display', () => {
   });
 
   it('labels the resume by its recorded docType, or by the payload reference on an older row', () => {
-    const byType = labelDocuments([{ id: 1, docType: 'applicant_resume', objectKey: 'k/r', fileName: 'r.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }], null);
+    const byType = labelDocuments([{ id: 1, docType: 'applicant_resume', fileName: 'r.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }]);
     expect(byType[0]).toMatchObject({ label: 'Resume', docType: 'applicant_resume' });
-    const byPayload = labelDocuments([{ id: 2, objectKey: 'k/r2', fileName: 'r2.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }], { resumeDocument: { objectKey: 'k/r2' } });
+    const byPayload = labelDocuments([{ id: 2, payloadRef: 'resumeDocument', fileName: 'r2.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }]);
     expect(byPayload[0].label).toBe('Resume');
     expect(JSON.stringify([byType, byPayload])).not.toContain('k/');
   });
@@ -220,52 +220,36 @@ describe('resume-first display', () => {
 
 describe('labelDocuments', () => {
   const docs = [
-    { id: 1, objectKey: 'uploads/1/check.jpg', fileName: 'check.jpg', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
-    { id: 2, objectKey: 'uploads/1/hepb.pdf', fileName: 'hepb.pdf', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
-    { id: 3, objectKey: 'uploads/1/other.pdf', fileName: 'other.pdf', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
+    { id: 1, payloadRef: 'directDepositProofDocument', fileName: 'check.jpg', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
+    { id: 2, payloadRef: 'vaccineProofDocuments.hep_b_declination', fileName: 'hepb.pdf', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
+    { id: 3, payloadRef: null, fileName: 'other.pdf', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
+    { id: 4, payloadRef: 'uploadedDocuments.listA', fileName: 'passport.jpg', fileSize: 10, uploadedAt: '2026-09-23T00:00:00Z' },
   ];
-  it('labels documents from payload references and DROPS the storage key', () => {
-    const out = labelDocuments(docs, {
-      directDepositProofDocument: { objectKey: 'uploads/1/check.jpg' },
-      vaccineProofDocuments: { hep_b_declination: { objectKey: 'uploads/1/hepb.pdf' } },
-    });
-    expect(out[0].label).toBe('Direct deposit — bank account verification');
-    expect(out[1].label).toBe('Hepatitis B vaccination proof');
-    expect(out[2].label).toBeNull();
-    expect(JSON.stringify(out)).not.toContain('uploads/1');
+  it('labels older documents from the snapshot field that references them', () => {
+    const out = labelDocuments(docs);
+    expect(out.map((d) => d.label)).toEqual(['Direct deposit — bank account verification', 'Hepatitis B vaccination proof', null, 'I-9 List A document']);
+    expect(JSON.stringify(out)).not.toContain('payloadRef');
   });
-  it('identifies vaccination proof by its recorded docType (authoritative), per vaccine, without any payload', () => {
+  it('identifies vaccination proof by its recorded docType (authoritative), per vaccine', () => {
     const typed = [
-      { id: 10, docType: 'hep_b_vaccination_proof', objectKey: 'k/a', fileName: 'a.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
-      { id: 11, docType: 'tdap_vaccination_proof', objectKey: 'k/b', fileName: 'b.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
-      { id: 12, docType: 'flu_vaccination_proof', objectKey: 'k/c', fileName: 'c.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
-      { id: 13, docType: 'direct_deposit_voided_check', objectKey: 'k/d', fileName: 'd.jpg', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
+      { id: 10, docType: 'hep_b_vaccination_proof', fileName: 'a.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
+      { id: 11, docType: 'tdap_vaccination_proof', fileName: 'b.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
+      { id: 12, docType: 'flu_vaccination_proof', fileName: 'c.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
+      { id: 13, docType: 'direct_deposit_voided_check', fileName: 'd.jpg', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' },
     ];
-    const out = labelDocuments(typed, null);
-    expect(out.map((d) => d.label)).toEqual([
+    expect(labelDocuments(typed).map((d) => d.label)).toEqual([
       'Hepatitis B vaccination proof',
       'Tdap vaccination proof',
       'Influenza vaccination proof',
       'Direct deposit — bank account verification',
     ]);
-    expect(JSON.stringify(out)).not.toContain('k/');
   });
-  it('the recorded docType wins over a conflicting payload reference', () => {
-    const out = labelDocuments(
-      [{ id: 1, docType: 'flu_vaccination_proof', objectKey: 'k/x', fileName: 'x.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }],
-      { vaccineProofDocuments: { hep_b_declination: { objectKey: 'k/x' } } },
-    );
+  it('the recorded docType wins over a conflicting snapshot reference', () => {
+    const out = labelDocuments([{ id: 1, docType: 'flu_vaccination_proof', payloadRef: 'vaccineProofDocuments.hep_b_declination', fileName: 'x.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }]);
     expect(out[0].label).toBe('Influenza vaccination proof');
   });
-  it('an unknown/legacy docType with no payload reference has no label (file name is shown instead)', () => {
-    const out = labelDocuments(
-      [{ id: 1, docType: 'something_new', objectKey: 'k/x', fileName: 'x.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }],
-      null,
-    );
-    expect(out[0].label).toBeNull();
-  });
-  it('works with no payload', () => {
-    expect(labelDocuments(docs, null).every((d) => d.label === null)).toBe(true);
+  it('an unknown/legacy docType with no snapshot reference has no label (file name is shown instead)', () => {
+    expect(labelDocuments([{ id: 1, docType: 'something_new', fileName: 'x.pdf', fileSize: 1, uploadedAt: '2026-09-23T00:00:00Z' }])[0].label).toBeNull();
   });
 });
 
@@ -343,9 +327,9 @@ describe('document grouping', () => {
 
   it('labels the applicant license and the Verified License differently', () => {
     const labels = labelDocuments([
-      { id: 1, docType: 'nursing_license', objectKey: 'k/a', fileName: 'a.pdf', fileSize: 1, uploadedAt: '' },
-      { id: 2, docType: 'verified_license', objectKey: 'k/b', fileName: 'b.pdf', fileSize: 1, uploadedAt: '' },
-    ], null).map((d) => d.label);
+      { id: 1, docType: 'nursing_license', fileName: 'a.pdf', fileSize: 1, uploadedAt: '' },
+      { id: 2, docType: 'verified_license', fileName: 'b.pdf', fileSize: 1, uploadedAt: '' },
+    ]).map((d) => d.label);
     expect(labels).toEqual(['Applicant-provided professional license / certification', 'Verified License (admin-provided)']);
   });
 });

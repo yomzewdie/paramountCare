@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from './setup';
+import { withStorageKeys } from './helpers';
 
 const BASE = 'http://example.com';
 
@@ -189,7 +190,8 @@ describe('GET /api/admin/application/:id', () => {
     // The route records only the signed I-9 PDF it generates itself; a
     // client-supplied objectKey is never trusted on this unauthenticated
     // route (see legacySubmitDocuments.spec.ts).
-    expect(body.documents.map((d) => d.objectKey)).toEqual([`i9/${applicationId}/i9-section1-signed.pdf`]);
+    expect(body.documents).toEqual([expect.objectContaining({ fileName: `I9-Section1-${applicationId}.pdf` })]);
+    expect((await withStorageKeys(body.documents as unknown as { id: number }[])).map((d) => d.objectKey)).toEqual([`i9/${applicationId}/i9-section1-signed.pdf`]);
   });
 });
 

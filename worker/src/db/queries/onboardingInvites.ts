@@ -15,6 +15,10 @@ export interface OnboardingInviteRow {
   created_by: number;
   created_at: string;
   updated_at: string;
+  /** The clinician this invitation was sent to (migrations/0007). */
+  clinician_id: number | null;
+  /** Copy the clinician's candidate resume into onboarding (migrations/0008). */
+  use_candidate_resume: number;
 }
 
 export type InviteStatus = 'used' | 'revoked' | 'expired' | 'pending';
@@ -26,20 +30,18 @@ export function inviteStatus(row: Pick<OnboardingInviteRow, 'used_at' | 'revoked
   return 'pending';
 }
 
-export async function insertOnboardingInvite(
+/** A new invitation (RETURNING the row), for a batch that audits it alongside. */
+export function insertOnboardingInviteStmt(
   db: D1Database,
-  p: { email: string; tokenHash: string; expiresAt: string; createdBy: number },
-): Promise<OnboardingInviteRow> {
-  const result = await db
+  p: { email: string; tokenHash: string; expiresAt: string; createdBy: number; clinicianId: number; useCandidateResume: boolean },
+): D1PreparedStatement {
+  return db
     .prepare(
-      `INSERT INTO onboarding_invites (email, token_hash, expires_at, created_by)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO onboarding_invites (email, token_hash, expires_at, created_by, clinician_id, use_candidate_resume)
+       VALUES (?, ?, ?, ?, ?, ?)
        RETURNING *`,
     )
-    .bind(p.email, p.tokenHash, p.expiresAt, p.createdBy)
-    .first<OnboardingInviteRow>();
-  if (!result) throw new Error('insertOnboardingInvite: RETURNING clause produced no row');
-  return result;
+    .bind(p.email, p.tokenHash, p.expiresAt, p.createdBy, p.clinicianId, p.useCandidateResume ? 1 : 0);
 }
 
 export async function findOnboardingInviteById(db: D1Database, id: number): Promise<OnboardingInviteRow | null> {
@@ -174,9 +176,28 @@ export async function claimInviteAndCreateUser(
     )
     .bind(email, passwordHash, invite.id, nonce);
 
+  // The clinician this invitation was for now has an account — linked in the
+  // same transaction, so an account never exists without its clinician. A
+  // clinician is created if none exists yet (an invitation from before
+  // clinician records), so every account belongs to one.
+  const claimed = `EXISTS (SELECT 1 FROM onboarding_invites WHERE id = ? AND claim_nonce = ?)`;
+  const linkClinicianStmt = db
+    .prepare(
+      `UPDATE clinicians SET user_id = (SELECT id FROM users WHERE email = ?), updated_at = ?
+       WHERE email = lower(trim(?)) AND user_id IS NULL AND ${claimed}`,
+    )
+    .bind(email, claimedAt, email, invite.id, nonce);
+  const createClinicianStmt = db
+    .prepare(
+      `INSERT INTO clinicians (email, user_id, created_by, created_at, updated_at)
+       SELECT lower(trim(?)), (SELECT id FROM users WHERE email = ?), ?, ?, ?
+       WHERE ${claimed} AND NOT EXISTS (SELECT 1 FROM clinicians WHERE email = lower(trim(?)))`,
+    )
+    .bind(email, email, invite.created_by, claimedAt, claimedAt, invite.id, nonce, email);
+
   let results;
   try {
-    results = await db.batch<UserRow>([claimStmt, insertStmt]);
+    results = await db.batch<UserRow>([claimStmt, insertStmt, linkClinicianStmt, createClinicianStmt]);
   } catch {
     // A statement in the batch threw (the only realistic cause here is the
     // INSERT hitting the UNIQUE(email) constraint) — D1 rolls the whole
@@ -185,10 +206,10 @@ export async function claimInviteAndCreateUser(
   }
 
   const [claimResult, insertResult] = results;
-  const claimed = (claimResult.meta.changes ?? 0) > 0;
+  const claimSucceeded = (claimResult.meta.changes ?? 0) > 0;
   const user = insertResult.results[0];
 
-  if (!claimed || !user) {
+  if (!claimSucceeded || !user) {
     // Belt-and-suspenders: these two must always agree (both true or both
     // false) given the EXISTS condition above, but if D1 ever surprises us,
     // treat any mismatch as "did not happen" rather than returning a user

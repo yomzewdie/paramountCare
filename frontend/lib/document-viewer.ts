@@ -32,19 +32,23 @@ export const PREVIEW_UNAVAILABLE_MESSAGE = 'Preview is not available for this fi
  * id). Plain data, so a server-rendered page can hand it to the viewer. */
 export type DocumentSource =
   | { kind: 'application'; applicationId: string }
-  | { kind: 'session'; sessionId: string };
+  | { kind: 'session'; sessionId: string }
+  /** A New Applicant's resume, kept by the recruiter (one file per clinician). */
+  | { kind: 'candidate'; clinicianId: number };
 
-function documentBase(source: DocumentSource): string {
+function documentBase(source: Exclude<DocumentSource, { kind: 'candidate' }>): string {
   return source.kind === 'application'
     ? `/api/admin/documents/${encodeURIComponent(source.applicationId)}`
     : `/api/admin/sessions/${encodeURIComponent(source.sessionId)}/documents`;
 }
 
 export function previewUrl(source: DocumentSource, documentId: number): string {
+  if (source.kind === 'candidate') return `/api/admin/clinicians/${source.clinicianId}/resume/preview`;
   return `${documentBase(source)}/${documentId}/preview`;
 }
 
 export function downloadUrl(source: DocumentSource, documentId: number): string {
+  if (source.kind === 'candidate') return `/api/admin/clinicians/${source.clinicianId}/resume/download`;
   return `${documentBase(source)}/${documentId}`;
 }
 

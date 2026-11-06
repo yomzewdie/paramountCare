@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin } from './helpers';
+import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin, withStorageKeys } from './helpers';
 import { uploadFile } from './submissionFixtures';
 
 // Security regression: the legacy, unauthenticated POST /api/submit-onboarding
@@ -28,7 +28,8 @@ async function legacySubmit(email: string, documents?: Record<string, unknown>):
 async function adminApplication(applicationId: string): Promise<AdminApplication> {
   const res = await SELF.fetch(`${BASE}/api/admin/application/${applicationId}`, { headers: { cookie: await loginAsAdmin() } });
   expect(res.status).toBe(200);
-  return (await res.json()) as AdminApplication;
+  const app = (await res.json()) as AdminApplication;
+  return { ...app, documents: await withStorageKeys(app.documents) };
 }
 
 /** A real file another applicant uploaded through the authenticated route. */

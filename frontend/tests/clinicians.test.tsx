@@ -18,6 +18,9 @@ const clinician = (over: Partial<ClinicianListItem>): ClinicianListItem => ({
   completionPercent: 82, requiredDocuments: { total: 4, completed: 1, remaining: 3 },
   startedAt: '2026-10-01T09:00:00.000Z', lastActiveAt: '2026-11-01T10:00:00.000Z', completedAt: null,
   applicationId: null, sessionId: 's1', documentCount: null, invitation: { status: 'used', sentAt: '2026-09-30T08:00:00.000Z', expiresAt: null },
+  clinicianRecordId: 11, onHold: null, clearedAt: null,
+  verifications: { background_check: 'not_started', reference_verification: 'pending', i9_verification: 'complete', w4_verification: 'needs_review' },
+  documentReview: { pending: 1, accepted: 1, needsCorrection: 0 }, interviewStatus: null, hasCandidateResume: false,
   ...over,
 });
 
@@ -28,13 +31,13 @@ const submitted = clinician({
 });
 
 const invited = clinician({
-  clinicianId: 'invite:7', firstName: null, lastName: null, email: 'pending@example.com', position: null, specialtyPreference: [], primaryClinicalSpecialty: [],
+  clinicianId: 'invite:7', clinicianRecordId: null, verifications: null, documentReview: null, firstName: null, lastName: null, email: 'pending@example.com', position: null, specialtyPreference: [], primaryClinicalSpecialty: [],
   queue: 'invited', completionPercent: null, requiredDocuments: null, startedAt: null, lastActiveAt: null, sessionId: null,
   invitation: { status: 'pending', sentAt: '2026-10-10T08:00:00.000Z', expiresAt: null },
 });
 
 const legacy = clinician({
-  clinicianId: 'application:PCS-OLD', firstName: 'Old', lastName: 'Timer', email: 'old@example.com', queue: 'application_completed',
+  clinicianId: 'application:PCS-OLD', clinicianRecordId: null, verifications: null, documentReview: null, firstName: 'Old', lastName: 'Timer', email: 'old@example.com', queue: 'application_completed',
   specialtyPreference: [], primaryClinicalSpecialty: [], completionPercent: null, requiredDocuments: null, startedAt: null, lastActiveAt: null,
   completedAt: '2025-06-01T12:00:00.000Z', applicationId: 'PCS-OLD', sessionId: null, documentCount: 2, invitation: null,
 });
@@ -84,7 +87,9 @@ describe('clinician table', () => {
   const html = renderToStaticMarkup(<ClinicianTable data={[clinician({}), submitted, invited, legacy]} filtered={false} />);
 
   it('has the recruiter columns', () => {
-    for (const s of ['Clinician', 'Position', 'Specialty', 'Progress', 'Queue', 'Last Active', 'Completed', 'Documents']) expect(html).toContain(`>${s}<`);
+    for (const s of ['Clinician', 'Position', 'Specialty', 'Progress', 'Queue', 'Last Active', 'Documents', 'Checks']) expect(html).toContain(`>${s}<`);
+    // Completed is shown in the Queue cell, not as a column of its own.
+    expect(html).not.toContain('>Completed<');
   });
 
   it('shows an in-progress clinician compactly: name, email, specialty, 82% with documents left, queue and dates', () => {
@@ -96,7 +101,7 @@ describe('clinician table', () => {
     expect(html).toContain('href="/admin/applications/PCS-2026-AB12#documents"');
     expect(html).toContain('9 files');
     expect(html).toContain('Application Completed');
-    expect(html).toContain('Oct 20, 2026');
+    expect(html).toContain('Submitted Oct 20, 2026');
   });
 
   it('shows an invitee by email with clear placeholders, linking to Invitations', () => {
@@ -124,11 +129,11 @@ describe('clinician table', () => {
 });
 
 describe('queue tabs', () => {
-  const counts = { all: 10, invited: 3, in_progress: 3, almost_done: 2, application_completed: 2 };
+  const counts = { all: 13, new_applicant: 1, invited: 3, in_progress: 3, almost_done: 2, application_completed: 2, cleared: 1, on_hold: 1 };
   const html = renderToStaticMarkup(<QueueTabs params={{ queue: 'almost_done', position: 'RN' }} counts={counts} />);
 
   it('offers All and every queue, with counts', () => {
-    for (const s of ['>All<', '>Invited<', '>In Progress<', '>Almost Done<', '>Application Completed<', '>10<', '>3<', '>2<']) expect(html).toContain(s);
+    for (const s of ['>All<', '>New Applicants<', '>Invited<', '>In Progress<', '>Almost Done<', '>Application Completed<', '>Cleared<', '>On Hold<', '>13<', '>3<', '>2<', '>1<']) expect(html).toContain(s);
   });
 
   it('marks the current queue, and each tab keeps the other filters', () => {

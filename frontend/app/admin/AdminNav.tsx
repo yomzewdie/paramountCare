@@ -10,7 +10,7 @@ const NAV_ITEMS = [
     href: '/admin/applications',
     icon: LayoutList,
     // An in-progress clinician's onboarding summary belongs to the same list.
-    also: ['/admin/onboarding'],
+    also: ['/admin/onboarding', '/admin/clinicians'],
   },
   {
     label: 'Invitations',

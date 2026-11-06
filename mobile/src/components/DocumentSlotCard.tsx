@@ -3,6 +3,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import { Button } from './Button';
 import { ErrorState } from './StatusStates';
 import type { useDocumentSlot } from '../features/documents/useDocumentSlot';
+import { useDocumentCorrection } from '../features/onboarding/CorrectionsContext';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -47,6 +48,8 @@ export function DocumentSlotCard({
 }) {
   const theme = useTheme();
   const { capture, status, attachments, errorMessage, requirement, progress, replacing, addingMore } = hook;
+  // A recruiter asked for this document to be corrected (read-only here).
+  const correction = useDocumentCorrection(hook.docType);
   const pendingItems = capture.pendingItems;
   const firstPending = pendingItems[0];
   const issue = pendingItems.find((item) => item.issue)?.issue;
@@ -85,6 +88,24 @@ export function DocumentSlotCard({
       {slot.examples ? (
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm, fontStyle: 'italic' }]}>
           Examples: {slot.examples}
+        </Text>
+      ) : null}
+
+      {correction?.status === 'needs_correction' ? (
+        <View
+          testID="correction-notice"
+          accessibilityRole="alert"
+          style={{ borderWidth: 1, borderColor: theme.colors.danger, borderRadius: theme.radii.sm, padding: theme.spacing.sm, marginBottom: theme.spacing.sm }}
+        >
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.danger }]}>Needs correction</Text>
+          {correction.note ? <Text style={[theme.typography.body, { color: theme.colors.text, marginTop: 2 }]}>{correction.note}</Text> : null}
+          <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.xs }]}>
+            Upload a corrected copy below — use Replace, Upload More, or Remove as needed.
+          </Text>
+        </View>
+      ) : correction?.status === 'pending' ? (
+        <Text testID="correction-sent" style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
+          Correction sent — Paramount Care will review it again.
         </Text>
       ) : null}
 

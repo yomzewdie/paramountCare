@@ -38,7 +38,7 @@ export async function getAdminToken(): Promise<string | null> {
 /** Forward a JSON request to the Worker as the signed-in admin. */
 export async function proxyAdminJson(
   path: string,
-  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown },
+  init: { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
 ): Promise<NextResponse> {
   const token = await getAdminToken();
   if (!token) return jsonError('Unauthorized', 401);

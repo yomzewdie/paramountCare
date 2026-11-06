@@ -19,6 +19,10 @@ import {
 import { StatusBadge } from '../StatusBadge';
 import { VerifiedLicensePanel } from './VerifiedLicensePanel';
 import { ApplicantDocuments, ResumeActions } from './ApplicantDocuments';
+import type { ClinicianWorkflow } from '@/lib/clinician-workflow';
+import { AuditSection, DocumentReviewSection, WorkflowSection } from '../../clinicians/WorkflowSections';
+import { AuditHistory } from '../../clinicians/AuditHistory';
+import { QueueBadge } from '../ClinicianTable';
 
 function Section({ title, icon: Icon, children, id }: { title: string; icon: ElementType; children: ReactNode; id?: string }) {
   return (
@@ -117,13 +121,17 @@ function DownloadLink({ href, label, filename }: { href: string; label: string; 
   );
 }
 
-export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
+export function ApplicationDetailView({ app, workflow = null }: { app: ApplicationDetail; workflow?: ClinicianWorkflow | null }) {
   const id = encodeURIComponent(app.id);
   const fullName = [app.firstName, app.lastName].filter(Boolean).join(' ') || '—';
   const format = applicationFormat(app.payload, app.documents);
-  const resume = app.documents.find((d) => d.docType === 'applicant_resume');
+  const resume = app.documents.find((d) => d.docType === 'applicant_resume' && !d.supersededAt);
   const verifiedLicenses = app.documents.filter(isVerifiedLicense);
-  const applicantDocuments = groupDocuments(app.documents.filter((d) => !isVerifiedLicense(d)));
+  // Current documents only; a file replaced during a targeted correction is
+  // kept (submitted evidence) and listed apart.
+  const current = app.documents.filter((d) => !d.supersededAt);
+  const replaced = app.documents.filter((d) => !!d.supersededAt);
+  const applicantDocuments = groupDocuments(current.filter((d) => !isVerifiedLicense(d)));
   const source = { kind: 'application', applicationId: app.id } as const;
 
   return (
@@ -135,7 +143,7 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
         </Link>
         <span className="text-slate-300">/</span>
         <span className="text-sm font-semibold text-slate-800">{fullName}</span>
-        <StatusBadge status={app.status} />
+        {workflow ? <QueueBadge queue={workflow.clinician.queue} /> : <StatusBadge status={app.status} />}
         <span
           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
             format === 'resume' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-600'
@@ -165,12 +173,20 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
               />
             </Section>
 
-            <Section title="Application / onboarding" icon={ClipboardList}>
+            {workflow && <DocumentReviewSection workflow={workflow} />}
+
+            <Section title="Application as submitted" icon={ClipboardList}>
+              <p className="mb-4 text-xs text-slate-500">
+                The applicant&apos;s answers exactly as submitted on {formatDate(app.submittedAt)}. This record never changes — current
+                documents, including any corrected after submission, are under Uploaded documents{workflow ? ' and in the workflow history' : ''}.
+              </p>
               <PayloadSummary payload={app.payload} format={format} />
             </Section>
           </div>
 
           <div className="space-y-6">
+            {workflow && <WorkflowSection workflow={workflow} />}
+
             <Section title="Resume" icon={FileText}>
               {resume ? (
                 <ResumeActions source={source} resume={resume} />
@@ -203,41 +219,31 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
               ) : (
                 <ApplicantDocuments source={source} groups={applicantDocuments} />
               )}
+              {replaced.length > 0 && (
+                <div className="mt-4 border-t border-slate-100 pt-3 space-y-1.5">
+                  <p className="text-xs font-semibold text-slate-500">Replaced during a correction (kept for the record)</p>
+                  <ApplicantDocuments source={source} groups={[{ label: null, documents: replaced }]} />
+                </div>
+              )}
             </Section>
 
             <Section title="Metadata" icon={Activity}>
               <dl className="space-y-3">
                 <div>
                   <dt className="text-xs text-slate-400 uppercase tracking-wide mb-0.5">Documents</dt>
-                  <dd className="text-sm text-slate-700">{app.documents.length} file{app.documents.length !== 1 ? 's' : ''}</dd>
+                  <dd className="text-sm text-slate-700">{current.length} file{current.length !== 1 ? 's' : ''}</dd>
                 </div>
               </dl>
             </Section>
 
-            <Section title="Audit log" icon={ShieldCheck}>
-              {app.auditLogs.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">No audit events.</p>
-              ) : (
-                <ol className="relative border-l border-slate-200 space-y-4 pl-4">
-                  {app.auditLogs.map((log) => (
-                    <li key={log.id} className="relative">
-                      <span className="absolute -left-[1.35rem] top-1 w-2.5 h-2.5 rounded-full bg-blue-500 border-2 border-white" />
-                      <p className="text-sm font-medium text-slate-700">{log.action.replace(/_/g, ' ')}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{formatDate(log.createdAt)}</p>
-                      {log.metadata && (
-                        <div className="mt-1.5 rounded border border-slate-100 bg-slate-50 px-2.5 py-2">
-                          {Object.entries(log.metadata).map(([key, val]) => (
-                            <p key={key} className="text-xs text-slate-500">
-                              <span className="font-medium text-slate-600">{key}:</span> {displayValue(key, val)}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </Section>
+            {workflow && <AuditSection workflow={workflow} />}
+
+            {/* The workflow history already includes the application's own events. */}
+            {!workflow && (
+              <Section title="Audit log" icon={ShieldCheck}>
+                <AuditHistory logs={app.auditLogs} />
+              </Section>
+            )}
           </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { MAX_ATTACHMENTS_PER_DOCUMENT, documentAttachmentsFor } from '@pcs/shared';
-import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin } from './helpers';
+import { BASE, uniqueEmail, registerVerifyAndLoginApplicant, loginAsAdmin, withStorageKeys } from './helpers';
 import {
   associateDoc, completePacketExceptReview, createTestSession, fakeFile, patch, submit, uploadFile, type TestSession,
 } from './submissionFixtures';
@@ -286,9 +286,13 @@ describe('attachment groups — final submission and Admin', () => {
       documents: { id: number; docType: string; objectKey: string }[];
       payload: { documentAttachments: Record<string, { objectKey: string }[]> };
     };
-    const licenseDocs = detail.documents.filter((d) => d.docType === LICENSE);
+    const licenseDocs = await withStorageKeys(detail.documents.filter((d) => d.docType === LICENSE));
     expect(licenseDocs.map((d) => d.objectKey)).toEqual([initialLicense, back]);
-    expect(detail.payload.documentAttachments[LICENSE].map((f) => f.objectKey)).toEqual([initialLicense, back]);
+    // The snapshot keeps the order; its storage keys stay inside the Worker.
+    const snapshot = await env.DB.prepare('SELECT payload_json FROM applications WHERE application_id = ?').bind(applicationId).first<{ payload_json: string }>();
+    const attachments = (JSON.parse(snapshot!.payload_json) as { documentAttachments: Record<string, { objectKey: string }[]> }).documentAttachments;
+    expect(attachments[LICENSE].map((f) => f.objectKey)).toEqual([initialLicense, back]);
+    expect(JSON.stringify(detail)).not.toContain(initialLicense);
     for (const doc of licenseDocs) {
       const download = await SELF.fetch(`${BASE}/api/admin/application/${applicationId}/documents/${doc.id}/download`, { headers: { cookie } });
       expect(download.status).toBe(200);

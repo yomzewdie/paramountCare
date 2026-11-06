@@ -116,7 +116,7 @@ describe('GET /api/admin/clinicians', () => {
     it('lists every clinician once, each in its queue, with counts', async () => {
       const page = await list(cookie);
       expect(page.pagination).toEqual({ page: 1, pageSize: 20, total: 10, totalPages: 1 });
-      expect(page.queueCounts).toEqual({ all: 10, invited: 3, in_progress: 3, almost_done: 2, application_completed: 2 });
+      expect(page.queueCounts).toEqual({ all: 10, new_applicant: 0, invited: 3, in_progress: 3, almost_done: 2, application_completed: 2, cleared: 0, on_hold: 0 });
       expect(new Set(page.data.map((c) => c.clinicianId)).size).toBe(10);
       expect(emails(page)).not.toContain('revoked.invitee@example.com');
     });
@@ -271,7 +271,7 @@ describe('GET /api/admin/clinicians', () => {
     });
 
     it('rejects values outside the shared taxonomies', async () => {
-      for (const qs of ['position=Doctor', 'specialty=cardiology', 'queue=cleared', 'sort=age', 'startedFrom=2026-13-01', 'lastActiveTo=yesterday']) {
+      for (const qs of ['position=Doctor', 'specialty=cardiology', 'queue=archived', 'sort=age', 'startedFrom=2026-13-01', 'lastActiveTo=yesterday']) {
         expect((await SELF.fetch(`${BASE}/api/admin/clinicians?${qs}`, { headers: { cookie } })).status).toBe(400);
       }
     });
@@ -326,7 +326,7 @@ describe('GET /api/admin/clinicians', () => {
 
     it('queue counts reflect the other filters', async () => {
       const page = await list(cookie, { position: 'RN' });
-      expect(page.queueCounts).toEqual({ all: 3, invited: 0, in_progress: 1, almost_done: 1, application_completed: 1 });
+      expect(page.queueCounts).toEqual({ all: 3, new_applicant: 0, invited: 0, in_progress: 1, almost_done: 1, application_completed: 1, cleared: 0, on_hold: 0 });
     });
 
     it('pages the complete sorted, filtered set', async () => {

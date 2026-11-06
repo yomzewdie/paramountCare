@@ -180,3 +180,38 @@ export async function sendEmailVerificationCode(
     text,
   });
 }
+
+interface DocumentCorrectionEmailData {
+  to: string;
+  firstName: string | null;
+  documentName: string;
+  reason: string;
+}
+
+/** A recruiter asked the applicant to fix one document. Names the document
+ * and the reason only — never anything from the document itself. */
+export async function sendDocumentCorrectionRequest(
+  apiKey: string,
+  data: DocumentCorrectionEmailData,
+): Promise<void> {
+  const text = [
+    `Hi ${data.firstName?.trim() || 'there'},`,
+    '',
+    'Paramount Care Staffing reviewed your onboarding documents and needs one updated:',
+    '',
+    `Document: ${data.documentName}`,
+    `What to fix: ${data.reason}`,
+    '',
+    'Open the Paramount Care app to upload a corrected copy. Everything else you submitted stays as it is.',
+    '',
+    'Thank you,',
+    'Paramount Care Staffing',
+  ].join('\n');
+
+  await sendEmail(apiKey, {
+    from: TRANSACTIONAL_FROM_ADDRESS,
+    to: data.to,
+    subject: 'Action needed: please update a document',
+    text,
+  });
+}

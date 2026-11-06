@@ -1,5 +1,5 @@
 import * as apiClient from '../../../services/apiClient';
-import { getMySession, createSession, updateSession, associateDocument, removeDocument } from '../sessionApi';
+import { getMySession, createSession, updateSession, associateDocument, removeDocument, getCorrections } from '../sessionApi';
 
 jest.mock('../../../services/apiClient');
 const mockedApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -209,5 +209,25 @@ describe('attachment group requests', () => {
     mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, sessionBody));
     await removeDocument('s', 'nursing_license', { revision: 1, objectKey: 'k/old' });
     expect(bodyOf(mockedApiClient.authenticatedFetch.mock.calls[0])).toEqual({ revision: 1, objectKey: 'k/old' });
+  });
+});
+
+describe('getCorrections', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('reads the open corrections for the session', async () => {
+    const corrections = [{ requirement: 'cpr_cert', label: 'CPR / BLS certification', docTypes: ['cpr_cert'], status: 'needs_correction', note: 'Expired', requestedAt: null }];
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, { corrections }));
+    const result = await getCorrections('s1');
+    expect(mockedApiClient.authenticatedFetch.mock.calls[0][0]).toContain('/api/sessions/s1/corrections');
+    expect(result).toEqual({ ok: true, data: corrections });
+  });
+
+  it('surfaces failures as an AppError', async () => {
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(404, { error: 'Session not found' }));
+    expect((await getCorrections('s1')).ok).toBe(false);
+    mockedApiClient.authenticatedFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+    const offline = await getCorrections('s1');
+    expect(!offline.ok && offline.error.code).toBe('network');
   });
 });

@@ -226,7 +226,7 @@ describe('Application detail', () => {
   const html = renderToStaticMarkup(<ApplicationDetailView app={app} />);
 
   it('is organised into Applicant / Application / Generated forms / Uploaded documents sections', () => {
-    for (const s of ['Applicant', 'Application / onboarding', 'Generated forms', 'Uploaded documents']) expect(html).toContain(s);
+    for (const s of ['Applicant', 'Application as submitted', 'Generated forms', 'Uploaded documents']) expect(html).toContain(s);
     for (const s of ['Jane Nurse', 'jane@example.com', '555-0100', 'APP-123', 'Sep 26, 2026', 'Austin', 'First Bank', 'Ref One']) expect(html).toContain(s);
   });
   it('renders the employment application and references human-readably, without codes or keys', () => {

@@ -93,3 +93,54 @@ export function summarizeRequiredDocuments(groups: readonly RequiredDocumentGrou
   const completed = groups.filter((g) => g.satisfied).length;
   return { total: groups.length, completed, remaining: groups.length - completed };
 }
+
+// ── Review: logical requirements an admin accepts or sends back ─────────────
+//
+// Reviewed as a whole: the I-9 identity requirement (List A, or List B + C)
+// is one review, and so is a requirement holding several attachments. What
+// can be reviewed is every required requirement plus any optional one the
+// applicant actually uploaded to (the professional license).
+
+/** The requirement a document type belongs to. */
+export function requirementForDocType(docType: string): string {
+  return docType === 'list_a' || docType === 'list_b' || docType === 'list_c' ? I9_IDENTITY_REQUIREMENT : docType;
+}
+
+/** Doc types whose files make up a requirement. */
+export function docTypesForRequirement(requirement: string): string[] {
+  return requirement === I9_IDENTITY_REQUIREMENT ? ['list_a', 'list_b', 'list_c'] : [requirement];
+}
+
+export interface ReviewableRequirement extends RequiredDocumentGroup {
+  required: boolean;
+}
+
+/** Required requirements (whether or not they have files yet), then optional
+ * ones that have files. */
+export function reviewableRequirements(packet: OnboardingPacket, formData: FormDataLike, has: HasDocument = hasStoredDocument(formData)): ReviewableRequirement[] {
+  const required = requiredDocumentGroups(packet, formData, has).map((g) => ({ ...g, required: true }));
+  const optional = packet.steps
+    .filter((step) => step.required && step.type === 'document_upload')
+    .flatMap((step) => (step.config?.optionalUploads ?? []).map((docType) => ({ key: docType, stepId: step.id, docTypes: [docType], satisfied: has(docType), required: false })))
+    .filter((g) => g.satisfied);
+  return [...required, ...optional];
+}
+
+/** Applicant-facing names for each requirement (emails, the app). */
+export const DOCUMENT_REQUIREMENT_LABELS: Readonly<Record<string, string>> = {
+  applicant_resume: 'Resume',
+  [I9_IDENTITY_REQUIREMENT]: 'I-9 identity document',
+  list_a: 'I-9 List A document',
+  list_b: 'I-9 List B document',
+  list_c: 'I-9 List C document',
+  cpr_cert: 'CPR / BLS certification',
+  nursing_license: 'Professional license / certification',
+  direct_deposit_voided_check: 'Bank account verification (Direct Deposit)',
+  hep_b_vaccination_proof: 'Hepatitis B vaccination proof',
+  tdap_vaccination_proof: 'Tdap vaccination proof',
+  flu_vaccination_proof: 'Influenza vaccination proof',
+};
+
+export function documentRequirementLabel(requirement: string): string {
+  return DOCUMENT_REQUIREMENT_LABELS[requirement] ?? requirement;
+}

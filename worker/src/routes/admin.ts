@@ -18,11 +18,17 @@ import {
   type DocumentRow,
 } from '../db/queries/documents';
 import { findAuditLogsByApplicationId, insertAuditLogStmt } from '../db/queries/auditLogs';
-import { ALLOWED_TYPES as ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_SIZE_BYTES } from './uploads';
-import { buildContentDisposition, buildInlineContentDisposition } from '../utils/contentDisposition';
+import { MAX_UPLOAD_SIZE_BYTES } from './uploads';
+import { serveStoredFile } from '../services/storedFiles';
+import { publicAuditMetadata } from '../services/auditDisplay';
+import { payloadReferences, withoutStorageKeys } from '../services/applicationDetail';
+import { buildContentDisposition } from '../utils/contentDisposition';
 import { generateVerifiedLicenseObjectKey } from '../utils/objectKey';
 import { POSITION_OPTIONS, SPECIALTY_OPTIONS, VERIFIED_LICENSE_DOC_TYPE, isOptionValue } from '@pcs/shared';
 import { loadClinicianSession, loadClinicianSources } from '../db/queries/clinicians';
+import { VERIFICATION_KINDS, VERIFICATION_STATUSES, findClinicianRecordByUserId, type VerificationKind, type VerificationStatus } from '../db/queries/clinicianRecords';
+import { REVIEW_STATUSES, findReviewsForClinician, type ReviewStatus } from '../db/queries/documentReviews';
+import { clinicianAdmin } from './adminClinicians';
 import {
   CLINICIAN_SORTS,
   ONBOARDING_QUEUES,
@@ -115,6 +121,20 @@ function parseClinicianQuery(c: Context<AppEnv>): ParsedClinicianQuery {
     }
   }
 
+  // Internal verification filters: backgroundCheck, referenceVerification,
+  // i9Verification, w4Verification — each a verification status.
+  const verifications: Partial<Record<VerificationKind, VerificationStatus>> = {};
+  for (const kind of VERIFICATION_KINDS) {
+    const value = param(kind.replace(/_([a-z0-9])/g, (_, ch: string) => ch.toUpperCase())) as VerificationStatus | undefined;
+    if (!value) continue;
+    if (!VERIFICATION_STATUSES.includes(value)) return { ok: false, error: `Unknown status for ${kind}` };
+    verifications[kind] = value;
+  }
+  const documentReview = param('documentReview') as ReviewStatus | undefined;
+  if (documentReview && !REVIEW_STATUSES.includes(documentReview)) return { ok: false, error: 'Unknown document review status' };
+  const recentlyOnboarded = param('recentlyOnboarded');
+  if (recentlyOnboarded && recentlyOnboarded !== 'true') return { ok: false, error: 'recentlyOnboarded must be true' };
+
   return {
     ok: true,
     query: {
@@ -123,6 +143,9 @@ function parseClinicianQuery(c: Context<AppEnv>): ParsedClinicianQuery {
       position,
       specialty,
       ...ranges,
+      recentlyOnboarded: recentlyOnboarded === 'true',
+      verifications,
+      documentReview,
       sort,
       page: Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1),
       pageSize: Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '20', 10) || 20)),
@@ -147,8 +170,15 @@ admin.get('/clinicians', async (c) => {
 admin.get('/sessions/:sessionId', async (c) => {
   const loaded = await loadClinicianSession(c.env.DB, c.req.param('sessionId'));
   if (!loaded) return c.json({ error: 'Onboarding session not found' }, 404);
-  return c.json(onboardingSummary(loaded.session, loaded.application, loaded.invites, loaded.uploads));
+  const record = loaded.session.user_id !== null ? await findClinicianRecordByUserId(c.env.DB, loaded.session.user_id) : null;
+  const reviews = record ? await findReviewsForClinician(c.env.DB, record.id) : [];
+  return c.json(onboardingSummary(loaded.session, loaded.application, loaded.invites, loaded.uploads, record, reviews));
 });
+
+// ── /api/admin/clinicians/:id/* — the recruiter workflow ─────────────────────
+// New Applicants, On Hold, verification, document review and clearance (see
+// routes/adminClinicians.ts), behind this router's auth and role checks.
+admin.route('/clinicians', clinicianAdmin);
 
 // ── GET /api/admin/application/:id ────────────────────────────────────────────
 
@@ -164,10 +194,18 @@ admin.get('/application/:id', async (c) => {
 
   if (!app) return c.json({ error: 'Application not found' }, 404);
 
+  // The clinician whose session submitted this application (none for a
+  // historical web submission), for the recruiter workflow on this page.
+  const clinician = await db
+    .prepare(`SELECT c.id FROM clinicians c JOIN onboarding_sessions s ON s.user_id = c.user_id WHERE s.application_id = ? LIMIT 1`)
+    .bind(id)
+    .first<{ id: number }>();
+
   let payload: unknown = null;
   if (app.payload_json) {
     try { payload = JSON.parse(app.payload_json); } catch { payload = null; }
   }
+  const references = payloadReferences(payload);
 
   return c.json({
     id:          app.application_id,
@@ -177,21 +215,23 @@ admin.get('/application/:id', async (c) => {
     email:       app.email,
     phone:       app.phone,
     submittedAt: app.submitted_at,
-    payload,
+    clinicianRecordId: clinician?.id ?? null,
+    // The submitted snapshot, as submitted — minus storage locations.
+    payload: withoutStorageKeys(payload),
     documents: docs.map((d) => ({
       id:         d.id,
       docType:    d.doc_type ?? null,
-      objectKey:  d.object_key,
+      // The snapshot field that references this file, if any (labels older files).
+      payloadRef: references.get(d.object_key) ?? null,
       fileName:   d.file_name,
       fileSize:   d.file_size,
       uploadedAt: d.uploaded_at,
+      supersededAt: d.superseded_at ?? null,
     })),
     auditLogs: logs.map((l) => ({
       id:        l.id,
       action:    l.action,
-      metadata:  l.metadata_json
-        ? (() => { try { return JSON.parse(l.metadata_json!); } catch { return null; } })()
-        : null,
+      metadata:  publicAuditMetadata(l.metadata_json),
       createdAt: l.created_at,
     })),
   });
@@ -237,41 +277,6 @@ admin.get('/application/:id/w4-pdf', async (c) => {
 
   return new Response(obj.body, { headers });
 });
-
-/** Serves a stored file under the protected-file headers. The content type
- * is the one recorded when the file was stored, and only if it is still on
- * the upload allowlist — anything else is an opaque download. A preview is
- * inline and only for a PDF, JPEG or PNG — judged by that recorded type,
- * never the file name; anything else (Word resumes, files with no recorded
- * type) is refused with 415 and stays download-only. */
-async function serveStoredFile(c: Context<AppEnv>, objectKey: string, fileName: string, mode: 'download' | 'preview'): Promise<Response> {
-  const obj = await c.env.UPLOADS_BUCKET.get(objectKey);
-  if (!obj) return c.json({ error: 'Document file not found in storage' }, 404);
-
-  // Never trust whatever content-type happens to be stored on the R2
-  // object's own metadata beyond the same allowlist uploads were accepted
-  // under in the first place — an unexpected/unrecognized type is served as
-  // a forced download (application/octet-stream) rather than something a
-  // browser might try to render inline.
-  const storedContentType = obj.httpMetadata?.contentType ?? '';
-  const contentType = ALLOWED_UPLOAD_CONTENT_TYPES.has(storedContentType)
-    ? storedContentType
-    : 'application/octet-stream';
-
-  if (mode === 'preview' && !INLINE_PREVIEW_CONTENT_TYPES.has(contentType)) {
-    await obj.body.cancel();
-    return c.json({ error: 'Preview is not available for this file type.' }, 415);
-  }
-
-  const headers = new Headers();
-  headers.set('Content-Type',           contentType);
-  headers.set('Content-Disposition',    mode === 'preview' ? buildInlineContentDisposition(fileName) : buildContentDisposition(fileName));
-  headers.set('Cache-Control',          'private, no-store');
-  headers.set('X-Content-Type-Options', 'nosniff');
-  return new Response(obj.body, { headers });
-}
-
-export const INLINE_PREVIEW_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 
 const parseDocumentId = (value: string | undefined) => {
   const id = Number(value);

@@ -65,7 +65,7 @@ export default function AppLayout() {
   // `/onboarding/<stepId>` for a step screen — no risky restructuring of
   // the existing nested Stack (onboarding/_layout.tsx) needed to make this
   // distinction.
-  const onStepDetailScreen = pathname.startsWith('/onboarding/');
+  const onStepDetailScreen = pathname.startsWith('/onboarding/') || pathname.startsWith('/correction/');
 
   // Mounted only once the applicant is authenticated — SessionProvider
   // begins its GET-mine/create-if-missing flow (see SessionContext.tsx)
@@ -96,6 +96,8 @@ export default function AppLayout() {
             }}
           />
         ))}
+        {/* Reached from Home's "Action needed" card, never a tab of its own. */}
+        <Tabs.Screen name="correction/[requirement]" options={{ href: null }} />
       </Tabs>
     </SessionProvider>
   );

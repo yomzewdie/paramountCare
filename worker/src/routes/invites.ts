@@ -4,12 +4,9 @@ import { requireAuth } from '../middleware/requireAuth';
 import { requireRole } from '../middleware/requireRole';
 import { createInviteSchema } from '../schemas/invites';
 import { generateInviteCode, normalizeInviteCode, hashInviteCode } from '../services/inviteCode';
-import { sendApplicantInvitation } from '../services/email';
-import { findUserByEmail } from '../db/queries/users';
+import { createInvitation, sendInvitationEmail } from '../services/candidates';
 import {
-  insertOnboardingInvite,
   findOnboardingInviteById,
-  findOutstandingInviteForEmail,
   listOnboardingInvites,
   rotateOnboardingInvite,
   revokeOnboardingInvite,
@@ -43,36 +40,6 @@ function serializeInvite(row: OnboardingInviteRow) {
   };
 }
 
-/** Delivery outcome reported to the admin UI — deliberately only these two
- * values: never the provider's status/body (which can echo account details),
- * and a missing RESEND_API_KEY is reported as "failed" since, from the
- * admin's point of view, the applicant did not receive the email either way. */
-export type InviteEmailDelivery = 'sent' | 'failed';
-
-async function sendInviteEmail(
-  c: { env: { RESEND_API_KEY: string } },
-  email: string,
-  code: string,
-  expiresAt: string,
-): Promise<InviteEmailDelivery> {
-  if (!c.env.RESEND_API_KEY) {
-    console.warn('[invites] email skipped: RESEND_API_KEY not configured');
-    return 'failed';
-  }
-  try {
-    // The code, never a link — see services/email.ts's sendApplicantInvitation.
-    await sendApplicantInvitation(c.env.RESEND_API_KEY, { to: email, code, expiresAt });
-    return 'sent';
-  } catch (e) {
-    // Non-fatal to the request — the invite row already exists and is NOT
-    // rolled back (making creation transactional with an external email
-    // call could leave a delivered code with no row, or vice versa). The
-    // failure is surfaced to the admin via `emailDelivery: 'failed'` so they
-    // can fix the email problem and use "resend".
-    console.error('[invites] failed to send invitation email:', e);
-    return 'failed';
-  }
-}
 
 // ── POST /api/admin/invites — create ─────────────────────────────────────────
 
@@ -89,34 +56,14 @@ invites.post('/', async (c) => {
     return c.json({ error: 'Validation failed', issues: result.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
   }
 
-  const email = result.data.email.toLowerCase().trim();
   const payload = c.get('jwtPayload');
   if (!payload) return c.json({ error: 'Unauthorized' }, 401);
 
-  const existingUser = await findUserByEmail(c.env.DB, email);
-  if (existingUser) {
-    return c.json({ error: 'An account with this email is already registered' }, 409);
-  }
-
-  const outstanding = await findOutstandingInviteForEmail(c.env.DB, email);
-  if (outstanding) {
-    return c.json({ error: 'An outstanding invitation already exists for this email — use resend instead', inviteId: outstanding.id }, 409);
-  }
-
-  const rawCode = generateInviteCode();
-  const tokenHash = await hashInviteCode(normalizeInviteCode(rawCode), c.env.INVITE_CODE_SECRET);
-  const expiresAt = isoInSeconds(INVITE_EXPIRY_SECONDS);
-
-  const invite = await insertOnboardingInvite(c.env.DB, {
-    email,
-    tokenHash,
-    expiresAt,
-    createdBy: payload.uid,
-  });
-
-  const emailDelivery = await sendInviteEmail(c, email, rawCode, expiresAt);
-
-  return c.json({ ...serializeInvite(invite), emailDelivery }, 201);
+  // The same invitation a New Applicant's page sends: every invitation
+  // belongs to a clinician (created now if the recruiter never recorded one).
+  const created = await createInvitation(c.env, { email: result.data.email, adminId: payload.uid });
+  if (!created.ok) return c.json({ error: created.error, ...(created.inviteId ? { inviteId: created.inviteId } : {}) }, created.status);
+  return c.json({ ...serializeInvite(created.invite), emailDelivery: created.emailDelivery }, 201);
 });
 
 // ── GET /api/admin/invites — list ────────────────────────────────────────────
@@ -154,7 +101,7 @@ invites.post('/:id/resend', async (c) => {
     return c.json({ error: 'Invitation not found' }, 404);
   }
 
-  const emailDelivery = await sendInviteEmail(c, existing.email, rawCode, expiresAt);
+  const emailDelivery = await sendInvitationEmail(c.env, existing.email, rawCode, expiresAt);
 
   const updated = await findOnboardingInviteById(c.env.DB, id);
   return c.json({ ...serializeInvite(updated!), emailDelivery });

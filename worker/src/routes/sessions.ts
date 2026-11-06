@@ -16,6 +16,9 @@ import {
   computeOverallCompletion,
   defaultFormData,
   withDocumentAttachments,
+  docTypesForRequirement,
+  requiredDocumentGroups,
+  requirementForDocType,
   type OnboardingFormData,
   type UploadedFile,
 } from '@pcs/shared';
@@ -30,6 +33,11 @@ import { findOwnedUpload, findSlotDocuments, associateUploadToSlot } from '../db
 import { deleteOwnedUpload } from '../services/documents';
 import { RESUME_CONTENT_TYPES } from './uploads';
 import { submitSession } from '../services/submission';
+import { findClinicianRecordByUserId } from '../db/queries/clinicianRecords';
+import { isObjectPromoted } from '../db/queries/documents';
+import { reconcileCorrectionDocuments } from '../services/corrections';
+import { hasOpenCorrection, openCorrections, recordApplicantDocumentChange } from '../services/documentReviews';
+import { ensureCandidateResumePromoted } from '../services/candidates';
 
 // computeOverallCompletion/isStepValid are written against a fully-shaped
 // OnboardingFormData (acknowledgements, employmentReferences, etc. always
@@ -146,6 +154,62 @@ function rejectIfSubmitted(session: OnboardingSessionRow): Response | null {
   );
 }
 
+// ── Targeted corrections after submission ────────────────────────────────────
+//
+// The one exception to post-submission immutability: when a recruiter asks
+// for a correction (document_reviews.correction_open), the applicant may
+// change the files of THAT document requirement — and nothing else. Every
+// other answer and document stays locked, enforced here per request; the
+// application itself is the same one (no resubmission, no regenerated I-9 or
+// W-4). The application's documents follow the session's (services/
+// corrections.ts): a new file becomes current; a replaced or removed submitted
+// file is kept, marked superseded, never deleted.
+type DocumentAccess = 'editable' | 'correction' | 'locked';
+
+async function documentAccess(db: D1Database, session: OnboardingSessionRow, docType: string): Promise<DocumentAccess> {
+  if (session.status !== 'submitted') return 'editable';
+  const record = session.user_id !== null ? await findClinicianRecordByUserId(db, session.user_id) : null;
+  return record && (await hasOpenCorrection(db, record.id, docType)) ? 'correction' : 'locked';
+}
+
+function leavesRequiredDocumentEmpty(session: OnboardingSessionRow, nextFormData: Record<string, unknown>, docType: string): boolean {
+  const packet = getPacket(session.packet_id);
+  const requirement = requirementForDocType(docType);
+  if (!packet || !requiredDocumentGroups(packet, nextFormData).some((g) => g.key === requirement)) return false;
+  return docTypesForRequirement(requirement).every((type) => documentAttachmentsFor(nextFormData, type).length === 0);
+}
+
+/** A file no longer part of a requirement is deleted — unless it was
+ * submitted: that is kept, and recorded as superseded by the reconciliation. */
+async function retireDocument(env: AppEnv['Bindings'], p: { objectKey: string; userId: number }): Promise<void> {
+  if (await isObjectPromoted(env.DB, p.objectKey)) return;
+  const cleanup = await deleteOwnedUpload(env, { objectKey: p.objectKey, userId: p.userId });
+  if (!cleanup.ok) console.error(`[sessions] best-effort delete of ${p.objectKey} failed: ${cleanup.reason}`);
+}
+
+/** Brings the application's documents in step with a corrected session
+ * (services/corrections.ts). Never fails the request: whatever didn't apply
+ * is repaired the next time the applicant or an admin looks. */
+async function reconcileAfterCorrection(db: D1Database, session: OnboardingSessionRow): Promise<void> {
+  try {
+    const record = session.user_id !== null ? await findClinicianRecordByUserId(db, session.user_id) : null;
+    if (record) await reconcileCorrectionDocuments(db, session, record.id);
+  } catch (e) {
+    console.error('[sessions] correction document reconciliation failed; it is retried on the next request:', e);
+  }
+}
+
+/** Applies a document change to the recruiter's review: a reviewed
+ * requirement goes back to Pending (audited). Never fails the request. */
+async function afterDocumentChange(db: D1Database, session: OnboardingSessionRow, docType: string): Promise<void> {
+  try {
+    const record = session.user_id !== null ? await findClinicianRecordByUserId(db, session.user_id) : null;
+    if (record) await recordApplicantDocumentChange(db, { clinicianId: record.id, docType, applicationId: session.application_id, sessionId: session.session_id });
+  } catch (e) {
+    console.error('[sessions] document review reset failed after a document change:', e);
+  }
+}
+
 // ── Server-owned formData keys ───────────────────────────────────────────────
 //
 // Every document reference is written ONLY by the ownership-verified document
@@ -213,7 +277,24 @@ sessions.post('/', async (c) => {
     userId: payload.uid,
   });
 
-  return c.json(serializeSession(insertResult.session), insertResult.created ? 201 : 200);
+  // An applicant invited with "Use existing resume for onboarding" has that
+  // resume as their own (services/candidates.ts) — on a new session, or on a
+  // later visit if an earlier attempt didn't finish.
+  const session = await ensureCandidateResumePromoted(c.env, { userId: payload.uid, session: insertResult.session });
+
+  return c.json(serializeSession(session), insertResult.created ? 201 : 200);
+});
+
+// ── GET /api/sessions/:sessionId/corrections ─────────────────────────────────
+//
+// Documents a recruiter asked this applicant to correct, with the reason —
+// read-only: only the Admin Portal can change a review.
+sessions.get('/:sessionId/corrections', async (c) => {
+  const result = await loadOwnedSession(c, c.req.param('sessionId'));
+  if (!result.ok) return result.response;
+  const record = result.session.user_id !== null ? await findClinicianRecordByUserId(c.env.DB, result.session.user_id) : null;
+  if (record && result.session.status === 'submitted') await reconcileAfterCorrection(c.env.DB, result.session);
+  return c.json({ corrections: record ? await openCorrections(c.env.DB, record.id) : [] });
 });
 
 // ── GET /api/sessions/mine — resume entry point after logging in ────────────
@@ -226,7 +307,7 @@ sessions.get('/mine', async (c) => {
   const row = await findActiveSessionForUser(c.env.DB, payload.uid);
   if (!row) return c.json({ error: 'No active session' }, 404);
 
-  return c.json(serializeSession(row));
+  return c.json(serializeSession(await ensureCandidateResumePromoted(c.env, { userId: payload.uid, session: row })));
 });
 
 // ── GET /api/sessions/:sessionId ──────────────────────────────────────────────
@@ -403,8 +484,8 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
-  const submittedBlock = rejectIfSubmitted(authResult.session);
-  if (submittedBlock) return submittedBlock;
+  const access = await documentAccess(c.env.DB, authResult.session, docType);
+  if (access === 'locked') return rejectIfSubmitted(authResult.session)!;
 
   let body: unknown;
   try {
@@ -528,13 +609,15 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
     console.error('[sessions] slot bookkeeping update failed after successful association:', e);
   }
 
+  // A correction to a submitted requirement: the application's documents now
+  // follow the session (the new file current, a replaced one superseded).
+  if (access === 'correction') await reconcileAfterCorrection(c.env.DB, updateResult.session);
+
   for (const staleKey of staleKeys) {
     if (staleKey === objectKey) continue;
-    const cleanup = await deleteOwnedUpload(c.env, { objectKey: staleKey, userId: payload.uid });
-    if (!cleanup.ok) {
-      console.error(`[sessions] best-effort cleanup of replaced document ${staleKey} failed: ${cleanup.reason}`);
-    }
+    await retireDocument(c.env, { objectKey: staleKey, userId: payload.uid });
   }
+  await afterDocumentChange(c.env.DB, authResult.session, docType);
 
   return c.json(serializeSession(updateResult.session), 200);
 });
@@ -556,8 +639,8 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
-  const submittedBlock = rejectIfSubmitted(authResult.session);
-  if (submittedBlock) return submittedBlock;
+  const access = await documentAccess(c.env.DB, authResult.session, docType);
+  if (access === 'locked') return rejectIfSubmitted(authResult.session)!;
 
   let body: unknown;
   try {
@@ -593,6 +676,11 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
     docType,
     removeOneKey ? currentFiles.filter((f) => f.objectKey !== removeOneKey) : [],
   );
+  // A correction to a submitted application fixes a required document; it
+  // never leaves one empty (an optional one may simply be removed).
+  if (access === 'correction' && leavesRequiredDocumentEmpty(authResult.session, nextFormData, docType)) {
+    return c.json({ error: 'Upload the corrected document before removing the last file — this document is required.' }, 422);
+  }
 
   const updateResult = await updateSessionWithRevision(c.env.DB, {
     sessionId,
@@ -614,12 +702,11 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
     );
   }
 
+  if (access === 'correction') await reconcileAfterCorrection(c.env.DB, updateResult.session);
   for (const removedKey of removedKeys) {
-    const cleanup = await deleteOwnedUpload(c.env, { objectKey: removedKey, userId: payload.uid });
-    if (!cleanup.ok) {
-      console.error(`[sessions] best-effort delete of removed document ${removedKey} failed: ${cleanup.reason}`);
-    }
+    await retireDocument(c.env, { objectKey: removedKey, userId: payload.uid });
   }
+  await afterDocumentChange(c.env.DB, authResult.session, docType);
 
   return c.json(serializeSession(updateResult.session), 200);
 });

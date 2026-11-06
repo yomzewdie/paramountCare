@@ -30,3 +30,17 @@ export function generateObjectKey(userId: number, fileName: string): string {
 export function generateVerifiedLicenseObjectKey(applicationId: string, fileName: string): string {
   return `verified-licenses/${sanitizeFileName(applicationId)}/${crypto.randomUUID()}-${sanitizeFileName(fileName)}`;
 }
+
+/** Key for a resume a recruiter keeps for a candidate before they are invited.
+ * Admin-owned: outside every applicant's `uploads/<uid>/`, never in the
+ * applicant upload ledger. */
+export function generateCandidateResumeObjectKey(clinicianId: number, fileName: string): string {
+  return `candidates/${clinicianId}/${crypto.randomUUID()}-${sanitizeFileName(fileName)}`;
+}
+
+/** Where a candidate resume is copied for the applicant it was offered to:
+ * in that applicant's own `uploads/<uid>/` namespace, and the same key every
+ * time for the same invitation, so a retried copy never makes a second one. */
+export function candidateResumeCopyKey(userId: number, inviteId: number, fileName: string): string {
+  return `uploads/${userId}/candidate-resume-${inviteId}-${sanitizeFileName(fileName)}`;
+}

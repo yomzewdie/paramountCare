@@ -33,6 +33,16 @@ export default defineWorkersConfig({
 				// nothing here is used against production, and rotating them
 				// requires no coordination with any real deployment.
 				miniflare: {
+					// No test ever reaches the real network. Anything a test does
+					// not mock itself (fetchMock, which takes precedence) ends up
+					// here: Resend gets a canned success, so no real email is ever
+					// attempted, and every other host is refused outright.
+					outboundService: (request: Request) => {
+						if (new URL(request.url).hostname === 'api.resend.com') {
+							return Response.json({ id: 'test-email-not-sent' });
+						}
+						return new Response('Outbound network access is blocked in tests.', { status: 503 });
+					},
 					bindings: {
 						ENVIRONMENT: 'test',
 						ADMIN_JWT_SECRET: 'test-only-jwt-signing-secret-not-for-production-use',

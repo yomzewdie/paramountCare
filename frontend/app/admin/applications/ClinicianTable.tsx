@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Users, ArrowRight, FileText } from 'lucide-react';
-import { formatDate } from '@/lib/admin-display';
+import { formatDate, formatShortDate } from '@/lib/admin-display';
 import {
   QUEUE_TABS,
   clinicianHref,
@@ -11,6 +11,9 @@ import {
   queueHref,
   queueLabel,
   specialtyLabels,
+  VERIFICATIONS,
+  verificationStatusLabel,
+  type VerificationStatus,
   type ClinicianListItem,
   type ClinicianQueryParams,
   type OnboardingQueue,
@@ -18,7 +21,10 @@ import {
 } from '@/lib/clinicians';
 
 const QUEUE_STYLES: Record<OnboardingQueue, string> = {
+  new_applicant: 'bg-violet-50 text-violet-700 border-violet-200',
   invited: 'bg-slate-50 text-slate-600 border-slate-200',
+  cleared: 'bg-teal-50 text-teal-800 border-teal-300',
+  on_hold: 'bg-orange-50 text-orange-800 border-orange-300',
   in_progress: 'bg-blue-50 text-blue-700 border-blue-200',
   almost_done: 'bg-amber-50 text-amber-800 border-amber-200',
   application_completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -59,10 +65,21 @@ export function QueueTabs({ params, counts }: { params: ClinicianQueryParams; co
 }
 
 function invitationNote(c: ClinicianListItem): string | null {
-  if (c.sessionId || c.applicationId || !c.invitation) return null;
+  if (c.sessionId || c.applicationId) return null;
+  if (!c.invitation || c.invitation.status === 'revoked') {
+    return c.interviewStatus === 'completed' ? 'Interviewed — not invited yet' : c.clinicianRecordId ? 'Not invited yet' : null;
+  }
   if (c.invitation.status === 'used') return 'Registered — not started';
   if (c.invitation.status === 'expired') return 'Invitation expired';
-  return c.invitation.sentAt ? `Invited ${formatDate(c.invitation.sentAt)}` : 'Invited';
+  return c.invitation.sentAt ? `Invited ${formatShortDate(c.invitation.sentAt)}` : 'Invited';
+}
+
+/** The one date that explains the queue: on hold since, cleared, or submitted. */
+function queueContext(c: ClinicianListItem): string | null {
+  if (c.onHold) return `Since ${formatShortDate(c.onHold.since)}`;
+  if (c.clearedAt) return `Cleared ${formatShortDate(c.clearedAt)}`;
+  if (c.completedAt) return `Submitted ${formatShortDate(c.completedAt)}`;
+  return null;
 }
 
 function Progress({ c }: { c: ClinicianListItem }) {
@@ -92,19 +109,60 @@ function Specialty({ c }: { c: ClinicianListItem }) {
   );
 }
 
+function ReviewNote({ c }: { c: ClinicianListItem }) {
+  const review = c.documentReview;
+  if (!review) return null;
+  if (review.needsCorrection > 0) return <p className="text-xs font-medium text-red-700 whitespace-nowrap">{review.needsCorrection} needs correction</p>;
+  if (review.pending > 0) return <p className="text-xs text-amber-700 whitespace-nowrap">{review.pending} to review</p>;
+  return null;
+}
+
 function Documents({ c }: { c: ClinicianListItem }) {
   if (c.applicationId && c.documentCount !== null) {
     return (
-      <Link href={`${clinicianHref(c)}#documents`} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 whitespace-nowrap">
-        <FileText size={12} />
-        {c.documentCount} file{c.documentCount === 1 ? '' : 's'}
-      </Link>
+      <div>
+        <Link href={`${clinicianHref(c)}#documents`} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 whitespace-nowrap">
+          <FileText size={12} />
+          {c.documentCount} file{c.documentCount === 1 ? '' : 's'}
+        </Link>
+        <ReviewNote c={c} />
+      </div>
     );
   }
   if (c.requiredDocuments) {
-    return <span className="text-xs text-slate-600 whitespace-nowrap">{c.requiredDocuments.completed} of {c.requiredDocuments.total} required</span>;
+    return (
+      <div>
+        <span className="text-xs text-slate-600 whitespace-nowrap">{c.requiredDocuments.completed} of {c.requiredDocuments.total} required</span>
+        <ReviewNote c={c} />
+      </div>
+    );
   }
   return <span className="text-slate-400">—</span>;
+}
+
+const CHECK_STYLES: Record<VerificationStatus, string> = {
+  not_started: 'bg-slate-50 text-slate-400 border-slate-200',
+  pending: 'bg-amber-50 text-amber-800 border-amber-200',
+  complete: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  needs_review: 'bg-red-50 text-red-700 border-red-200',
+};
+
+/** The four internal verifications as compact badges. */
+function Checks({ c }: { c: ClinicianListItem }) {
+  if (!c.verifications) return <span className="text-slate-400">—</span>;
+  return (
+    <div className="flex gap-1">
+      {VERIFICATIONS.map(({ kind, label, short }) => {
+        const status = c.verifications![kind];
+        return (
+          <span key={kind} title={`${label}: ${verificationStatusLabel(status)}`} aria-label={`${label}: ${verificationStatusLabel(status)}`}
+            className={`inline-flex px-1.5 py-0.5 rounded border text-[10px] font-semibold ${CHECK_STYLES[status]}`}>
+            {short}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function EmptyState({ filtered }: { filtered: boolean }) {
@@ -115,7 +173,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
       </div>
       <p className="text-slate-700 font-medium">{filtered ? 'No clinicians match your filters' : 'No clinicians yet'}</p>
       <p className="text-slate-400 text-sm mt-1">
-        {filtered ? 'Try another queue, or adjust the search or filters.' : 'Clinicians appear here once they are invited.'}
+        {filtered ? 'Try another queue, or adjust the search or filters.' : 'Clinicians appear here once they are added as a New Applicant or invited.'}
       </p>
     </div>
   );
@@ -138,8 +196,8 @@ export function ClinicianTable({ data, filtered }: { data: ClinicianListItem[]; 
             <th className={th}>Progress</th>
             <th className={th}>Queue</th>
             <th className={th}>Last Active</th>
-            <th className={th}>Completed</th>
             <th className={th}>Documents</th>
+            <th className={th}>Checks</th>
             <th className="px-4 py-3"><span className="sr-only">Open</span></th>
           </tr>
         </thead>
@@ -156,16 +214,19 @@ export function ClinicianTable({ data, filtered }: { data: ClinicianListItem[]; 
                 <td className="px-4 py-3 text-slate-700">{positionLabel(c.position)}</td>
                 <td className="px-4 py-3 text-slate-700"><Specialty c={c} /></td>
                 <td className="px-4 py-3"><Progress c={c} /></td>
-                <td className="px-4 py-3"><QueueBadge queue={c.queue} /></td>
+                <td className="px-4 py-3">
+                  <QueueBadge queue={c.queue} />
+                  {queueContext(c) && <p className="text-xs text-slate-500 mt-0.5 whitespace-nowrap">{queueContext(c)}</p>}
+                </td>
                 <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{c.lastActiveAt ? formatDate(c.lastActiveAt) : '—'}</td>
-                <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{c.completedAt ? formatDate(c.completedAt) : '—'}</td>
                 <td className="px-4 py-3"><Documents c={c} /></td>
+                <td className="px-4 py-3"><Checks c={c} /></td>
                 <td className="px-4 py-3 text-right">
                   <Link
                     href={clinicianHref(c)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors whitespace-nowrap"
                   >
-                    {c.applicationId || c.sessionId ? 'Open' : 'Invitations'}
+                    {c.applicationId || c.sessionId || c.clinicianRecordId ? 'Open' : 'Invitations'}
                     <ArrowRight size={11} />
                   </Link>
                 </td>

@@ -139,3 +139,14 @@ export async function seedUnverifiedUser(email: string, password = 'Test-Passw0r
   if (!row) throw new Error('seedUnverifiedUser: insert returned no row');
   return row;
 }
+
+/** The admin application detail no longer carries storage keys; tests that
+ * check what happened to a stored object look each document's key up by id. */
+export async function withStorageKeys<T extends { id: number }>(documents: T[]): Promise<(T & { objectKey: string })[]> {
+  const out: (T & { objectKey: string })[] = [];
+  for (const doc of documents) {
+    const row = await env.DB.prepare('SELECT object_key FROM application_documents WHERE id = ?').bind(doc.id).first<{ object_key: string }>();
+    out.push({ ...doc, objectKey: row!.object_key });
+  }
+  return out;
+}

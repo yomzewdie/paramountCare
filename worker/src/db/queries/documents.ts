@@ -7,6 +7,9 @@ export interface DocumentRow {
   uploaded_at: string;
   /** Slot the document was uploaded for (e.g. 'hep_b_vaccination_proof'); NULL for legacy rows. */
   doc_type: string | null;
+  /** Set when a targeted correction replaced or removed this submitted file;
+   * it is kept, but no longer one of the application's current documents. */
+  superseded_at: string | null;
 }
 
 export interface InsertDocumentParams {
@@ -180,4 +183,20 @@ export async function isObjectPromoted(db: D1Database, objectKey: string): Promi
     .bind(objectKey)
     .first();
   return row !== null;
+}
+
+/** A file the applicant attached while correcting a submitted requirement,
+ * added to the application's documents by the correction reconciliation
+ * (services/corrections.ts) — same object, no copy; never twice. */
+export function insertCorrectionDocumentStmt(
+  db: D1Database,
+  p: InsertDocumentParams & { sessionId: string; docType: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO application_documents (application_id, object_key, file_name, file_size, uploaded_at, session_id, doc_type)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM application_documents WHERE application_id = ? AND object_key = ?)`,
+    )
+    .bind(p.applicationId, p.objectKey, p.fileName, p.fileSize, p.uploadedAt, p.sessionId, p.docType, p.applicationId, p.objectKey);
 }

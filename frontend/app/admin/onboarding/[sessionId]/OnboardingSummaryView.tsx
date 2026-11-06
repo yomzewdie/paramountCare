@@ -13,6 +13,8 @@ import {
 } from '@/lib/clinicians';
 import { QueueBadge } from '../../applications/ClinicianTable';
 import { ApplicantDocuments } from '../../applications/[applicationId]/ApplicantDocuments';
+import type { ClinicianWorkflow } from '@/lib/clinician-workflow';
+import { AuditSection, DocumentReviewSection, WorkflowSection } from '../../clinicians/WorkflowSections';
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -27,7 +29,7 @@ function Row({ label, value }: { label: string; value: string }) {
  * packet, which required documents are in, and the files attached so far —
  * viewable in the same document viewer as a submitted application. Answers
  * belong to the submitted application, which this links to once there is one. */
-export function OnboardingSummaryView({ summary }: { summary: OnboardingSummary }) {
+export function OnboardingSummaryView({ summary, workflow = null }: { summary: OnboardingSummary; workflow?: ClinicianWorkflow | null }) {
   const { clinician, steps, requiredDocuments } = summary;
   const specialties = specialtyLabels(clinician);
   const left = documentsLeftText(clinician.requiredDocuments);
@@ -52,7 +54,9 @@ export function OnboardingSummaryView({ summary }: { summary: OnboardingSummary 
 
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <section className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="lg:col-span-2 space-y-6">
+          {workflow && <DocumentReviewSection workflow={workflow} />}
+          <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-100 bg-slate-50">
               <ListChecks size={16} className="text-slate-500" strokeWidth={1.8} />
               <h2 className="text-sm font-semibold text-slate-700">Onboarding steps</h2>
@@ -75,8 +79,10 @@ export function OnboardingSummaryView({ summary }: { summary: OnboardingSummary 
               ))}
             </ol>
           </section>
+          </div>
 
           <div className="space-y-6">
+            {workflow && <WorkflowSection workflow={workflow} />}
             <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
               <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-100 bg-slate-50">
                 <User size={16} className="text-slate-500" strokeWidth={1.8} />
@@ -131,6 +137,8 @@ export function OnboardingSummaryView({ summary }: { summary: OnboardingSummary 
                 )}
               </div>
             </section>
+
+            {workflow && <AuditSection workflow={workflow} />}
           </div>
         </div>
       </div>
