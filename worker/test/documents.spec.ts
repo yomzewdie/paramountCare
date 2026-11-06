@@ -298,7 +298,7 @@ describe('DELETE /api/sessions/:sessionId/documents/:docType — safe remove lif
 // M14: the `documents` step (License & Credential Uploads) reuses this
 // exact same association/removal endpoint for five more docTypes, each
 // nested under formData.uploadedDocuments rather than a top-level field.
-// No new route, no new ownership logic — just five more DOC_TYPE_APPLIERS
+// No new route, no new ownership logic — just five more applicant document types
 // map entries (worker/src/routes/sessions.ts).
 describe('M14 — documents step docTypes reuse the same association endpoint', () => {
   const DOC_TYPE_TO_FIELD: Record<string, string> = {

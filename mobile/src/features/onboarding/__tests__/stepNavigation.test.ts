@@ -152,10 +152,13 @@ describe('resume removed → Resume is required again', () => {
   });
 });
 
-describe('Primary Clinical Specialty is not collected from new applicants', () => {
-  it('the Applicant Details screen never renders it (only Specialty / Unit Preference)', () => {
+describe('Applicant Details asks for the qualification summary, never work history', () => {
+  it('collects Primary Clinical Specialty as its own question, not the legacy single value', () => {
     const source = readFileSync(join(__dirname, '..', 'EmploymentApplicationScreen.tsx'), 'utf8');
-    expect(source).not.toMatch(/Primary Clinical Specialty|primarySpecialty/);
+    expect(source).toContain('Primary Clinical Specialty');
     expect(source).toContain('Specialty / Unit Preference');
+    expect(source).toContain('Total Years of Professional Experience');
+    expect(source).not.toMatch(/primarySpecialty\b/);
+    expect(source).not.toMatch(/employerName|positionHeld|employmentDateFrom|previouslyWorkedHere/);
   });
 });

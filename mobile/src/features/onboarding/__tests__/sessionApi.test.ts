@@ -188,3 +188,26 @@ describe('removeDocument (M13 hardening)', () => {
     expect(result).toEqual({ ok: false, conflict: true, current });
   });
 });
+
+describe('attachment group requests', () => {
+  const sessionBody = { sessionId: 's', revision: 2 };
+  const bodyOf = (call: unknown[]) => JSON.parse((call[1] as RequestInit).body as string);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('associateDocument sends the add mode and the attachment to replace', async () => {
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, sessionBody));
+    await associateDocument('s', 'nursing_license', { objectKey: 'k/new', revision: 1, mode: 'add' });
+    expect(bodyOf(mockedApiClient.authenticatedFetch.mock.calls[0])).toEqual({ objectKey: 'k/new', revision: 1, mode: 'add' });
+    await associateDocument('s', 'nursing_license', { objectKey: 'k/new', revision: 2, replaceObjectKey: 'k/old' });
+    expect(bodyOf(mockedApiClient.authenticatedFetch.mock.calls[1])).toEqual({ objectKey: 'k/new', revision: 2, replaceObjectKey: 'k/old' });
+  });
+
+  it('removeDocument sends the one attachment to remove', async () => {
+    mockedApiClient.authenticatedFetch.mockResolvedValue(jsonResponse(200, sessionBody));
+    await removeDocument('s', 'nursing_license', { revision: 1, objectKey: 'k/old' });
+    expect(bodyOf(mockedApiClient.authenticatedFetch.mock.calls[0])).toEqual({ revision: 1, objectKey: 'k/old' });
+  });
+});

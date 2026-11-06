@@ -28,7 +28,7 @@ export type SubmitOutcome =
   | { kind: 'error'; message: string };
 
 /** Multi-select fields in this form. */
-export type MultiSelectKey = 'specialtyPreference' | 'shiftPreference' | 'employmentType';
+export type MultiSelectKey = 'specialtyPreference' | 'primaryClinicalSpecialty' | 'shiftPreference' | 'employmentType';
 
 /** Ordinary (MM/DD/YYYY) date fields in this form. */
 export type SlashDateKey = 'availableStartDate' | 'licenseRevocationDate';
@@ -81,6 +81,11 @@ export function useEmploymentApplicationForm() {
   function setField<K extends keyof EmploymentApplicationData>(field: K, value: EmploymentApplicationData[K]): void {
     setData((d) => ({ ...d, [field]: value }));
     setIsDirty(true);
+    // The minimum depends on the position: an answer already given is
+    // re-checked and its message shown the moment the position changes.
+    if (field === 'positionApplied' && data.totalYearsExperience.trim()) {
+      setTouched((t) => ({ ...t, totalYearsExperience: true }));
+    }
   }
 
   /** Adds or removes one option from a multi-select field. Switching

@@ -9,19 +9,22 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useDocumentsForm } from './useDocumentsForm';
+import { useSession } from './SessionContext';
 import { DocumentSlotCard } from '../../components/DocumentSlotCard';
-import { buildDocumentChecklist, type ChecklistItem } from '../documents/documentChecklist';
+import { attachmentSummary, buildDocumentChecklist, type ChecklistItem } from '../documents/documentChecklist';
 
 /**
  * Documents & Credentials — a guided checklist over the same required
  * slots, rules, and upload pipeline as before (useDocumentsForm):
  *  - the I-9 identity choice first (List A, or List B + List C), then the
  *    chosen path's upload(s), then the packet's credentials in order;
- *  - ONE active upload card at a time — the first incomplete requirement;
- *  - completed uploads collapse to a compact row (✓, file name, Replace);
- *    Replace reopens the full card (with Remove), and it collapses again
- *    once the new file is uploaded;
- *  - after each upload the next requirement opens and is scrolled into view.
+ *  - ONE active upload card at a time — the first incomplete required item;
+ *  - a requirement is one row however many attachments it holds: completed
+ *    ones collapse to a compact row (✓, attachment summary, Manage), and
+ *    Manage reopens the full card (Upload More, Replace, Remove) until Done;
+ *  - optional documents wait as compact rows, opened with Add;
+ *  - after each upload finishes the next requirement opens and is scrolled
+ *    into view.
  *
  * No unsaved-changes guard: every upload persists itself the moment it
  * succeeds, so leaving this screen can never discard anything.
@@ -32,15 +35,22 @@ export default function DocumentsScreen() {
   const { isConnected } = useNetworkStatus();
   const form = useDocumentsForm();
 
-  const checklist = buildDocumentChecklist({ requiredSlots: form.requiredSlots, identityPath: form.identityPath, documents: form.documents });
+  const { session } = useSession();
+  const checklist = buildDocumentChecklist({
+    requiredSlots: form.requiredSlots,
+    optionalSlots: form.optionalSlots,
+    identityPath: form.identityPath,
+    documents: form.documents,
+    formData: session?.formData,
+  });
 
-  // A completed item the applicant reopened with Replace, and the file it
-  // held then — once a different file is uploaded it collapses again.
-  const [reopened, setReopened] = useState<{ docType: string; objectKey: string | undefined } | null>(null);
+  // The item the applicant opened with Manage/Add, until they tap Done.
+  const [reopened, setReopened] = useState<string | null>(null);
   function isOpen(item: ChecklistItem): boolean {
-    if (item.docType === checklist.activeDocType) return true;
-    if (reopened?.docType !== item.docType) return false;
-    return !(item.done && item.file?.objectKey !== reopened.objectKey);
+    if (item.docType === checklist.activeDocType || reopened === item.docType) return true;
+    // A multi-file upload stays open until its last file has finished.
+    const status = form.slotHooks[item.docType]?.status;
+    return status === 'uploading' || status === 'associating';
   }
 
   // Scroll-to-first-error targets: the identity section and each item.
@@ -52,7 +62,7 @@ export default function DocumentsScreen() {
 
   function scrollToFirstError() {
     const identityInvalid = !!form.errors.i9 || !!form.identityPathError;
-    const firstInvalid = identityInvalid ? 'identity' : checklist.items.find((i) => !i.done)?.docType;
+    const firstInvalid = identityInvalid ? 'identity' : checklist.items.find((i) => !i.done && !i.optional)?.docType;
     const y = firstInvalid ? sectionOffsets.current[firstInvalid] : undefined;
     if (y !== undefined) scrollRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
   }
@@ -83,7 +93,7 @@ export default function DocumentsScreen() {
             {index + 1}. {item.slot.label}
           </Text>
           <DocumentSlotCard slot={item.slot} hook={hook} error={error} />
-          {item.done && reopened?.docType === item.docType ? (
+          {reopened === item.docType ? (
             <Button label="Done" variant="secondary" onPress={() => setReopened(null)} />
           ) : null}
         </RevealOnShow>
@@ -99,24 +109,24 @@ export default function DocumentsScreen() {
               accessibilityLabel={item.done ? 'Uploaded' : 'Not uploaded yet'}
               style={[theme.typography.bodyStrong, { color: item.done ? theme.colors.success : theme.colors.textMuted, width: 24 }]}
             >
-              {item.done ? '✓' : `${index + 1}`}
+              {item.done ? '✓' : item.optional ? '–' : `${index + 1}`}
             </Text>
             <View style={{ flex: 1 }}>
               <Text style={[theme.typography.bodyStrong, { color: item.done ? theme.colors.text : theme.colors.textMuted }]}>{item.slot.label}</Text>
               <Text numberOfLines={1} style={[theme.typography.caption, { color: theme.colors.textMuted }]}>
-                {item.done ? item.file?.name : 'Up next'}
+                {item.done ? attachmentSummary(item.attachments) : item.optional ? 'Optional' : 'Up next'}
               </Text>
               {error ? <Text style={[theme.typography.caption, { color: theme.colors.danger }]}>{error}</Text> : null}
             </View>
-            {item.done ? (
+            {item.done || item.optional ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Replace ${item.slot.label}`}
+                accessibilityLabel={`${item.done ? 'Manage' : 'Add'} ${item.slot.label}`}
                 hitSlop={8}
-                onPress={() => setReopened({ docType: item.docType, objectKey: item.file?.objectKey })}
+                onPress={() => setReopened(item.docType)}
                 style={{ minHeight: theme.minTouchTarget, justifyContent: 'center', paddingHorizontal: 8 }}
               >
-                <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '600' }]}>Replace</Text>
+                <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '600' }]}>{item.done ? 'Manage' : 'Add'}</Text>
               </Pressable>
             ) : null}
           </View>

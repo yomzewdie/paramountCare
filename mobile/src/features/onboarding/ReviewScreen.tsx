@@ -12,7 +12,7 @@ import { useReviewSubmission } from './useReviewSubmission';
 import {
   EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_LICENSE_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
   LICENSE_TYPE_OPTIONS, POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS, SPECIALTY_OPTIONS,
-  finalizeEmploymentApplication, formatOptionValues, isoDateToDisplay, isoDateToSlash,
+  documentAttachmentsFor, finalizeEmploymentApplication, formatOptionValues, formatYearsOfExperience, isoDateToDisplay, isoDateToSlash,
 } from '@pcs/shared';
 import type {
   PersonalInfo, EmploymentReference, AcknowledgementEntry,
@@ -38,10 +38,14 @@ import type {
 // invented here either).
 
 const VACCINE_STEPS = [
-  { stepId: 'hep_b_declination', name: 'Hepatitis B (HBV)' },
-  { stepId: 'tdap_declination', name: 'Tdap' },
-  { stepId: 'flu_declination', name: 'Influenza / H1N1' },
+  { stepId: 'hep_b_declination', name: 'Hepatitis B (HBV)', docType: 'hep_b_vaccination_proof' },
+  { stepId: 'tdap_declination', name: 'Tdap', docType: 'tdap_vaccination_proof' },
+  { stepId: 'flu_declination', name: 'Influenza / H1N1', docType: 'flu_vaccination_proof' },
 ];
+
+function attachmentCount(count: number): string {
+  return `${count} ${count === 1 ? 'attachment' : 'attachments'}`;
+}
 
 const FILING_STATUS_LABELS: Record<string, string> = {
   single_mfs: 'Single or Married filing separately',
@@ -274,6 +278,8 @@ export default function ReviewScreen() {
       <SectionCard title="Applicant Details" {...stepInfo('employment_application')} stepId="employment_application" onEdit={onEdit}>
         <FieldRow label="Position Applied For" value={formatOptionValues(employmentApplication.positionApplied, POSITION_OPTIONS)} />
         <FieldRow label="Specialty / Unit Preference" value={formatOptionValues(employmentApplication.specialtyPreference, SPECIALTY_OPTIONS)} />
+        <FieldRow label="Total Years of Professional Experience" value={formatYearsOfExperience(employmentApplication.totalYearsExperience)} />
+        <FieldRow label="Primary Clinical Specialty" value={formatOptionValues(employmentApplication.primaryClinicalSpecialty, SPECIALTY_OPTIONS)} />
         <FieldRow label="Employment Type" value={formatOptionValues(employmentApplication.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS)} />
         <FieldRow label="Shift Preference" value={formatOptionValues(employmentApplication.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS)} />
         <FieldRow label="License / Certification" value={[formatOptionValues(employmentApplication.licenseType, LICENSE_TYPE_OPTIONS, LEGACY_LICENSE_TYPE_LABELS), employmentApplication.licenseNumber, employmentApplication.licenseState].filter(Boolean).join(' · ')} />
@@ -308,9 +314,12 @@ export default function ReviewScreen() {
           completed={VACCINE_STEPS.every((v) => !stepInfo(v.stepId).exists || stepInfo(v.stepId).completed)}
           required
         >
-          {VACCINE_STEPS.filter((v) => stepInfo(v.stepId).exists).map(({ stepId, name }) => {
+          {VACCINE_STEPS.filter((v) => stepInfo(v.stepId).exists).map(({ stepId, name, docType }) => {
             const entry = acknowledgements[stepId];
-            const label = entry?.decision === 'providing_proof' ? 'Providing Proof' : entry?.decision === 'declining' ? 'Declining' : 'Not yet completed';
+            const proofCount = documentAttachmentsFor(formData, docType).length;
+            const label = entry?.decision === 'providing_proof'
+              ? `Providing Proof${proofCount > 0 ? ` — ${attachmentCount(proofCount)}` : ''}`
+              : entry?.decision === 'declining' ? 'Declining' : 'Not yet completed';
             return <FieldRow key={stepId} label={name} value={label} />;
           })}
         </SectionCard>
@@ -346,7 +355,10 @@ export default function ReviewScreen() {
 
       <SectionCard title="Documents & Credentials" {...stepInfo('documents')} stepId="documents" onEdit={onEdit}>
         <CheckRow label="Identity & Work Authorization (I-9)" checked={!!uploadedDocuments.listA || (!!uploadedDocuments.listB && !!uploadedDocuments.listC)} />
-        <CheckRow label="Professional License / Certification" checked={!!uploadedDocuments.nursingLicense} />
+        <FieldRow
+          label="Professional License / Certification (optional)"
+          value={uploadedDocuments.nursingLicense ? attachmentCount(documentAttachmentsFor(formData, 'nursing_license').length) : 'Not provided'}
+        />
         <CheckRow label="CPR / BLS Certification" checked={!!uploadedDocuments.cprCertification} />
       </SectionCard>
 

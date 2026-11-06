@@ -12,9 +12,7 @@ import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
 import { isStepValidationRejection } from './serverValidationError';
-import { useFileAttachment, type AttachmentStatus } from './useFileAttachment';
-import { deleteUpload } from './uploadApi';
-import { useDocumentCapture } from '../documents/useDocumentCapture';
+import { useDocumentSlot } from '../documents/useDocumentSlot';
 import { VOIDED_CHECK_REQUIREMENT } from '../documents/documentRequirements';
 
 const STEP_ID = 'direct_deposit';
@@ -49,6 +47,15 @@ function formatSignedDate(d: Date): string {
   return `${mm}/${dd}/${d.getFullYear()}`;
 }
 
+/** A new primary deposit defaults to 100% (UAT feedback). Only applied while
+ * nothing has been saved for the allocation — a saved type or amount is never
+ * overwritten. The optional second account never gets a default: that would
+ * mark it as started, and split the paycheck into more than 100%. */
+function withDefaultAllocation(account: DirectDepositBankAccount): DirectDepositBankAccount {
+  if (account.depositType || account.depositAmount.trim()) return account;
+  return { ...account, depositType: 'percentage', depositAmount: '100' };
+}
+
 function mergeAccount(base: DirectDepositBankAccount, stored: Partial<DirectDepositBankAccount> | undefined): DirectDepositBankAccount {
   return { ...base, ...(stored ?? {}) };
 }
@@ -63,7 +70,7 @@ function readStoredData(formData: Record<string, unknown> | undefined): DirectDe
   const base: DirectDepositData = {
     ...defaultDirectDepositData,
     ...stored,
-    primaryAccount: mergeAccount(defaultDirectDepositData.primaryAccount, stored.primaryAccount),
+    primaryAccount: withDefaultAllocation(mergeAccount(defaultDirectDepositData.primaryAccount, stored.primaryAccount)),
     additionalAccount: mergeAccount(defaultDirectDepositData.additionalAccount, stored.additionalAccount),
   };
   if (base.lastName || base.firstName) return base;
@@ -81,13 +88,6 @@ function readStoredProof(formData: Record<string, unknown> | undefined): Uploade
   return (formData?.[PROOF_DATA_KEY] as UploadedFile | null | undefined) ?? null;
 }
 
-/** The status the screen actually shows — folds the raw upload lifecycle
- * (useFileAttachment) together with the separate association step, so
- * "uploaded" is never displayed until the session association itself has
- * actually succeeded (M13 hardening §22: never display success before
- * authoritative session association succeeds). */
-export type ProofDisplayStatus = AttachmentStatus | 'associating';
-
 /**
  * Form-state + save/conflict logic for the Direct Deposit Authorization
  * step (ICU RN / ER RN / Travel RN only). Source: Paramount's "Business
@@ -97,22 +97,15 @@ export type ProofDisplayStatus = AttachmentStatus | 'associating';
  * required voided-check proof come directly from that source, not
  * invented. See ADR-025/ADR-026.
  *
- * The voided-check attachment's lifecycle (M13 hardening) is a two-step
- * process, not one PATCH: upload (via useFileAttachment, owned by the
- * applicant the moment R2/the ownership ledger accept it) THEN an
- * ownership-verified association with this session
- * (SessionContext.associateDocument — a dedicated Worker endpoint, not the
- * generic session PATCH, since associating requires a server-side check
- * that this exact object was actually uploaded by this exact applicant).
- * Both steps are independent of the surrounding form fields' own Save
- * Progress, so a successfully associated attachment survives an app
- * restart even if the applicant never taps Save Progress. A failed
- * association leaves the object an orphan (uploaded, never attached to any
- * session) — best-effort cleaned up via the authenticated delete
- * capability, never treated as fatal to the rest of the form.
+ * The bank-verification attachments use the same lifecycle as every other
+ * document (useDocumentSlot): upload, then ownership-verified association with
+ * this session. Both are independent of the surrounding form fields' own Save
+ * Progress, so an associated attachment survives an app restart even if the
+ * applicant never taps Save Progress, and the file itself is always read
+ * straight from the live session.
  */
 export function useDirectDepositForm() {
-  const { session, saveStep, associateDocument, removeDocument } = useSession();
+  const { session, saveStep } = useSession();
 
   const [data, setData] = useState<DirectDepositData>(() => readStoredData(session?.formData));
   const [touched, setTouched] = useState<Partial<Record<TouchKey, boolean>>>({});
@@ -120,18 +113,13 @@ export function useDirectDepositForm() {
   const [isSaving, setIsSaving] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<{ latestData: DirectDepositData; latestProof: UploadedFile | null } | null>(null);
+  const [conflict, setConflict] = useState<{ latestData: DirectDepositData } | null>(null);
 
-  // The authoritative, server-confirmed proof document — set ONLY once a
-  // real association succeeds (or on initial load / conflict reload), never
-  // merely because a file was picked or finished uploading. This is what
-  // validation/completion check, not the raw upload state.
-  const [associatedProof, setAssociatedProof] = useState<UploadedFile | null>(() => readStoredProof(session?.formData));
-  const [associationPhase, setAssociationPhase] = useState<'idle' | 'associating' | 'failed'>('idle');
-  const [associationError, setAssociationError] = useState<string | null>(null);
-  // The most recently uploaded (not necessarily associated) file — kept so
-  // a failed association can be retried without re-uploading.
-  const [pendingUpload, setPendingUpload] = useState<UploadedFile | null>(null);
+  // The authoritative, server-confirmed proof document — present ONLY once a
+  // real association succeeded, never merely because a file was picked or
+  // finished uploading. This is what validation/completion check.
+  const proof = readStoredProof(session?.formData);
+  const proofSlot = useDocumentSlot(DOC_TYPE, proof, VOIDED_CHECK_REQUIREMENT);
 
   const isCompleted = session?.stepStates[STEP_ID] === 'completed';
 
@@ -141,7 +129,7 @@ export function useDirectDepositForm() {
   // function defined ABOVE it closes over, even though the forward
   // reference is perfectly valid JS (handleResult is only ever invoked
   // later, after this line has already run).
-  const errors = useMemo<FieldErrors>(() => validateDirectDeposit(data, associatedProof), [data, associatedProof]);
+  const errors = useMemo<FieldErrors>(() => validateDirectDeposit(data, proof), [data, proof]);
 
   function handleResult(result: SaveStepResult): SubmitOutcome {
     if (result.status === 'saved') {
@@ -149,10 +137,7 @@ export function useDirectDepositForm() {
       return { kind: 'saved' };
     }
     if (result.status === 'conflict') {
-      setConflict({
-        latestData: readStoredData(result.latestSession.formData),
-        latestProof: readStoredProof(result.latestSession.formData),
-      });
+      setConflict({ latestData: readStoredData(result.latestSession.formData) });
       return { kind: 'conflict' };
     }
     if (isStepValidationRejection(result.error) && Object.keys(errors).length > 0) {
@@ -161,106 +146,6 @@ export function useDirectDepositForm() {
     }
     setSaveError(result.error.message);
     return { kind: 'error', message: result.error.message };
-  }
-
-  /** Associates a just-uploaded file with this session's voided-check slot.
-   * Never reports the attachment as saved until this itself succeeds. On a
-   * hard failure (not a conflict — a conflict is retryable with the same
-   * object, so it is never treated as an orphan), the uploaded object is
-   * now genuinely unassociated with anything; best-effort delete it via the
-   * authenticated delete capability rather than leaving it behind for no
-   * reason (M13 hardening §7). The existing, already-associated attachment
-   * — if any — is left completely untouched throughout. */
-  async function persistProof(file: UploadedFile): Promise<void> {
-    setPendingUpload(file);
-    setAssociationPhase('associating');
-    setAssociationError(null);
-
-    const result = await associateDocument(DOC_TYPE, file.objectKey!);
-
-    if (result.status === 'saved') {
-      setAssociatedProof(readStoredProof(result.session.formData));
-      setAssociationPhase('idle');
-      setPendingUpload(null);
-      return;
-    }
-    if (result.status === 'conflict') {
-      setConflict({
-        latestData: readStoredData(result.latestSession.formData),
-        latestProof: readStoredProof(result.latestSession.formData),
-      });
-      setAssociationPhase('idle');
-      return;
-    }
-    setAssociationError(result.error.message);
-    setAssociationPhase('failed');
-    // Best-effort, fire-and-forget — a failure here is a documented
-    // residual orphan-cleanup risk (M13 hardening §9), never something that
-    // blocks or further alarms the applicant.
-    if (file.objectKey) void deleteUpload(file.objectKey);
-  }
-
-  function retryAssociation(): void {
-    if (pendingUpload) void persistProof(pendingUpload);
-  }
-
-  const rawAttachment = useFileAttachment(associatedProof, (file) => {
-    void persistProof(file);
-  });
-
-  // The smart-capture layer (frame → capture → local quality check →
-  // preview → Retake/Use Document) sits in FRONT of rawAttachment's own
-  // upload lifecycle — "Use Document" is the only path that ever calls
-  // uploadPicked, so nothing reaches the authenticated upload without a
-  // confirmed, quality-checked capture first (M13 hardening §9/§20).
-  // Configured via VOIDED_CHECK_REQUIREMENT — nothing Direct-Deposit-
-  // specific lives inside useDocumentCapture itself.
-  const capture = useDocumentCapture(VOIDED_CHECK_REQUIREMENT);
-
-  function confirmUseDocument(): void {
-    void capture.confirmUse((picked) => rawAttachment.uploadPicked(picked));
-  }
-
-  const proofStatus: ProofDisplayStatus =
-    rawAttachment.status === 'uploading' ? 'uploading'
-    : rawAttachment.status === 'failed' ? 'failed'
-    : associationPhase === 'associating' ? 'associating'
-    : associationPhase === 'failed' ? 'failed'
-    : associatedProof ? 'uploaded' : 'idle';
-
-  const proofErrorMessage = rawAttachment.errorMessage ?? associationError;
-
-  function retryProof(): void {
-    if (rawAttachment.status === 'failed') { rawAttachment.retry(); return; }
-    if (associationPhase === 'failed') { retryAssociation(); return; }
-  }
-
-  /** Explicit applicant Remove — clears the session's own reference FIRST
-   * (server-enforced ordering, see routes/sessions.ts), and only then is
-   * the underlying object actually deleted; a temporarily orphaned object
-   * is preferable to the session ever pointing at a deleted one (M13
-   * hardening §5). Local UI state resets immediately so Remove always
-   * feels instant regardless of the network round trip. */
-  function removeProof(): void {
-    rawAttachment.remove();
-    setAssociationPhase('idle');
-    setAssociationError(null);
-    setPendingUpload(null);
-    void (async () => {
-      const result = await removeDocument(DOC_TYPE);
-      if (result.status === 'saved') {
-        setAssociatedProof(readStoredProof(result.session.formData));
-        return;
-      }
-      if (result.status === 'conflict') {
-        setConflict({
-          latestData: readStoredData(result.latestSession.formData),
-          latestProof: readStoredProof(result.latestSession.formData),
-        });
-        return;
-      }
-      setSaveError(result.error.message);
-    })();
   }
 
   const shownErrors = useMemo<FieldErrors>(() => revealTouched<TouchKey>(errors, touched), [errors, touched]);
@@ -335,10 +220,6 @@ export function useDirectDepositForm() {
   function discardAndReloadLatest(): void {
     if (!conflict) return;
     setData(conflict.latestData);
-    setAssociatedProof(conflict.latestProof);
-    setAssociationPhase('idle');
-    setAssociationError(null);
-    setPendingUpload(null);
     setConflict(null);
     setIsDirty(false);
     setTouched({});
@@ -355,27 +236,7 @@ export function useDirectDepositForm() {
     setTypedSignature,
     blurField,
     errors: shownErrors,
-    attachment: {
-      status: proofStatus,
-      file: associatedProof,
-      errorMessage: proofErrorMessage,
-      retry: retryProof,
-    },
-    // The smart-capture layer — scan/takePhoto/pickFromLibrary/pickDocument
-    // all lead to a `pending` preview (never a direct upload); the screen
-    // renders that preview and calls confirmUseDocument()/capture.retake()
-    // per the applicant's choice (M13 hardening §14).
-    capture: {
-      pending: capture.pending,
-      permissionError: capture.permissionError,
-      scan: capture.scan,
-      takePhoto: capture.takePhoto,
-      pickFromLibrary: capture.pickFromLibrary,
-      pickDocument: capture.pickDocument,
-      retake: capture.retake,
-      confirmUse: confirmUseDocument,
-    },
-    removeProof,
+    proofSlot,
     isDirty,
     isSaving,
     isCompleting,

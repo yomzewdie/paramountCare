@@ -8,12 +8,9 @@
 // the application — otherwise the record would show a declination alongside
 // vaccination evidence.
 
-/** docType (upload slot) -> the vaccine step whose answer governs it. */
-export const VACCINE_PROOF_STEP_BY_DOC_TYPE: Record<string, string> = {
-  hep_b_vaccination_proof: 'hep_b_declination',
-  tdap_vaccination_proof: 'tdap_declination',
-  flu_vaccination_proof: 'flu_declination',
-};
+import { VACCINE_PROOF_STEP_BY_DOC_TYPE } from '@pcs/shared';
+
+export { VACCINE_PROOF_STEP_BY_DOC_TYPE };
 
 type AcknowledgementsLike = Record<string, { decision?: string | null } | undefined> | undefined;
 
@@ -34,4 +31,14 @@ export function activeVaccineProofDocuments(
     if (acknowledgements?.[stepId]?.decision === 'providing_proof') out[stepId] = file;
   }
   return out;
+}
+
+/** Copy of `documentAttachments` without the attachment lists of a vaccine whose final answer is not "providing proof". */
+export function activeDocumentAttachments(
+  groups: Record<string, unknown> | undefined,
+  acknowledgements: AcknowledgementsLike,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(groups ?? {}).filter(([docType]) => isDocumentActiveForSubmission(docType, acknowledgements)),
+  );
 }

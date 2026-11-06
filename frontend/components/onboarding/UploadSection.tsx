@@ -47,8 +47,8 @@ const CREDENTIAL_SLOTS: {
 }[] = [
   {
     key: 'nursingLicense',
-    label: 'Nursing License',
-    description: 'Current state nursing license — RN, LPN, or other.',
+    label: 'Professional License / Certification (optional)',
+    description: 'Your current license or certification, if you would like to provide a copy.',
     examples: 'State-issued nursing license card or official printout',
   },
   {
@@ -364,7 +364,7 @@ export function UploadSection({ data, onChange }: UploadSectionProps) {
         <SectionHeader
           icon={<FileCheck size={20} />}
           title="Professional Credentials"
-          description="Upload your current nursing license and CPR certification."
+          description="Upload your CPR certification, and your license if you would like to."
           iconColor="bg-violet-50 text-violet-600"
         />
         <CardBody>

@@ -128,8 +128,10 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   list_a: 'I-9 List A document',
   list_b: 'I-9 List B document',
   list_c: 'I-9 List C document',
-  nursing_license: 'Professional license / certification',
+  nursing_license: 'Applicant-provided professional license / certification',
   cpr_cert: 'CPR / BLS certification',
+  // Uploaded by staff in the Admin Portal, never by the applicant.
+  verified_license: 'Verified License (admin-provided)',
 };
 
 const UPLOADED_DOCUMENT_LABELS: Record<string, string> = {

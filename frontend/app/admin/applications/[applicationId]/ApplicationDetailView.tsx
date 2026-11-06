@@ -1,6 +1,6 @@
 import type { ElementType, ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, Download, FileSignature } from 'lucide-react';
+import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, Download, FileSignature, BadgeCheck } from 'lucide-react';
 import type { ApplicationDetail } from '@/lib/admin-api';
 import type { ApplicationFormat } from '@/lib/admin-display';
 import {
@@ -11,11 +11,14 @@ import {
   employmentReferenceRows,
   flattenForDisplay,
   formatDate,
+  groupDocuments,
+  isVerifiedLicense,
   personalInfoRows,
   formatFileSize,
   humanizeKey,
 } from '@/lib/admin-display';
 import { StatusBadge } from '../StatusBadge';
+import { VerifiedLicensePanel } from './VerifiedLicensePanel';
 
 function Section({ title, icon: Icon, children }: { title: string; icon: ElementType; children: ReactNode }) {
   return (
@@ -114,11 +117,38 @@ function DownloadLink({ href, label, filename }: { href: string; label: string; 
   );
 }
 
+function DocumentList({ documents, applicationId }: { documents: ApplicationDetail['documents']; applicationId: string }) {
+  return (
+    <ul className="space-y-2">
+      {documents.map((doc) => (
+        <li key={doc.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-slate-800 truncate min-w-0">{doc.fileName}</p>
+            <a
+              href={`/api/admin/documents/${applicationId}/${doc.id}`}
+              download={doc.fileName}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
+            >
+              <Download size={13} />
+              Download
+            </a>
+          </div>
+          <p className="text-xs text-slate-500">
+            {formatFileSize(doc.fileSize)} · {formatDate(doc.uploadedAt)}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
   const id = encodeURIComponent(app.id);
   const fullName = [app.firstName, app.lastName].filter(Boolean).join(' ') || '—';
   const format = applicationFormat(app.payload, app.documents);
   const resume = app.documents.find((d) => d.docType === 'applicant_resume');
+  const verifiedLicenses = app.documents.filter(isVerifiedLicense);
+  const applicantDocuments = groupDocuments(app.documents.filter((d) => !isVerifiedLicense(d)));
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -192,33 +222,27 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
               </div>
             </Section>
 
+            <Section title="Verified License" icon={BadgeCheck}>
+              <VerifiedLicensePanel applicationId={app.id} documents={verifiedLicenses} />
+            </Section>
+
             <Section title="Uploaded documents" icon={FileText}>
-              {app.documents.length === 0 ? (
+              {applicantDocuments.length === 0 ? (
                 <p className="text-sm text-slate-400 italic">No documents uploaded.</p>
               ) : (
-                <ul className="space-y-3">
-                  {app.documents.map((doc) => (
-                    <li key={doc.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          {doc.label && <p className="text-xs font-semibold text-slate-500">{doc.label}</p>}
-                          <p className="text-sm font-medium text-slate-800 truncate">{doc.fileName}</p>
-                        </div>
-                        <a
-                          href={`/api/admin/documents/${id}/${doc.id}`}
-                          download={doc.fileName}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
-                        >
-                          <Download size={13} />
-                          Download
-                        </a>
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {formatFileSize(doc.fileSize)} · {formatDate(doc.uploadedAt)}
-                      </p>
-                    </li>
+                <div className="space-y-4">
+                  {applicantDocuments.map((group, index) => (
+                    <div key={group.label ?? `document-${index}`} className="space-y-1.5">
+                      {group.label && (
+                        <p className="text-xs font-semibold text-slate-500">
+                          {group.label}
+                          {group.documents.length > 1 && ` — ${group.documents.length} attachments`}
+                        </p>
+                      )}
+                      <DocumentList documents={group.documents} applicationId={id} />
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
             </Section>
 

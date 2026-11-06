@@ -215,7 +215,8 @@ describe('onboarding [stepId] real-screen registry', () => {
       const documentsStep = packet.steps.find((s) => s.id === 'documents')!;
       expect(documentsStep.required).toBe(true);
       expect(documentsStep.config?.i9Uploads).toBe(true);
-      expect(documentsStep.config?.requiredUploads).toEqual(['nursing_license', 'cpr_cert']);
+      expect(documentsStep.config?.requiredUploads).toEqual(['cpr_cert']);
+      expect(documentsStep.config?.optionalUploads).toEqual(['nursing_license']);
     }
   });
 

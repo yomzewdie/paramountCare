@@ -7,6 +7,8 @@ import {
   EMPLOYMENT_TYPE_OPTIONS,
   POSITION_OPTIONS,
   SHIFT_PREFERENCE_OPTIONS,
+  clinicalSpecialtyOptionsFor,
+  parseYearsOfExperience,
   requiresUnitPreference,
   type FieldOption,
 } from '@pcs/shared';
@@ -169,6 +171,29 @@ export function EmploymentApplicationSection({
                   values={data.specialtyPreference}
                   onChange={(v) => set('specialtyPreference', v)}
                   error={errors.specialtyPreference}
+                />
+              </div>
+            )}
+
+            <Input
+              label="Total Years of Professional Experience"
+              required
+              inputMode="decimal"
+              placeholder="e.g. 1.5"
+              value={data.totalYearsExperience}
+              onChange={update('totalYearsExperience')}
+              error={errors.totalYearsExperience}
+            />
+
+            {requiresUnitPreference(data.positionApplied) && (
+              <div className="sm:col-span-2">
+                <MultiSelectField
+                  label="Primary Clinical Specialty"
+                  required={parseYearsOfExperience(data.totalYearsExperience) !== 0}
+                  options={clinicalSpecialtyOptionsFor(data.positionApplied)}
+                  values={data.primaryClinicalSpecialty}
+                  onChange={(v) => set('primaryClinicalSpecialty', v)}
+                  error={errors.primaryClinicalSpecialty}
                 />
               </div>
             )}

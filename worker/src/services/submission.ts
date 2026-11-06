@@ -1,9 +1,16 @@
 import {
+  APPLICANT_DOC_TYPES,
+  DIRECT_DEPOSIT_DOC_TYPE,
+  RESUME_DOC_TYPE,
+  VACCINE_PROOF_STEP_BY_DOC_TYPE,
+  documentAttachmentsFor,
   getPacket,
   isStepValid,
   defaultFormData,
   finalizeEmploymentApplication,
+  withDocumentAttachments,
   type OnboardingFormData,
+  type UploadedFile,
   type DirectDepositBankAccount,
   type PacketStep,
   type StepStates,
@@ -13,7 +20,7 @@ import { generateI9Pdf, type I9PdfInput } from '../services/i9pdf';
 import { generateW4Pdf, type W4PdfInput } from '../services/w4pdf';
 import { findSessionById, type OnboardingSessionRow } from '../db/queries/onboardingSessions';
 import { findLiveUploadsForSession, type UploadedDocumentRow } from '../db/queries/uploadedDocuments';
-import { isDocumentActiveForSubmission, activeVaccineProofDocuments } from './vaccineProof';
+import { isDocumentActiveForSubmission, activeVaccineProofDocuments, activeDocumentAttachments } from './vaccineProof';
 import { findApplicationById } from '../db/queries/applications';
 import { insertDocumentIfNotExistsStmt, findDocumentsByApplicationId } from '../db/queries/documents';
 import { insertAuditLogStmt } from '../db/queries/auditLogs';
@@ -76,6 +83,9 @@ function redactSensitiveFormData(data: OnboardingFormData): Record<string, unkno
     employmentApplication: finalizeEmploymentApplication(data.employmentApplication),
     // Same rule as document promotion: no vaccination-proof reference for a vaccine whose final answer is a declination.
     vaccineProofDocuments: activeVaccineProofDocuments(data.vaccineProofDocuments, data.acknowledgements),
+    ...(data.documentAttachments
+      ? { documentAttachments: activeDocumentAttachments(data.documentAttachments, data.acknowledgements) }
+      : {}),
     i9Data: {
       ...data.i9Data,
       ssn: data.i9Data.ssn ? '[redacted]' : '',
@@ -521,17 +531,47 @@ function toI9PdfInput(data: OnboardingFormData, applicationId: string, now: stri
 }
 
 /**
- * The resume step's `resumeDocument` value is only ever written by the
- * ownership-verified association route — but the generic session PATCH can
- * also write any formData key, so for the resume (the one document that is
- * now the applicant's entire work history) readiness is re-derived from the
- * upload ledger itself: a live, owned upload occupying the `applicant_resume`
- * slot of THIS session must exist, or the step is incomplete. Every other
- * step returns true (unchanged behavior).
+ * Final submission's own answer to "is this step's required document real":
+ * re-derived from the upload ledger, not the document references in formData.
+ * The session PATCH can no longer write those references, but a session saved
+ * before it stopped could already hold one — and an object can be deleted out
+ * from under its reference. A required document must be a live, owned upload
+ * occupying its slot in THIS session, or the step is incomplete. Steps with no
+ * required document return true.
  */
-function hasRequiredLedgerUpload(step: PacketStep, liveUploads: UploadedDocumentRow[]): boolean {
-  if (step.type !== 'document_upload' || step.subtype !== 'resume') return true;
-  return liveUploads.some((doc) => doc.doc_type === 'applicant_resume');
+function hasRequiredLedgerUpload(step: PacketStep, formData: OnboardingFormData, liveUploads: UploadedDocumentRow[]): boolean {
+  const has = (docType: string) => liveUploads.some((doc) => doc.doc_type === docType);
+
+  if (step.type === 'document_upload') {
+    if (step.subtype === 'resume') return has(RESUME_DOC_TYPE);
+    const identity = !step.config?.i9Uploads || has('list_a') || (has('list_b') && has('list_c'));
+    return identity && (step.config?.requiredUploads ?? []).every(has);
+  }
+  if (step.type === 'internal_form' && step.subtype === 'direct_deposit') return has(DIRECT_DEPOSIT_DOC_TYPE);
+  if (step.config?.hasDeclination && formData.acknowledgements?.[step.id]?.decision === 'providing_proof') {
+    return Object.entries(VACCINE_PROOF_STEP_BY_DOC_TYPE).some(([docType, stepId]) => stepId === step.id && has(docType));
+  }
+  return true;
+}
+
+/**
+ * The application snapshot's document references, rebuilt from the ledger rows
+ * being promoted — the same files the application's documents will be, with
+ * the ledger's own metadata. A stored reference with no live upload behind it
+ * is dropped. Keeps the applicant's attachment order.
+ */
+function withLedgerDocuments(formData: OnboardingFormData, liveUploads: UploadedDocumentRow[]): OnboardingFormData {
+  let next = formData as unknown as Record<string, unknown>;
+  for (const docType of APPLICANT_DOC_TYPES) {
+    const rows = liveUploads.filter((doc) => doc.doc_type === docType);
+    const order = documentAttachmentsFor(next, docType).map((file) => file.objectKey);
+    const position = (key: string) => (order.includes(key) ? order.indexOf(key) : order.length);
+    const files: UploadedFile[] = [...rows]
+      .sort((a, b) => position(a.object_key) - position(b.object_key))
+      .map((row) => ({ name: row.file_name, size: row.file_size, type: row.content_type, objectKey: row.object_key, uploadedAt: row.uploaded_at }));
+    next = withDocumentAttachments(next, docType, files);
+  }
+  return next as unknown as OnboardingFormData;
 }
 
 /**
@@ -637,7 +677,7 @@ export async function submitSession(
   // are promoted: a vaccination proof uploaded before the applicant switched
   // that vaccine to a declination stays on the (now-submitted) session but
   // never becomes part of the application's documents. Read before the
-  // readiness check because the resume requirement is checked against it.
+  // readiness check because required documents are checked against it.
   const liveUploads: UploadedDocumentRow[] = (
     await findLiveUploadsForSession(env.DB, {
       sessionId: p.sessionId,
@@ -647,7 +687,7 @@ export async function submitSession(
 
   const requiredSteps = packet.steps.filter((s) => s.required && s.type !== 'review');
   const incompleteSteps: IncompleteStepInfo[] = requiredSteps
-    .filter((s) => stepStates[s.id] !== 'completed' || !isStepValid(s.id, effectiveFormData, s) || !hasRequiredLedgerUpload(s, liveUploads))
+    .filter((s) => stepStates[s.id] !== 'completed' || !isStepValid(s.id, effectiveFormData, s) || !hasRequiredLedgerUpload(s, effectiveFormData, liveUploads))
     .map((s) => ({ id: s.id, label: s.label }));
 
   if (incompleteSteps.length > 0) {
@@ -703,7 +743,7 @@ export async function submitSession(
       lastName: session.last_name ?? effectiveFormData.personalInfo.lastName,
       email: session.email ?? effectiveFormData.personalInfo.email,
       phone: session.phone ?? effectiveFormData.personalInfo.phone,
-      payloadJson: JSON.stringify(redactSensitiveFormData(effectiveFormData)),
+      payloadJson: JSON.stringify(redactSensitiveFormData(withLedgerDocuments(effectiveFormData, liveUploads))),
       submittedAt: now,
     }),
     ...liveUploads.map((doc) =>

@@ -10,8 +10,10 @@ import {
   POSITION_WITHOUT_UNIT_PREFERENCE,
   SHIFT_PREFERENCE_OPTIONS,
   SPECIALTY_OPTIONS,
+  VERIFIED_LICENSE_DOC_TYPE,
   formatOptionValues,
   formatPrimarySpecialty,
+  formatYearsOfExperience,
   isoDateToDisplay,
   isoDateToSlash,
 } from '@pcs/shared';
@@ -83,7 +85,7 @@ export function flattenForDisplay(obj: Record<string, unknown> | undefined | nul
 // shapes (free text, single strings, legacy codes) and are rendered as-is via
 // the same helpers; they are never rewritten.
 
-const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app: Record<string, unknown>) => string; legacyOnly?: boolean }[] = [
+const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app: Record<string, unknown>) => string; onlyIfStored?: boolean }[] = [
   { key: 'positionApplied', label: 'Position Applied For', format: (a) => formatOptionValues(a.positionApplied, POSITION_OPTIONS) },
   {
     key: 'specialtyPreference',
@@ -95,6 +97,9 @@ const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app:
       return a.positionApplied === POSITION_WITHOUT_UNIT_PREFERENCE ? 'Not asked (CNA)' : '';
     },
   },
+  // Applications submitted before these questions existed don't have them.
+  { key: 'totalYearsExperience', label: 'Total Years of Professional Experience', format: (a) => formatYearsOfExperience(a.totalYearsExperience), onlyIfStored: true },
+  { key: 'primaryClinicalSpecialty', label: 'Primary Clinical Specialty', format: (a) => formatOptionValues(a.primaryClinicalSpecialty, SPECIALTY_OPTIONS), onlyIfStored: true },
   { key: 'employmentType', label: 'Employment Type', format: (a) => formatOptionValues(a.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) },
   { key: 'shiftPreference', label: 'Shift Preferences', format: (a) => formatOptionValues(a.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) },
   { key: 'availableStartDate', label: 'Available Start Date', format: (a) => (typeof a.availableStartDate === 'string' ? isoDateToDisplay(a.availableStartDate) : '') },
@@ -103,21 +108,25 @@ const EMPLOYMENT_APPLICATION_FIELDS: { key: string; label: string; format: (app:
   { key: 'licenseState', label: 'License State', format: (a) => displayValue('licenseState', a.licenseState) },
   { key: 'licenseExpiration', label: 'License Expiration Date', format: (a) => (typeof a.licenseExpiration === 'string' ? isoDateToDisplay(a.licenseExpiration) : '') },
   // Manual (pre-resume) applications only — never asked of resume-based ones.
-  { key: 'primarySpecialty', label: 'Primary Clinical Specialty', format: (a) => formatPrimarySpecialty(a.primarySpecialty, a.primarySpecialtyOther), legacyOnly: true },
+  { key: 'primarySpecialty', label: 'Primary Clinical Specialty', format: (a) => formatPrimarySpecialty(a.primarySpecialty, a.primarySpecialtyOther), onlyIfStored: true },
 ];
 
-/** Rendered by its owning row (Primary Clinical Specialty), never on its own. */
+/** Rendered by its owning row (the legacy specialty), never on its own. */
 const EMPLOYMENT_APPLICATION_CONSUMED_KEYS = new Set(['primarySpecialtyOther']);
 
 /** Curated rows for the employment application: known fields first, with
  * human labels and values; any other field falls back to the generic rows.
- * A legacy-only field appears only when the stored application has it. */
+ * An `onlyIfStored` field appears only when the stored application has it. */
 export function employmentApplicationRows(app: Record<string, unknown> | undefined | null): [string, string][] {
   if (!app) return [];
   const known = new Set(EMPLOYMENT_APPLICATION_FIELDS.map((f) => f.key));
   const curated = EMPLOYMENT_APPLICATION_FIELDS
-    .filter(({ key, legacyOnly }) => !legacyOnly || key in app)
-    .map(({ label, format }): [string, string] => [label, format(app) || '—']);
+    .filter(({ key, onlyIfStored }) => !onlyIfStored || key in app)
+    .map(({ key, label, format }): [string, string] => [
+      // An application holding both answers keeps them distinguishable.
+      key === 'primarySpecialty' && 'primaryClinicalSpecialty' in app ? `${label} (legacy)` : label,
+      format(app) || '—',
+    ]);
   const rest = Object.fromEntries(
     Object.entries(app).filter(([k]) => !known.has(k) && !EMPLOYMENT_APPLICATION_CONSUMED_KEYS.has(k)),
   );
@@ -197,3 +206,28 @@ export const APPLICATION_FORMAT_LABELS: Record<ApplicationFormat, string> = {
   resume: 'Resume-based application',
   manual: 'Manual work-history application (legacy)',
 };
+
+// ── Documents ───────────────────────────────────────────────────────────────
+
+interface DisplayDocument {
+  docType: string | null;
+  label: string | null;
+}
+
+/** Staff-provided verification, shown apart from what the applicant uploaded. */
+export function isVerifiedLicense(doc: Pick<DisplayDocument, 'docType'>): boolean {
+  return doc.docType === VERIFIED_LICENSE_DOC_TYPE;
+}
+
+/** Documents grouped by requirement, in first-seen order, so several
+ * attachments for one requirement read as one item. A document with no label
+ * (generated forms, legacy rows) stands alone. */
+export function groupDocuments<T extends DisplayDocument>(documents: T[]): { label: string | null; documents: T[] }[] {
+  const groups: { label: string | null; documents: T[] }[] = [];
+  for (const doc of documents) {
+    const existing = doc.label ? groups.find((g) => g.label === doc.label) : undefined;
+    if (existing) existing.documents.push(doc);
+    else groups.push({ label: doc.label, documents: [doc] });
+  }
+  return groups;
+}

@@ -11,6 +11,7 @@ import { useDocumentSlot } from '../documents/useDocumentSlot';
 import {
   IDENTITY_SLOTS,
   resolveRequiredSlots,
+  resolveOptionalSlots,
   isIdentityGroupSatisfied,
   deriveCurrentIdentityPath,
   type DocumentSlotDef,
@@ -64,6 +65,7 @@ export function useDocumentsForm() {
 
   const step = session ? getPacket(session.packetId)?.steps.find((s) => s.id === STEP_ID) : undefined;
   const requiredSlots = useMemo(() => resolveRequiredSlots(step), [step]);
+  const optionalSlots = useMemo(() => resolveOptionalSlots(step), [step]);
   const requiredDocTypes = useMemo(() => new Set(requiredSlots.map((s) => s.docType)), [requiredSlots]);
   const identityRequired = requiredDocTypes.has('list_a');
 
@@ -247,6 +249,8 @@ export function useDocumentsForm() {
   return {
     /** Every required slot, in packet order (identity first). */
     requiredSlots,
+    /** Documents this packet offers but doesn't require. */
+    optionalSlots,
     /** The session's stored uploads for this step. */
     documents,
     identityRequired,

@@ -72,25 +72,27 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('useDocumentsForm', () => {
   describe('required document set (sourced from packets.ts, not hardcoded)', () => {
-    it('resolves the real required set: I-9 identity (3 slots) + nursing license + CPR cert, for general_rn', () => {
+    it('resolves the real required set: I-9 identity (3 slots) + CPR cert, with the license optional, for general_rn', () => {
       setupSession(fakeSession({ packetId: 'general_rn' }));
       const { result } = renderHook(() => useDocumentsForm());
       expect(result.current.visibleIdentitySlots.map((s) => s.docType)).toEqual(['list_a', 'list_b', 'list_c']);
-      expect(result.current.visibleCredentialSlots.map((s) => s.docType).sort()).toEqual(['cpr_cert', 'nursing_license']);
+      expect(result.current.visibleCredentialSlots.map((s) => s.docType)).toEqual(['cpr_cert']);
+      expect(result.current.optionalSlots.map((s) => s.docType)).toEqual(['nursing_license']);
     });
 
     it('resolves the identical required set for icu_rn — no packet/role difference exists in the current source', () => {
       setupSession(fakeSession({ packetId: 'icu_rn' }));
       const { result } = renderHook(() => useDocumentsForm());
       expect(result.current.visibleIdentitySlots.map((s) => s.docType)).toEqual(['list_a', 'list_b', 'list_c']);
-      expect(result.current.visibleCredentialSlots.map((s) => s.docType).sort()).toEqual(['cpr_cert', 'nursing_license']);
+      expect(result.current.visibleCredentialSlots.map((s) => s.docType)).toEqual(['cpr_cert']);
+      expect(result.current.optionalSlots.map((s) => s.docType)).toEqual(['nursing_license']);
     });
 
-    it('has no optional document slots today — none exist in the real business process, confirmed rather than invented', () => {
+    it('the professional license is the one optional document, and is never among the required slots', () => {
       setupSession(fakeSession());
       const { result } = renderHook(() => useDocumentsForm());
-      const allVisible = [...result.current.visibleIdentitySlots, ...result.current.visibleCredentialSlots];
-      expect(allVisible.every((s) => !s.optional)).toBe(true);
+      expect(result.current.optionalSlots.map((s) => s.docType)).toEqual(['nursing_license']);
+      expect(result.current.requiredSlots.map((s) => s.docType)).not.toContain('nursing_license');
     });
   });
 
@@ -111,7 +113,7 @@ describe('useDocumentsForm', () => {
       expect(outcome).toEqual({ kind: 'invalid' });
       expect(saveStep).not.toHaveBeenCalled();
       expect(result.current.errors.i9).toBeTruthy();
-      expect(result.current.errors.nursingLicense).toBeTruthy();
+      expect(result.current.errors.nursingLicense).toBeUndefined(); // optional
       expect(result.current.errors.cprCertification).toBeTruthy();
     });
 
@@ -148,16 +150,15 @@ describe('useDocumentsForm', () => {
       expect(result.current.identitySatisfied).toBe(false);
     });
 
-    it('a missing nursing license alone blocks completion even when everything else is uploaded', async () => {
+    it('a missing professional license does not block completion: it is optional', async () => {
       setupSession(fakeSession({ formData: { uploadedDocuments: { listA: VALID_UPLOAD, listB: null, listC: null, nursingLicense: null, cprCertification: VALID_UPLOAD } } }));
       const { result } = renderHook(() => useDocumentsForm());
 
       let outcome;
       await act(async () => { outcome = await result.current.complete(); });
 
-      expect(outcome).toEqual({ kind: 'invalid' });
-      expect(result.current.errors.nursingLicense).toBeTruthy();
-      expect(result.current.errors.cprCertification).toBeUndefined();
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(result.current.errors.nursingLicense).toBeUndefined();
     });
 
     it('removing a previously-uploaded required document makes the step incomplete again', async () => {

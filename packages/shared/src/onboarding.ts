@@ -67,13 +67,13 @@ export interface I9Data {
 // ── Employment Application ("Applicant Details") ────────────────────────────
 // Source: Paramount Care Staffing Application for Employment.
 //
-// Resume-first onboarding: work history, clinical experience, and other
-// details an applicant's resume already carries are no longer collected as
-// structured fields — the uploaded resume (`OnboardingFormData.resumeDocument`)
-// replaces them. What remains here is only what a resume cannot reliably
-// supply and Paramount still needs structured: placement preferences,
-// license details for verification, eligibility/background disclosures, and
-// an emergency contact. Fields marked "Legacy" below were collected before
+// Resume-first onboarding: work history (employers, titles, dates) is not
+// collected as structured fields — the uploaded resume
+// (`OnboardingFormData.resumeDocument`) replaces it. What remains here is only
+// what a resume cannot reliably supply and Paramount still needs structured:
+// placement preferences, the qualification summary (total years, clinical
+// areas), license details for verification, eligibility/background
+// disclosures, and an emergency contact. Fields marked "Legacy" below were collected before
 // that change; they are never asked, required, or defaulted anymore, but
 // older sessions and submitted applications still hold them and remain
 // readable.
@@ -87,6 +87,10 @@ export interface EmploymentApplicationData {
   shiftPreference: string[];       // 'am' | 'mid' | 'pm' (multi-select). Legacy: 'day' | 'evening' | 'night' | 'any'
   employmentType: string[];        // 'per_diem_assignment' | 'travel_assignment' (multi-select). Legacy: one string, incl. 'full_time' | 'part_time' | 'per_diem'
   availableStartDate: string;      // YYYY-MM-DD, optional
+
+  // Qualification summary — applicant-entered, never derived from the resume.
+  totalYearsExperience: string;    // total years of professional experience, e.g. '1' or '2.5'; minimums per position in employmentApplication.ts
+  primaryClinicalSpecialty: string[]; // clinical areas where the applicant HAS experience: codes from SPECIALTY_CODES_BY_POSITION (multi-select); ['cna'] for a CNA; may be empty at 0 years
 
   // Professional license — structured for license verification/credentialing
   licenseType: string;             // license/credential held: 'RN' | 'LVN' | 'NP' | 'CNA' | 'other' (distinct from positionApplied)
@@ -112,9 +116,9 @@ export interface EmploymentApplicationData {
   emergencyContactPhone: string;
 
   // ── Legacy (manual work-history application) — read-only ─────────────────
-  /** @deprecated Legacy only — covered by the resume. */
+  /** @deprecated Legacy only — replaced by totalYearsExperience. */
   yearsExperience?: string;
-  /** @deprecated Legacy only — covered by the resume. Specialty code or 'other'; older values may be free text. */
+  /** @deprecated Legacy only — replaced by primaryClinicalSpecialty. Specialty code or 'other'; older values may be free text. */
   primarySpecialty?: string;
   /** @deprecated Legacy only — accompanies primarySpecialty === 'other'. */
   primarySpecialtyOther?: string;
@@ -384,6 +388,10 @@ export interface OnboardingFormData {
    * screenshot showing the routing and account numbers. (The upload slot's
    * doc_type stays `direct_deposit_voided_check` for stored-data compatibility.) */
   directDepositProofDocument: UploadedFile | null;
+  /** The full attachment list of any document requirement holding two or more
+   * files, keyed by doc_type; each requirement's own field above always holds
+   * its first attachment. Server-owned — see documentAttachments.ts. */
+  documentAttachments?: Record<string, UploadedFile[]>;
 }
 
 // ── Step identifier ───────────────────────────────────────────────────────────

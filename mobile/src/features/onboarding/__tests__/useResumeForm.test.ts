@@ -162,6 +162,7 @@ describe('useResumeForm — upload', () => {
     await act(async () => { await result.current.slot.capture.confirmUse(); });
     expect(result.current.slot.status).toBe('failed');
     expect(result.current.slot.errorMessage).toBe('Your resume must be a PDF, DOC, or DOCX file.');
+    await act(async () => { result.current.slot.cancelFailed(); });
     expect(mockedDeleteUpload).toHaveBeenCalledWith(RESUME.objectKey);
   });
 

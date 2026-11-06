@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
 import { requireRole } from '../middleware/requireRole';
@@ -7,10 +8,20 @@ import {
   listApplications,
   type ApplicationListRow,
 } from '../db/queries/applications';
-import { findDocumentsByApplicationId, findDocumentByIdForApplication } from '../db/queries/documents';
-import { findAuditLogsByApplicationId } from '../db/queries/auditLogs';
-import { ALLOWED_TYPES as ALLOWED_UPLOAD_CONTENT_TYPES } from './uploads';
+import {
+  findDocumentsByApplicationId,
+  findDocumentByIdForApplication,
+  insertAdminDocumentStmt,
+  insertVerifiedLicenseIfExistsStmt,
+  insertVerifiedLicenseAuditIfExistsStmt,
+  deleteVerifiedLicenseStmt,
+  type DocumentRow,
+} from '../db/queries/documents';
+import { findAuditLogsByApplicationId, insertAuditLogStmt } from '../db/queries/auditLogs';
+import { ALLOWED_TYPES as ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_SIZE_BYTES } from './uploads';
 import { buildContentDisposition } from '../utils/contentDisposition';
+import { generateVerifiedLicenseObjectKey } from '../utils/objectKey';
+import { VERIFIED_LICENSE_DOC_TYPE } from '@pcs/shared';
 
 export const admin = new Hono<AppEnv>();
 
@@ -185,6 +196,195 @@ admin.get('/application/:id/documents/:documentId/download', async (c) => {
   headers.set('X-Content-Type-Options', 'nosniff');
 
   return new Response(obj.body, { headers });
+});
+
+// ── Verified License ─────────────────────────────────────────────────────────
+//
+// A recruiter's own license verification, stored beside (never over) whatever
+// the applicant uploaded. Authorized by the router-level requireAuth +
+// requireRole above; no applicant route can reach it — `verified_license` is
+// not an applicant document type, and the object has no row in the applicant
+// upload ledger, so applicant association and delete both refuse it.
+const VERIFIED_LICENSE_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+
+type StoredVerifiedLicense =
+  | { ok: true; file: File; objectKey: string; uploadedAt: string }
+  | { ok: false; response: Response };
+
+/** Validates the request's file and writes it to private R2. */
+async function storeVerifiedLicenseFile(c: Context<AppEnv>, applicationId: string): Promise<StoredVerifiedLicense> {
+  let formData: FormData;
+  try {
+    formData = await c.req.raw.formData();
+  } catch {
+    return { ok: false, response: c.json({ error: 'Expected multipart/form-data.' }, 400) };
+  }
+
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { ok: false, response: c.json({ error: 'Missing or invalid field: file.' }, 400) };
+  if (!VERIFIED_LICENSE_CONTENT_TYPES.has(file.type)) {
+    return { ok: false, response: c.json({ error: 'A verified license must be a PDF, JPG, or PNG file.' }, 415) };
+  }
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) return { ok: false, response: c.json({ error: 'File exceeds the 10 MB size limit.' }, 413) };
+
+  const objectKey = generateVerifiedLicenseObjectKey(applicationId, file.name);
+  try {
+    await c.env.UPLOADS_BUCKET.put(objectKey, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type, contentDisposition: buildContentDisposition(file.name) },
+    });
+  } catch (e) {
+    console.error('[admin] verified license R2 put failed:', e);
+    return { ok: false, response: c.json({ error: 'Storage error. Please try again.' }, 500) };
+  }
+  return { ok: true, file, objectKey, uploadedAt: new Date().toISOString() };
+}
+
+/** Best-effort: the record is already gone, so a failure here only leaves an
+ * unreferenced private object behind, which is logged and never reported as a
+ * failed request. */
+async function deleteVerifiedLicenseObject(c: Context<AppEnv>, objectKey: string): Promise<void> {
+  try {
+    await c.env.UPLOADS_BUCKET.delete(objectKey);
+  } catch (e) {
+    console.error('[admin] verified license R2 delete failed:', e);
+  }
+}
+
+/** The Verified License named by the URL. An id belonging to another
+ * application, or to any other kind of document, simply isn't found. */
+async function findVerifiedLicense(c: Context<AppEnv>, applicationId: string): Promise<DocumentRow | null> {
+  const documentId = Number(c.req.param('documentId'));
+  if (!Number.isInteger(documentId) || documentId <= 0) return null;
+  const doc = await findDocumentByIdForApplication(c.env.DB, documentId, applicationId);
+  return doc?.doc_type === VERIFIED_LICENSE_DOC_TYPE ? doc : null;
+}
+
+const VERIFIED_LICENSE_NOT_FOUND = { error: 'Verified license not found for this application' };
+
+// ── POST /api/admin/application/:id/verified-license ─────────────────────────
+//
+// Each upload is a new document, so earlier verifications remain on record.
+admin.post('/application/:id/verified-license', async (c) => {
+  const applicationId = c.req.param('id');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const app = await findApplicationById(c.env.DB, applicationId);
+  if (!app) return c.json({ error: 'Application not found' }, 404);
+
+  const stored = await storeVerifiedLicenseFile(c, applicationId);
+  if (!stored.ok) return stored.response;
+  const { file, objectKey, uploadedAt } = stored;
+
+  try {
+    await c.env.DB.batch([
+      insertAdminDocumentStmt(c.env.DB, {
+        applicationId,
+        objectKey,
+        fileName: file.name,
+        fileSize: file.size,
+        uploadedAt,
+        docType: VERIFIED_LICENSE_DOC_TYPE,
+      }),
+      insertAuditLogStmt(c.env.DB, {
+        applicationId,
+        action: 'verified_license_uploaded',
+        metadataJson: JSON.stringify({ adminId: payload.uid, fileName: file.name }),
+        createdAt: uploadedAt,
+      }),
+    ]);
+  } catch (e) {
+    console.error('[admin] verified license record insert failed:', e);
+    await deleteVerifiedLicenseObject(c, objectKey);
+    return c.json({ error: 'Storage error. Please try again.' }, 500);
+  }
+
+  return c.json({ docType: VERIFIED_LICENSE_DOC_TYPE, fileName: file.name, fileSize: file.size, uploadedAt }, 201);
+});
+
+// ── PUT /api/admin/application/:id/verified-license/:documentId — replace ────
+//
+// The new record replaces the old one in a single batch, so the application is
+// never left with neither. Only then is the old object deleted.
+admin.put('/application/:id/verified-license/:documentId', async (c) => {
+  const applicationId = c.req.param('id');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const existing = await findVerifiedLicense(c, applicationId);
+  if (!existing) return c.json(VERIFIED_LICENSE_NOT_FOUND, 404);
+
+  const stored = await storeVerifiedLicenseFile(c, applicationId);
+  if (!stored.ok) return stored.response;
+  const { file, objectKey, uploadedAt } = stored;
+
+  const ref = { documentId: existing.id, applicationId };
+  let won: boolean;
+  try {
+    const results = await c.env.DB.batch([
+      insertVerifiedLicenseAuditIfExistsStmt(c.env.DB, ref, {
+        action: 'verified_license_replaced',
+        metadataJson: JSON.stringify({ adminId: payload.uid, fileName: file.name, replacedFileName: existing.file_name }),
+        createdAt: uploadedAt,
+      }),
+      insertVerifiedLicenseIfExistsStmt(c.env.DB, ref, {
+        applicationId,
+        objectKey,
+        fileName: file.name,
+        fileSize: file.size,
+        uploadedAt,
+        docType: VERIFIED_LICENSE_DOC_TYPE,
+      }),
+      deleteVerifiedLicenseStmt(c.env.DB, ref),
+    ]);
+    won = (results[results.length - 1].meta.changes ?? 0) > 0;
+  } catch (e) {
+    console.error('[admin] verified license replace failed:', e);
+    await deleteVerifiedLicenseObject(c, objectKey);
+    return c.json({ error: 'Storage error. Please try again.' }, 500);
+  }
+
+  if (!won) {
+    // Another request replaced or removed it first; nothing here was recorded.
+    await deleteVerifiedLicenseObject(c, objectKey);
+    return c.json(VERIFIED_LICENSE_NOT_FOUND, 404);
+  }
+
+  await deleteVerifiedLicenseObject(c, existing.object_key);
+  return c.json({ docType: VERIFIED_LICENSE_DOC_TYPE, fileName: file.name, fileSize: file.size, uploadedAt }, 200);
+});
+
+// ── DELETE /api/admin/application/:id/verified-license/:documentId — remove ──
+//
+// For a mistaken upload. The audit log keeps the record that it existed.
+admin.delete('/application/:id/verified-license/:documentId', async (c) => {
+  const applicationId = c.req.param('id');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const existing = await findVerifiedLicense(c, applicationId);
+  if (!existing) return c.json(VERIFIED_LICENSE_NOT_FOUND, 404);
+
+  const ref = { documentId: existing.id, applicationId };
+  let won: boolean;
+  try {
+    const results = await c.env.DB.batch([
+      insertVerifiedLicenseAuditIfExistsStmt(c.env.DB, ref, {
+        action: 'verified_license_removed',
+        metadataJson: JSON.stringify({ adminId: payload.uid, fileName: existing.file_name }),
+        createdAt: new Date().toISOString(),
+      }),
+      deleteVerifiedLicenseStmt(c.env.DB, ref),
+    ]);
+    won = (results[results.length - 1].meta.changes ?? 0) > 0;
+  } catch (e) {
+    console.error('[admin] verified license remove failed:', e);
+    return c.json({ error: 'Storage error. Please try again.' }, 500);
+  }
+
+  if (!won) return c.json(VERIFIED_LICENSE_NOT_FOUND, 404);
+  await deleteVerifiedLicenseObject(c, existing.object_key);
+  return c.json({ success: true }, 200);
 });
 
 // Re-exported for existing callers/tests; lives in utils so the upload route

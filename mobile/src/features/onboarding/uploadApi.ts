@@ -96,9 +96,9 @@ export async function uploadFile(picked: PickedFile): Promise<UploadFileResult> 
     // reported as "Unable to reach Paramount Care" (that would send the
     // applicant chasing their connection for a problem their connection
     // had nothing to do with). Kept wrapped rather than left to propagate:
-    // useFileAttachment.doUpload has no try/catch of its own around this
-    // call, so an uncaught throw here would leave attachment state stuck
-    // at 'uploading' forever instead of surfacing a retryable failure.
+    // useDocumentSlot has no try/catch of its own around this call, so an
+    // uncaught throw here would leave attachment state stuck at 'uploading'
+    // forever instead of surfacing a retryable failure.
     return { ok: false, error: appError('unknown') };
   }
 

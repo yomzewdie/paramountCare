@@ -26,7 +26,7 @@ const REQUIRED_EXTENSION: Record<string, RegExp> = {
   [DOC_MIME_TYPE]: /\.doc$/i,
   [DOCX_MIME_TYPE]: /\.docx$/i,
 };
-const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const uploads = new Hono<AppEnv>();
 
@@ -71,7 +71,7 @@ uploads.post('/', async (c) => {
     return c.json({ success: false, error: 'The file name does not match its file type.' }, 415);
   }
 
-  if (entry.size > MAX_SIZE) {
+  if (entry.size > MAX_UPLOAD_SIZE_BYTES) {
     return c.json({ success: false, error: 'File exceeds the 10 MB size limit.' }, 413);
   }
 

@@ -19,11 +19,13 @@ import { defaultEmploymentReference } from './onboarding';
 import {
   EMPLOYMENT_TYPE_OPTIONS,
   LICENSE_TYPE_OPTIONS,
+  MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION,
   POSITION_OPTIONS,
   SHIFT_PREFERENCE_OPTIONS,
   activeSpecialtySelections,
   isOptionValue,
   normalizeEmploymentApplication,
+  parseYearsOfExperience,
   requiresUnitPreference,
 } from './employmentApplication';
 import { ageOnDate, isValidIsoDate, isoDateOf } from './dates';
@@ -107,9 +109,12 @@ export function validatePersonalInfo(data: PersonalInfo, asOf: Date = new Date()
 // — string unit/shift values, missing new keys — can never crash this; a
 // legacy value that isn't an allowed choice is simply reported invalid.
 // Hidden CNA unit selections are ignored here, never required to be cleared.
-// Resume-first onboarding: experience/work-history fields (years of
-// experience, primary specialty, …) are covered by the resume and are not
-// validated at all — a legacy value is neither required nor rejected.
+// Resume-first onboarding: work history is covered by the resume and is not
+// validated at all — a legacy value is neither required nor rejected. Total
+// years of experience and Primary Clinical Specialty are the structured
+// qualification summary; the per-position minimum is checked here, so the
+// mobile form, step completion and the Worker's final submission all apply it
+// to whatever position is currently selected.
 export function validateEmploymentApplication(raw: EmploymentApplicationData): FieldErrors {
   const errors: FieldErrors = {};
   const data = normalizeEmploymentApplication(raw);
@@ -126,6 +131,29 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
     if (activeSpecialtySelections(data.positionApplied, data.specialtyPreference).length === 0) {
       errors.specialtyPreference = 'Select at least one specialty / unit preference';
     }
+  }
+
+  const totalYears = data.totalYearsExperience.trim();
+  const years = parseYearsOfExperience(totalYears);
+  if (!totalYears) {
+    errors.totalYearsExperience = 'Total years of professional experience is required';
+  } else if (years === null) {
+    errors.totalYearsExperience = 'Enter your total years as a number, such as 1, 1.5, or 2.5';
+  } else {
+    const minimum = MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION[data.positionApplied];
+    if (minimum !== undefined && years < minimum) {
+      errors.totalYearsExperience = `${data.positionApplied} applicants need at least ${minimum} ${minimum === 1 ? 'year' : 'years'} of professional experience.`;
+    }
+  }
+
+  // Experience in a clinical area only exists with experience at all: a new
+  // graduate (0 years) is never made to invent a specialty.
+  if (
+    years !== null && years > 0 &&
+    requiresUnitPreference(data.positionApplied) && isOptionValue(POSITION_OPTIONS, data.positionApplied) &&
+    activeSpecialtySelections(data.positionApplied, data.primaryClinicalSpecialty).length === 0
+  ) {
+    errors.primaryClinicalSpecialty = 'Select at least one primary clinical specialty';
   }
 
   if (data.shiftPreference.length === 0) {
@@ -319,6 +347,8 @@ export function validateSafety(data: SafetyEducationData): FieldErrors {
 // across every packet today, confirmed by reading the actual definitions,
 // not assumed), never a hardcoded list, so a future packet with a
 // different document set is a config change here, not a code change.
+// `optionalUploads` (today the applicant's professional license, per UAT
+// feedback) are offered but never checked here.
 // `UploadedFile` values in `formData.uploadedDocuments` only ever arrive
 // via the ownership-verified session-association endpoint (M13/M13
 // hardening) — a locally-picked-but-not-yet-uploaded, failed, or orphaned

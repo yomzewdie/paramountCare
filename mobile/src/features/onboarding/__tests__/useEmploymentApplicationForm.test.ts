@@ -42,6 +42,7 @@ const VALID_APPLICATION = {
   licenseNumber: 'RN123456',
   licenseState: 'CA',
   licenseExpiration: '2027-01-01',
+  totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
   authorizedToWork: true,
   hasConviction: false,
   hasLicenseDiscipline: false,
@@ -495,5 +496,55 @@ describe('useEmploymentApplicationForm — UAT feedback fields', () => {
     const { result } = renderHook(() => useEmploymentApplicationForm());
     expect(result.current.data.specialtyPreference).toEqual(['icu']);
     expect(result.current.data.shiftPreference).toEqual(['am']);
+  });
+});
+
+describe('useEmploymentApplicationForm — experience and clinical specialty', () => {
+  it('blocks progression below the minimum, with a clear message, and saves nothing', async () => {
+    const saveStep = jest.fn();
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: 'RN', licenseType: 'RN', totalYearsExperience: '1.9' } } }), saveStep);
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    let outcome;
+    await act(async () => { outcome = await result.current.complete(); });
+    expect(outcome).toEqual({ kind: 'invalid' });
+    expect(saveStep).not.toHaveBeenCalled();
+    expect(result.current.errors.totalYearsExperience).toBe('RN applicants need at least 2 years of professional experience.');
+  });
+
+  it('Save Progress still saves an answer below the minimum', async () => {
+    const saveStep = jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() });
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, totalYearsExperience: '0.5' } } }), saveStep);
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    let outcome;
+    await act(async () => { outcome = await result.current.saveProgress(); });
+    expect(outcome).toEqual({ kind: 'saved' });
+  });
+
+  it('changing the position re-evaluates the rule and shows the message right away', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: 'CNA', licenseType: 'CNA', totalYearsExperience: '1.5' } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    expect(result.current.errors.totalYearsExperience).toBeUndefined();
+    act(() => result.current.setField('positionApplied', 'RN'));
+    expect(result.current.errors.totalYearsExperience).toBe('RN applicants need at least 2 years of professional experience.');
+    act(() => result.current.setField('positionApplied', 'Tech'));
+    expect(result.current.errors.totalYearsExperience).toBeUndefined();
+  });
+
+  it('Primary Clinical Specialty toggles several values, separately from the unit preference', () => {
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, specialtyPreference: ['icu'], primaryClinicalSpecialty: [] } } }));
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    act(() => result.current.toggleSelection('primaryClinicalSpecialty', 'er'));
+    act(() => result.current.toggleSelection('primaryClinicalSpecialty', 'or'));
+    act(() => result.current.toggleSelection('primaryClinicalSpecialty', 'er'));
+    expect(result.current.data.primaryClinicalSpecialty).toEqual(['or']);
+    expect(result.current.data.specialtyPreference).toEqual(['icu']);
+  });
+
+  it('saving a CNA stores the canonical value for Primary Clinical Specialty too', async () => {
+    const saveStep = jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() });
+    setupSession(fakeSession({ formData: { employmentApplication: { ...VALID_APPLICATION, positionApplied: 'CNA', licenseType: 'CNA', totalYearsExperience: '1', specialtyPreference: [], primaryClinicalSpecialty: [] } } }), saveStep);
+    const { result } = renderHook(() => useEmploymentApplicationForm());
+    await act(async () => { await result.current.complete(); });
+    expect(saveStep.mock.calls[0][0].stepData).toMatchObject({ specialtyPreference: ['cna'], primaryClinicalSpecialty: ['cna'] });
   });
 });

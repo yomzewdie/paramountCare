@@ -1,7 +1,7 @@
 import { renderHook, act } from '@testing-library/react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { useDocumentCapture } from '../useDocumentCapture';
+import { useDocumentCapture, discardCapturedFile } from '../useDocumentCapture';
 import { VOIDED_CHECK_REQUIREMENT } from '../documentRequirements';
 
 jest.mock('expo-image-picker', () => ({
@@ -29,6 +29,9 @@ let mockFileSize = 12345;
 jest.mock('expo-file-system', () => ({
   File: jest.fn().mockImplementation(() => ({ get exists() { return mockFileExists; }, get size() { return mockFileSize; }, delete: mockFileDelete })),
 }));
+
+const mockMerge = jest.fn();
+jest.mock('../scanPdf', () => ({ mergeScannedPagesToPdf: (...args: unknown[]) => mockMerge(...args) }));
 
 const mockManipulate = jest.fn();
 jest.mock('expo-image-manipulator', () => ({
@@ -99,6 +102,121 @@ describe('useDocumentCapture', () => {
 
       expect(result.current.permissionError).toMatch(/document scanner/i);
       expect(result.current.pending).toBeNull();
+    });
+  });
+
+  describe('scan — multiple pages', () => {
+    const PAGES = ['file:///cache/p1.jpg', 'file:///cache/p2.jpg', 'file:///cache/p3.jpg'];
+
+    it('never limits how many pages the scanner may capture', async () => {
+      mockScanDocument.mockResolvedValue({ status: 'cancel' });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.scan(); });
+      expect(mockScanDocument.mock.calls[0][0].maxNumDocuments).toBeUndefined();
+    });
+
+    it('merges every scanned page into ONE PDF, and removes the page images', async () => {
+      mockScanDocument.mockResolvedValue({ status: 'success', scannedImages: PAGES });
+      mockMerge.mockResolvedValue({ uri: 'file:///cache/scan-1.pdf', size: 2048 });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+
+      await act(async () => { await result.current.scan(); });
+
+      expect(mockMerge).toHaveBeenCalledWith(PAGES, VOIDED_CHECK_REQUIREMENT.maxSizeBytes);
+      expect(result.current.pendingItems).toHaveLength(1);
+      expect(result.current.pending).toMatchObject({
+        picked: { uri: 'file:///cache/scan-1.pdf', name: 'scanned-document.pdf', type: 'application/pdf', size: 2048 },
+        issue: null,
+        isTemporaryFile: true,
+        pageCount: 3,
+      });
+      expect(mockFileDelete).toHaveBeenCalledTimes(3);
+    });
+
+    it('a single page stays the scanner image, with no PDF step', async () => {
+      mockScanDocument.mockResolvedValue({ status: 'success', scannedImages: [PAGES[0]] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.scan(); });
+      expect(mockMerge).not.toHaveBeenCalled();
+      expect(result.current.pending?.picked.type).toBe('image/jpeg');
+    });
+
+    it('a merge failure is reported, leaving nothing to upload', async () => {
+      mockScanDocument.mockResolvedValue({ status: 'success', scannedImages: PAGES });
+      mockMerge.mockResolvedValue(null);
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.scan(); });
+      expect(result.current.pending).toBeNull();
+      expect(result.current.permissionError).toMatch(/combine those pages/i);
+    });
+
+    it('a merged scan still over the upload limit is blocked by the normal size check', async () => {
+      mockScanDocument.mockResolvedValue({ status: 'success', scannedImages: PAGES });
+      mockMerge.mockResolvedValue({ uri: 'file:///cache/scan-1.pdf', size: 11 * 1024 * 1024 });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.scan(); });
+      expect(result.current.pending?.issue).toMatch(/too large/i);
+    });
+  });
+
+  describe('pickFromLibrary — multiple photos', () => {
+    const asset = (name: string, extra = {}) => ({ uri: `file:///library/${name}`, fileName: name, mimeType: 'image/jpeg', fileSize: 100, width: 1200, height: 800, ...extra });
+
+    it('offers multiple selection, in the order chosen, up to the limit per pick', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: true });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.pickFromLibrary({ selectionLimit: 18 }); });
+      expect(mockedLaunchLibrary).toHaveBeenCalledWith(expect.objectContaining({ allowsMultipleSelection: true, selectionLimit: 10, orderedSelection: true }));
+    });
+
+    it('keeps every selected photo rather than only the first', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [asset('a.jpg'), asset('b.jpg'), asset('c.jpg')] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.pickFromLibrary({ selectionLimit: 10 }); });
+      expect(result.current.pendingItems.map((i) => i.picked.name)).toEqual(['a.jpg', 'b.jpg', 'c.jpg']);
+
+      const onUse = jest.fn();
+      await act(async () => { await result.current.confirmUse(onUse); });
+      expect(onUse.mock.calls[0][0]).toHaveLength(3);
+      expect(result.current.pendingItems).toEqual([]);
+    });
+
+    it('one unusable photo blocks Use until it is removed, keeping the others', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [asset('a.jpg'), asset('tiny.jpg', { width: 10, height: 10 })] });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.pickFromLibrary({ selectionLimit: 10 }); });
+
+      const onUse = jest.fn();
+      await act(async () => { await result.current.confirmUse(onUse); });
+      expect(onUse).not.toHaveBeenCalled();
+
+      act(() => result.current.removePending(1));
+      expect(result.current.pendingItems.map((i) => i.picked.name)).toEqual(['a.jpg']);
+      await act(async () => { await result.current.confirmUse(onUse); });
+      expect(onUse).toHaveBeenCalledTimes(1);
+    });
+
+    it('each HEIC photo in a selection is normalized on its own', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [asset('a.jpg'), asset('b.heic', { mimeType: 'image/heic' })] });
+      mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/b.jpg', width: 1200, height: 800 });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.pickFromLibrary({ selectionLimit: 10 }); });
+      expect(result.current.pendingItems.map((i) => [i.picked.type, i.isTemporaryFile])).toEqual([['image/jpeg', false], ['image/jpeg', true]]);
+    });
+
+    it('Retake discards the whole selection, deleting only temp files', async () => {
+      mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
+      mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [asset('a.jpg'), asset('b.heic', { mimeType: 'image/heic' })] });
+      mockNormalizationSucceeds({ uri: 'file:///cache/ImageManipulator/b.jpg', width: 1200, height: 800 });
+      const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
+      await act(async () => { await result.current.pickFromLibrary({ selectionLimit: 10 }); });
+      act(() => result.current.retake());
+      expect(result.current.pendingItems).toEqual([]);
+      expect(mockFileDelete).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -263,7 +381,7 @@ describe('useDocumentCapture', () => {
         const onUseDocument = jest.fn().mockResolvedValue(undefined);
         await act(async () => { await result.current.confirmUse(onUseDocument); });
 
-        expect(onUseDocument).toHaveBeenCalledWith(expect.objectContaining({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', type: 'image/jpeg' }));
+        expect(onUseDocument.mock.calls[0][0][0].picked).toEqual(expect.objectContaining({ uri: 'file:///cache/ImageManipulator/normalized123.jpg', type: 'image/jpeg' }));
       });
     });
 
@@ -394,7 +512,7 @@ describe('useDocumentCapture', () => {
       const onUseDocument = jest.fn().mockResolvedValue(undefined);
       await act(async () => { await result.current.confirmUse(onUseDocument); });
 
-      expect(onUseDocument).toHaveBeenCalledWith(expect.objectContaining({ uri: 'file:///cache/scan1.jpg' }));
+      expect(onUseDocument.mock.calls[0][0][0].picked).toEqual(expect.objectContaining({ uri: 'file:///cache/scan1.jpg' }));
       expect(result.current.pending).toBeNull();
     });
 
@@ -414,14 +532,21 @@ describe('useDocumentCapture', () => {
       expect(result.current.pending).not.toBeNull();
     });
 
-    it('cleans up the temp file after the caller finishes, whether upload succeeds or fails', async () => {
+    it('leaves the temp file for the caller — a failed upload still needs it for its retry', async () => {
       mockScanDocument.mockResolvedValue({ status: 'success', scannedImages: ['file:///cache/scan1.jpg'] });
       const { result } = renderHook(() => useDocumentCapture(VOIDED_CHECK_REQUIREMENT));
       await act(async () => { await result.current.scan(); });
 
       await act(async () => { await result.current.confirmUse(jest.fn().mockRejectedValue(new Error('upload failed'))); });
 
-      expect(mockFileDelete).toHaveBeenCalled();
+      expect(mockFileDelete).not.toHaveBeenCalled();
+    });
+
+    it('discardCapturedFile deletes a temp file but never a library photo', async () => {
+      await discardCapturedFile({ picked: { uri: 'file:///library/a.jpg', name: 'a.jpg', type: 'image/jpeg' }, isTemporaryFile: false });
+      expect(mockFileDelete).not.toHaveBeenCalled();
+      await discardCapturedFile({ picked: { uri: 'file:///cache/a.jpg', name: 'a.jpg', type: 'image/jpeg' }, isTemporaryFile: true });
+      expect(mockFileDelete).toHaveBeenCalledTimes(1);
     });
   });
 });

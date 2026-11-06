@@ -12,7 +12,7 @@ jest.mock('../SessionContext', () => ({
 }));
 
 // The proof slot reuses the app's one secure upload pipeline
-// (useDocumentSlot -> useFileAttachment -> uploadApi -> associateDocument),
+// (useDocumentSlot -> uploadApi -> associateDocument),
 // so the same native/network boundaries are stubbed as in the other
 // document tests.
 jest.mock('../uploadApi', () => ({ uploadFile: jest.fn(), deleteUpload: jest.fn() }));
@@ -396,7 +396,7 @@ describe.each(VACCINE_STEP_IDS)('useVaccineDeclinationForm(%s)', (STEP_ID) => {
 
       expect(mockedUploadFile).toHaveBeenCalledTimes(1);
       // The client only ever passes the slot type + the object key the server itself issued at upload.
-      expect(associateDocument).toHaveBeenCalledWith(DOC_TYPE_BY_STEP[STEP_ID], PROOF_FILE.objectKey);
+      expect(associateDocument).toHaveBeenCalledWith(DOC_TYPE_BY_STEP[STEP_ID], PROOF_FILE.objectKey, { mode: 'add' });
     });
   });
 });

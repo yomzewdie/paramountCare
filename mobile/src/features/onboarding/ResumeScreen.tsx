@@ -49,7 +49,7 @@ export default function ResumeScreen() {
         Your resume tells us about your work history and clinical experience, so you won&rsquo;t need to type it in. Upload your current resume as a PDF or Word document (DOC or DOCX). Recruiters review your work history directly from it.
       </Text>
 
-      <DocumentSlotCard slot={RESUME_SLOT} hook={form.slot} required documentOnly error={form.errors.resumeDocument} />
+      <DocumentSlotCard slot={RESUME_SLOT} hook={form.slot} required error={form.errors.resumeDocument} />
 
       <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.sm }]}>
         Your resume is stored securely and shared only with Paramount Care Staffing recruiters reviewing your application.

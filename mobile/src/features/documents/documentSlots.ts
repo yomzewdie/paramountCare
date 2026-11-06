@@ -26,12 +26,6 @@ export interface DocumentSlotDef {
   /** Presentation badge mirroring the web UI's own OR/+ badges for the
    * identity group — purely a hint about how the group's slots relate. */
   groupBadge?: 'OR' | '+';
-  /** No optional document exists in the current source/business process
-   * (confirmed by reading packets.ts, completion.ts, and UploadSection.tsx
-   * — all three agree on exactly the same three required items). Present
-   * as a field, not a hardcoded assumption, so a future genuinely optional
-   * document type only needs `optional: true` here, not new screen logic. */
-  optional?: boolean;
 }
 
 export const IDENTITY_SLOTS: DocumentSlotDef[] = [
@@ -97,6 +91,14 @@ export function resolveRequiredSlots(step: PacketStep | undefined): DocumentSlot
     if (slot) slots.push(slot);
   }
   return slots;
+}
+
+/** The documents this packet offers but doesn't require (`optionalUploads`) —
+ * today the professional license, per UAT feedback. Never counted in progress. */
+export function resolveOptionalSlots(step: PacketStep | undefined): DocumentSlotDef[] {
+  return (step?.config?.optionalUploads ?? [])
+    .map((key) => CREDENTIAL_SLOT_BY_KEY[key])
+    .filter((slot): slot is DocumentSlotDef => !!slot);
 }
 
 /** The I-9 identity requirement is satisfied by List A alone, or by both

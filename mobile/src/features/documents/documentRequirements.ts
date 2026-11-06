@@ -112,7 +112,8 @@ export const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wor
  * PDF, DOC, or DOCX (the Worker enforces the same set for the
  * `applicant_resume` slot and stores Word files as downloads only — never
  * parsed or rendered). A resume is a document, not a photo, so the
- * scanner/camera/photo paths are off. */
+ * scanner/camera/photo paths are off — DocumentSlotCard offers only what a
+ * requirement allows. */
 export const RESUME_REQUIREMENT: DocumentRequirement = {
   label: 'Resume',
   scannerAllowed: false,

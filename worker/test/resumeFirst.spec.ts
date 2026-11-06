@@ -392,7 +392,7 @@ describe('backward compatibility — sessions started on the manual (v5) flow', 
     expect((saved.formData.employmentReferences as Record<string, unknown>).employment_ref_1).toMatchObject({ positionHeld: 'RN', employerCity: 'Los Angeles' });
   });
 
-  it('a v5 session must upload a resume before it can submit, and then submits with its manual data intact', async () => {
+  it('a v5 session must upload a resume and answer the new qualification questions before it can submit, and then submits with its manual data intact', async () => {
     const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('legacy-submit'));
     const legacy = await seedLegacyInProgressSession(accessToken, 'icu_rn');
 
@@ -401,11 +401,17 @@ describe('backward compatibility — sessions started on the manual (v5) flow', 
 
     const blocked = await submit(accessToken, current.sessionId, current.revision);
     expect(blocked.status).toBe(422);
-    expect(((await blocked.json()) as { incompleteSteps: { id: string }[] }).incompleteSteps.map((s) => s.id)).toEqual(['resume']);
+    expect(((await blocked.json()) as { incompleteSteps: { id: string }[] }).incompleteSteps.map((s) => s.id)).toEqual(['resume', 'employment_application']);
 
     const resumeKey = await uploadResume(accessToken);
     current = (await (await associateDoc(accessToken, current.sessionId, RESUME_DOC_TYPE, resumeKey, current.revision)).json()) as TestSession;
     current = (await (await completeResumeStep(accessToken, current)).json()) as TestSession;
+    current = (await (await patch(accessToken, current.sessionId, current.revision, {
+      formData: {
+        ...current.formData,
+        employmentApplication: { ...(current.formData.employmentApplication as Record<string, unknown>), totalYearsExperience: '4', primaryClinicalSpecialty: ['med_surg'] },
+      },
+    })).json()) as TestSession;
 
     const res = await submit(accessToken, current.sessionId, current.revision);
     expect(res.status).toBe(201);

@@ -8,12 +8,11 @@ import { insertAuditLogStmt } from '../db/queries/auditLogs';
 import { sendApplicantConfirmation, sendAdminNotification } from '../services/email';
 import { generateI9Pdf, type I9PdfInput } from '../services/i9pdf';
 
-// Shape of document references sent from the frontend buildPayload()
+// Shape of document metadata sent from the frontend buildPayload() — name and
+// size only. An `objectKey` sent here is never trusted (see below).
 interface DocumentRef {
-  objectKey?: string;
-  name?: string;
-  size?: number;
-  uploadedAt?: string;
+  objectKey?: unknown;
+  [key: string]: unknown;
 }
 
 interface I9DataPayload {
@@ -91,8 +90,27 @@ onboarding.post('/submit-onboarding', async (c) => {
   // mobile/session submission path (services/submission.ts's
   // redactSensitiveFormData) already redacted w4Data.ssn correctly; this
   // brings the legacy web path in line with it.
+  // This route is unauthenticated, so a client-supplied objectKey proves
+  // nothing about who uploaded that object — accepting one would let anyone
+  // attach any stored file (another applicant's ID, say) to a new application
+  // an admin can then download. The web client only ever sends name/size
+  // here, so keys are dropped rather than rejected: no client-referenced
+  // object is ever recorded in application_documents by this route, and the
+  // stored metadata carries no key either. The only document it records is
+  // the I-9 PDF it generates itself below.
+  const strippedDocuments = Object.fromEntries(
+    Object.entries(documents).map(([slot, doc]) => {
+      if (!doc || typeof doc !== 'object') return [slot, doc ?? null];
+      return [slot, Object.fromEntries(Object.entries(doc).filter(([key]) => key !== 'objectKey'))];
+    }),
+  );
+  if (Object.values(documents).some((doc) => doc && typeof doc === 'object' && 'objectKey' in doc)) {
+    console.warn('[submit-onboarding] ignored client-supplied document objectKey(s)');
+  }
+
   const storedPayload: Record<string, unknown> = {
     ...rawBody,
+    ...(rawBody.documents !== undefined ? { documents: strippedDocuments } : {}),
     i9Data: {
       ...i9Raw,
       ssn: '[redacted]',
@@ -108,7 +126,7 @@ onboarding.post('/submit-onboarding', async (c) => {
   const now = new Date().toISOString();
   const db = c.env.DB;
 
-  // Build batch: application row + audit log + any uploaded document references
+  // Build batch: application row + audit log
   const stmts: D1PreparedStatement[] = [
     insertApplicationStmt(db, {
       applicationId,
@@ -126,20 +144,6 @@ onboarding.post('/submit-onboarding', async (c) => {
       createdAt: now,
     }),
   ];
-
-  for (const doc of Object.values(documents)) {
-    if (doc?.objectKey && doc.name) {
-      stmts.push(
-        insertDocumentStmt(db, {
-          applicationId,
-          objectKey: doc.objectKey,
-          fileName: doc.name,
-          fileSize: doc.size ?? 0,
-          uploadedAt: doc.uploadedAt ?? now,
-        }),
-      );
-    }
-  }
 
   try {
     await db.batch(stmts);

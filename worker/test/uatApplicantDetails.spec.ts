@@ -77,7 +77,7 @@ describe('Applicant Details — UAT taxonomy through the real routes', () => {
     ['both employment types', { employmentType: ['per_diem_assignment', 'travel_assignment'] }, 200],
     ['no employment type', { employmentType: [] }, 422],
     ['CNA (no specialty asked)', { positionApplied: 'CNA', licenseType: 'CNA', specialtyPreference: [] }, 200],
-    ['Tech with a Tech specialty', { positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['rrt', 'emt'] }, 200],
+    ['Tech with a Tech specialty', { positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['rrt', 'emt'], primaryClinicalSpecialty: ['rrt'] }, 200],
     ['Tech with only RN units (drafts are not active)', { positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['icu'] }, 422],
     ['LVN with an RN-only unit', { positionApplied: 'LVN', licenseType: 'LVN', specialtyPreference: ['icu'] }, 422],
     ['NP with an NP unit', { positionApplied: 'NP', licenseType: 'NP', specialtyPreference: ['psychiatric'] }, 200],
@@ -95,7 +95,7 @@ describe('Applicant Details — UAT taxonomy through the real routes', () => {
   it('switching RN → Tech submits only Tech specialties; the RN drafts stay in the session', async () => {
     const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('rn-to-tech'));
     let s = await completePacketExceptReview(accessToken, 'icu_rn');
-    s = await setApplication(accessToken, s, { positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['icu', 'er', 'cst'] });
+    s = await setApplication(accessToken, s, { positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['icu', 'er', 'cst'], primaryClinicalSpecialty: ['cst'] });
     expect((s.formData.employmentApplication as { specialtyPreference: string[] }).specialtyPreference).toEqual(['icu', 'er', 'cst']);
     const res = await submit(accessToken, s.sessionId, s.revision);
     expect(res.status).toBe(201);

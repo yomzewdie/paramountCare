@@ -145,6 +145,13 @@ export async function updateSession(sessionId: string, payload: UpdateSessionPay
   }
 }
 
+/** How an uploaded file joins its requirement: added beside what's there, or
+ * in place of one attachment. Omitted, it becomes the only attachment. */
+export interface AssociateDocumentOptions {
+  mode?: 'add';
+  replaceObjectKey?: string;
+}
+
 /**
  * `POST /api/sessions/:sessionId/documents/:docType` (M13 hardening) —
  * associates an already-uploaded, server-owned object with a named
@@ -158,7 +165,7 @@ export async function updateSession(sessionId: string, payload: UpdateSessionPay
 export async function associateDocument(
   sessionId: string,
   docType: string,
-  payload: { objectKey: string; revision: number },
+  payload: { objectKey: string; revision: number } & AssociateDocumentOptions,
 ): Promise<UpdateSessionResult> {
   try {
     const res = await authedRequest(`/api/sessions/${sessionId}/documents/${docType}`, {
@@ -182,12 +189,13 @@ export async function associateDocument(
 }
 
 /** `DELETE /api/sessions/:sessionId/documents/:docType` — the counterpart
- * to associateDocument above; clears a document slot and deletes the
- * underlying R2 object server-side. Same revision-protected/409 contract. */
+ * to associateDocument above; removes one attachment (`objectKey`) or clears
+ * the whole requirement, and deletes the underlying R2 object(s) server-side.
+ * Same revision-protected/409 contract. */
 export async function removeDocument(
   sessionId: string,
   docType: string,
-  payload: { revision: number },
+  payload: { revision: number; objectKey?: string },
 ): Promise<UpdateSessionResult> {
   try {
     const res = await authedRequest(`/api/sessions/${sessionId}/documents/${docType}`, {

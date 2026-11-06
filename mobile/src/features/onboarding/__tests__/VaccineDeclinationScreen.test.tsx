@@ -87,7 +87,8 @@ describe.each(['hep_b_declination', 'tdap_declination', 'flu_declination'])('Vac
     expect(screen.getByText(UPLOAD_LABEL)).toBeTruthy();
     expect(screen.getByText('Scan Document')).toBeTruthy();
     expect(screen.getByText('Choose from Photos')).toBeTruthy();
-    expect(screen.getByText('Choose a PDF')).toBeTruthy();
+    expect(screen.getByText('Take a Photo')).toBeTruthy();
+    expect(screen.getByText('Choose File')).toBeTruthy();
     // the old "optional" note is gone
     expect(screen.queryByText(/optional right now/i)).toBeNull();
   });

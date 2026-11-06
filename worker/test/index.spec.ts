@@ -186,13 +186,10 @@ describe('GET /api/admin/application/:id', () => {
     expect(body.lastName).toBe('Jones');
     expect(body.email).toBe('bob@example.com');
     expect(body.submittedAt).toBeTruthy();
-    // submit-onboarding always generates a signed I-9 PDF as a second document
-    // (see worker/src/routes/onboarding.ts) — so the uploaded document is one
-    // of (at least) two, not the only one.
-    expect(body.documents.length).toBeGreaterThanOrEqual(2);
-    const uploaded = body.documents.find((d) => d.objectKey === 'uploads/2026/05/uuid-passport.pdf');
-    expect(uploaded).toBeDefined();
-    expect(uploaded!.fileName).toBe('passport.pdf');
+    // The route records only the signed I-9 PDF it generates itself; a
+    // client-supplied objectKey is never trusted on this unauthenticated
+    // route (see legacySubmitDocuments.spec.ts).
+    expect(body.documents.map((d) => d.objectKey)).toEqual([`i9/${applicationId}/i9-section1-signed.pdf`]);
   });
 });
 

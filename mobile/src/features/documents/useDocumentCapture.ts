@@ -6,6 +6,7 @@ import { File } from 'expo-file-system';
 import { mimeTypeForPickedDocument, type DocumentRequirement } from './documentRequirements';
 import type { PickedFile } from '../onboarding/uploadApi';
 import { isHeicOrHeif, normalizeHeicToJpeg } from './imageFormat';
+import { mergeScannedPagesToPdf } from './scanPdf';
 
 export interface PendingCapture {
   picked: PickedFile;
@@ -19,6 +20,8 @@ export interface PendingCapture {
    * it's uploaded or discarded. An existing library photo or a picked
    * document is left alone; this app doesn't own that file's lifecycle. */
   isTemporaryFile: boolean;
+  /** How many scanned pages this file holds, when it is a merged scan. */
+  pageCount?: number;
 }
 
 // Shared with pickFromLibrary's own normalization-failure branch below —
@@ -27,6 +30,12 @@ export interface PendingCapture {
 // Deliberately never mentions HEIC, a MIME type, or any implementation
 // detail.
 const IMAGE_PREPARATION_FAILED_MESSAGE = 'We couldn’t prepare this photo for upload. Please try another photo or choose a PDF.';
+
+const SCAN_MERGE_FAILED_MESSAGE = 'We couldn’t combine those pages into one file. Please try scanning again, or add each page as a photo.';
+
+/** One library pick at a time — enough for a whole document, and the Worker
+ * enforces the overall per-requirement limit. */
+const MAX_PHOTOS_PER_PICK = 10;
 
 function validateCommon(requirement: DocumentRequirement, type: string, size: number | undefined, fileName?: string): string | null {
   // Checked before the plain allow-list below: a HEIC/HEIF photo is a real,
@@ -62,7 +71,9 @@ function validateImageDimensions(requirement: DocumentRequirement, width: number
   return null;
 }
 
-async function deleteTempFileIfSafe(picked: PickedFile, isTemporaryFile: boolean): Promise<void> {
+/** Deletes a capture's file once it's uploaded or discarded, but only if it is
+ * a temp file this app produced. */
+export async function discardCapturedFile({ picked, isTemporaryFile }: Pick<PendingCapture, 'picked' | 'isTemporaryFile'>): Promise<void> {
   if (!isTemporaryFile) return;
   try {
     const file = new File(picked.uri);
@@ -92,20 +103,40 @@ async function deleteTempFileIfSafe(picked: PickedFile, isTemporaryFile: boolean
  * `DocumentRequirement` value, not a new capture implementation.
  */
 export function useDocumentCapture(requirement: DocumentRequirement) {
-  const [pending, setPending] = useState<PendingCapture | null>(null);
+  // Everything awaiting Use Document. Usually one file; several when the
+  // applicant selected several photos at once.
+  const [pendingItems, setPendingItems] = useState<PendingCapture[]>([]);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
+  /** Every page of a scan becomes one file: a single page stays the scanner's
+   * own image, and two or more are merged into one PDF. The page images are
+   * temp files of this app's own, and go once the PDF exists. */
   const scan = useCallback(async () => {
     setPermissionError(null);
+    let pages: string[];
     try {
       const result = await DocumentScanner.scanDocument({ responseType: ResponseType.ImageFilePath, croppedImageQuality: 90 });
-      const uri = result.status === 'success' ? result.scannedImages?.[0] : undefined;
-      if (!uri) return; // applicant cancelled — leave any existing attachment untouched
-      const picked: PickedFile = { uri, name: 'scanned-document.jpg', type: 'image/jpeg' };
-      setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: true });
+      pages = result.status === 'success' ? (result.scannedImages ?? []) : [];
     } catch {
-      setPermissionError('Unable to open the document scanner. Please try Take Photo instead.');
+      setPermissionError('Unable to open the document scanner. Please try Take a Photo instead.');
+      return;
     }
+    if (pages.length === 0) return; // applicant cancelled — leave any existing attachment untouched
+
+    if (pages.length === 1) {
+      const picked: PickedFile = { uri: pages[0], name: 'scanned-document.jpg', type: 'image/jpeg' };
+      setPendingItems([{ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: true }]);
+      return;
+    }
+
+    const merged = await mergeScannedPagesToPdf(pages, requirement.maxSizeBytes);
+    if (!merged) {
+      setPermissionError(SCAN_MERGE_FAILED_MESSAGE);
+      return;
+    }
+    await Promise.all(pages.map((uri) => discardCapturedFile({ picked: { uri, name: '', type: '' }, isTemporaryFile: true })));
+    const picked: PickedFile = { uri: merged.uri, name: 'scanned-document.pdf', type: 'application/pdf', size: merged.size };
+    setPendingItems([{ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: true, pageCount: pages.length }]);
   }, [requirement]);
 
   const takePhoto = useCallback(async () => {
@@ -120,19 +151,24 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
     if (!asset) return;
     const picked: PickedFile = { uri: asset.uri, name: asset.fileName ?? 'photo.jpg', type: asset.mimeType ?? 'image/jpeg', size: asset.fileSize };
     const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, asset.width, asset.height);
-    setPending({ picked, issue, isTemporaryFile: true });
+    setPendingItems([{ picked, issue, isTemporaryFile: true }]);
   }, [requirement]);
 
-  const pickFromLibrary = useCallback(async () => {
+  /** `selectionLimit` of 1 is the single-photo picker (replacing one
+   * attachment); anything higher lets the applicant select several photos,
+   * which all belong to this same requirement. */
+  const pickFromLibrary = useCallback(async ({ selectionLimit = 1 }: { selectionLimit?: number } = {}) => {
     setPermissionError(null);
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       setPermissionError('Photo library access is required to attach a file.');
       return;
     }
+    const allowsMultipleSelection = selectionLimit > 1;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.8,
+      ...(allowsMultipleSelection ? { allowsMultipleSelection, selectionLimit: Math.min(selectionLimit, MAX_PHOTOS_PER_PICK), orderedSelection: true } : {}),
       // Requests a non-HEIC/HEIF representation from the Photos framework
       // itself, where iOS supports it (14+). Without this, a HEIC/HEIF
       // library photo passes through completely untouched regardless of
@@ -145,36 +181,39 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
       // converted, and normalized locally if it's still HEIC/HEIF.
       preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
     });
-    const asset = result.canceled ? undefined : result.assets?.[0];
-    if (!asset) return;
+    const assets = result.canceled ? [] : (result.assets ?? []);
+    if (assets.length === 0) return;
 
-    if (isHeicOrHeif(asset.mimeType, asset.fileName)) {
-      const normalized = await normalizeHeicToJpeg(asset.uri);
-      if (!normalized) {
-        // The original HEIC/HEIF bytes are never uploaded — this is a
-        // terminal state for this capture (Retake is the only way
-        // forward), same as any other blocking issue.
-        setPending({
-          picked: { uri: asset.uri, name: asset.fileName ?? 'photo.heic', type: asset.mimeType ?? 'image/heic', size: asset.fileSize },
-          issue: IMAGE_PREPARATION_FAILED_MESSAGE,
-          isTemporaryFile: false,
-        });
-        return;
+    const items: PendingCapture[] = [];
+    for (const asset of assets) {
+      if (isHeicOrHeif(asset.mimeType, asset.fileName)) {
+        const normalized = await normalizeHeicToJpeg(asset.uri);
+        if (!normalized) {
+          // The original HEIC/HEIF bytes are never uploaded — this is a
+          // terminal state for this photo, same as any other blocking issue.
+          items.push({
+            picked: { uri: asset.uri, name: asset.fileName ?? 'photo.heic', type: asset.mimeType ?? 'image/heic', size: asset.fileSize },
+            issue: IMAGE_PREPARATION_FAILED_MESSAGE,
+            isTemporaryFile: false,
+          });
+          continue;
+        }
+        const picked: PickedFile = { uri: normalized.uri, name: 'photo.jpg', type: 'image/jpeg', size: normalized.size };
+        const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, normalized.width, normalized.height);
+        // Unlike an untouched library asset, this JPEG is a fresh file this
+        // app itself wrote to its own cache — safe to delete once used or
+        // discarded, same as a scanner/camera capture.
+        items.push({ picked, issue, isTemporaryFile: true });
+        continue;
       }
-      const picked: PickedFile = { uri: normalized.uri, name: 'photo.jpg', type: 'image/jpeg', size: normalized.size };
-      const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, normalized.width, normalized.height);
-      // Unlike an untouched library asset, this JPEG is a fresh file this
-      // app itself wrote to its own cache — safe to delete once used or
-      // discarded, same as a scanner/camera capture.
-      setPending({ picked, issue, isTemporaryFile: true });
-      return;
-    }
 
-    const picked: PickedFile = { uri: asset.uri, name: asset.fileName ?? 'photo.jpg', type: asset.mimeType ?? 'image/jpeg', size: asset.fileSize };
-    const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, asset.width, asset.height);
-    // Not a temp file this app produced — an existing library photo is the
-    // applicant's own, left alone regardless of Use Document/Retake.
-    setPending({ picked, issue, isTemporaryFile: false });
+      const picked: PickedFile = { uri: asset.uri, name: asset.fileName ?? 'photo.jpg', type: asset.mimeType ?? 'image/jpeg', size: asset.fileSize };
+      const issue = validateCommon(requirement, picked.type, picked.size, picked.name) ?? validateImageDimensions(requirement, asset.width, asset.height);
+      // Not a temp file this app produced — an existing library photo is the
+      // applicant's own, left alone regardless of Use Document/Retake.
+      items.push({ picked, issue, isTemporaryFile: false });
+    }
+    setPendingItems(items);
   }, [requirement]);
 
   const pickDocument = useCallback(async () => {
@@ -185,37 +224,50 @@ export function useDocumentCapture(requirement: DocumentRequirement) {
     const picked: PickedFile = { uri: asset.uri, name: asset.name, type: mimeTypeForPickedDocument(asset.name, asset.mimeType), size: asset.size ?? undefined };
     // PDFs never go through camera-framing/dimension logic (M13 hardening
     // §16) — only the type/size checks every path shares.
-    setPending({ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: false });
+    setPendingItems([{ picked, issue: validateCommon(requirement, picked.type, picked.size, picked.name), isTemporaryFile: false }]);
   }, [requirement]);
 
   const retake = useCallback(() => {
-    if (pending) void deleteTempFileIfSafe(pending.picked, pending.isTemporaryFile);
-    setPending(null);
-  }, [pending]);
+    pendingItems.forEach((item) => void discardCapturedFile(item));
+    setPendingItems([]);
+  }, [pendingItems]);
 
-  /** Confirms "Use Document" and hands the picked file to the caller (which
-   * owns the actual authenticated upload). Never called while `pending.issue`
-   * is set — the screen disables this action in that state. Cleans up the
-   * temp capture file afterward either way (upload succeeds or fails —
-   * the caller's own upload/attachment state is the source of truth for
-   * that outcome, not this hook). */
-  const confirmUse = useCallback(async (onUseDocument: (picked: PickedFile) => void | Promise<void>) => {
-    if (!pending || pending.issue) return;
-    const { picked, isTemporaryFile } = pending;
-    setPending(null);
-    // The caller (useFileAttachment.uploadPicked) owns its own error state
-    // and never actually rejects — but this call site is fire-and-forget
-    // (`void capture.confirmUse(...)`) in every real usage, so a defensive
-    // catch here guarantees cleanup still runs and nothing surfaces as an
-    // unhandled promise rejection regardless.
+  /** Drops one photo from a multi-photo selection, keeping the others. */
+  const removePending = useCallback((index: number) => {
+    const item = pendingItems[index];
+    if (item) void discardCapturedFile(item);
+    setPendingItems(pendingItems.filter((_, i) => i !== index));
+  }, [pendingItems]);
+
+  /** Confirms "Use Document" and hands every pending file to the caller, which
+   * owns the actual authenticated upload — and so also owns deleting each temp
+   * file (discardCapturedFile) once it's uploaded or abandoned, since a failed
+   * upload still needs the file for its retry. Never called while any pending
+   * file has an issue — the screen disables this action in that state. */
+  const confirmUse = useCallback(async (onUseDocuments: (items: PendingCapture[]) => void | Promise<void>) => {
+    if (pendingItems.length === 0 || pendingItems.some((item) => item.issue)) return;
+    const items = pendingItems;
+    setPendingItems([]);
+    // Every real call site is fire-and-forget (`void capture.confirmUse(...)`),
+    // so this guarantees nothing surfaces as an unhandled promise rejection.
     try {
-      await onUseDocument(picked);
+      await onUseDocuments(items);
     } catch (e) {
-      console.error('[useDocumentCapture] onUseDocument threw unexpectedly:', e);
-    } finally {
-      void deleteTempFileIfSafe(picked, isTemporaryFile);
+      console.error('[useDocumentCapture] onUseDocuments threw unexpectedly:', e);
     }
-  }, [pending]);
+  }, [pendingItems]);
 
-  return { pending, permissionError, scan, takePhoto, pickFromLibrary, pickDocument, retake, confirmUse };
+  return {
+    /** The first (usually only) file awaiting Use Document. */
+    pending: pendingItems[0] ?? null,
+    pendingItems,
+    permissionError,
+    scan,
+    takePhoto,
+    pickFromLibrary,
+    pickDocument,
+    retake,
+    removePending,
+    confirmUse,
+  };
 }

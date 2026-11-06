@@ -84,17 +84,18 @@ export async function findLiveUploadsForSession(
   return result.results;
 }
 
-/** Whatever currently occupies a given session's document slot, if
- * anything — used to know what to clean up after a successful replace, and
- * what to delete on an explicit remove. */
-export async function findCurrentSlotDocument(
+/** Everything currently attached to a given session's document requirement
+ * (zero or more rows — nothing in the schema limits a slot to one) — used to
+ * know what to clean up after a replace or an explicit remove. */
+export async function findSlotDocuments(
   db: D1Database,
   p: { sessionId: string; docType: string },
-): Promise<UploadedDocumentRow | null> {
-  return db
-    .prepare('SELECT * FROM uploaded_documents WHERE session_id = ? AND doc_type = ? AND deleted_at IS NULL LIMIT 1')
+): Promise<UploadedDocumentRow[]> {
+  const result = await db
+    .prepare('SELECT * FROM uploaded_documents WHERE session_id = ? AND doc_type = ? AND deleted_at IS NULL ORDER BY id ASC')
     .bind(p.sessionId, p.docType)
-    .first<UploadedDocumentRow>();
+    .all<UploadedDocumentRow>();
+  return result.results;
 }
 
 /** Marks an upload as now occupying a given session's document slot.

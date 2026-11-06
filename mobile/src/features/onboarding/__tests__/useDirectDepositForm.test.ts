@@ -68,10 +68,20 @@ function setupSession(
   session: SessionResponse,
   opts: { saveStep?: jest.Mock; associateDocument?: jest.Mock; removeDocument?: jest.Mock } = {},
 ) {
-  const saveStep = opts.saveStep ?? jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult);
-  const associateDocument = opts.associateDocument ?? jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult);
-  const removeDocument = opts.removeDocument ?? jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult);
-  mockedUseSession.mockReturnValue({ session, saveStep, associateDocument, removeDocument, status: 'ready', progress: null, error: null, refresh: jest.fn() });
+  // The real SessionContext always holds the latest session a call returned —
+  // the proof document is read straight from it.
+  const tracksSession = (mock: jest.Mock) => jest.fn(async (...args: unknown[]) => {
+    const result = await mock(...args);
+    if (result.status === 'saved') provide(result.session);
+    if (result.status === 'conflict') provide(result.latestSession);
+    return result;
+  });
+  const saveStepMock = opts.saveStep ?? jest.fn().mockResolvedValue({ status: 'saved', session });
+  const saveStep = tracksSession(saveStepMock);
+  const associateDocument = tracksSession(opts.associateDocument ?? jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult));
+  const removeDocument = tracksSession(opts.removeDocument ?? jest.fn().mockResolvedValue({ status: 'saved', session: fakeSession() } satisfies SaveStepResult));
+  const provide = (current: SessionResponse) => mockedUseSession.mockReturnValue({ session: current, saveStep, associateDocument, removeDocument, status: 'ready', progress: null, error: null, refresh: jest.fn() });
+  provide(session);
   return { saveStep, associateDocument, removeDocument };
 }
 
@@ -89,8 +99,8 @@ async function pickAndUpload(result: { current: ReturnType<typeof useDirectDepos
   mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
   mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file://check.jpg', fileName: file.name, mimeType: file.type, fileSize: file.size }] });
   mockedUploadFile.mockResolvedValue({ ok: true, data: file });
-  await act(async () => { await result.current.capture.pickFromLibrary(); });
-  await act(async () => { await result.current.capture.confirmUse(); });
+  await act(async () => { await result.current.proofSlot.capture.pickFromLibrary(); });
+  await act(async () => { await result.current.proofSlot.capture.confirmUse(); });
 }
 
 describe('useDirectDepositForm', () => {
@@ -118,8 +128,45 @@ describe('useDirectDepositForm', () => {
     it('restores an already-associated proof document as "uploaded" after an app restart', () => {
       setupSession(fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }));
       const { result } = renderHook(() => useDirectDepositForm());
-      expect(result.current.attachment.status).toBe('uploaded');
-      expect(result.current.attachment.file).toEqual(VALID_PROOF);
+      expect(result.current.proofSlot.status).toBe('uploaded');
+      expect(result.current.proofSlot.file).toEqual(VALID_PROOF);
+    });
+
+    it('a new entry defaults to 100% of shift on the primary account only', () => {
+      setupSession(fakeSession());
+      const { result } = renderHook(() => useDirectDepositForm());
+      expect(result.current.data.primaryAccount).toMatchObject({ depositType: 'percentage', depositAmount: '100' });
+      expect(result.current.data.additionalAccount).toMatchObject({ depositType: '', depositAmount: '' });
+      expect(result.current.errors.additionalBankName).toBeUndefined();
+      expect(result.current.isDirty).toBe(false);
+    });
+
+    it.each([
+      ['a saved percentage', { depositType: 'percentage', depositAmount: '60' }],
+      ['a saved dollar amount', { depositType: 'dollar', depositAmount: '250' }],
+      ['a chosen type with its amount cleared', { depositType: 'percentage', depositAmount: '' }],
+      ['an amount with no type', { depositType: '', depositAmount: '40' }],
+    ])('never overwrites %s', (_label, allocation) => {
+      setupSession(fakeSession({ formData: { directDepositData: { primaryAccount: { bankName: 'B', ...allocation } } } }));
+      const { result } = renderHook(() => useDirectDepositForm());
+      expect(result.current.data.primaryAccount).toMatchObject(allocation);
+    });
+
+    it('a default is saved like any entered value', async () => {
+      const { saveStep } = setupSession(fakeSession());
+      const { result } = renderHook(() => useDirectDepositForm());
+      await act(async () => { await result.current.saveProgress(); });
+      expect(saveStep).toHaveBeenCalledWith(expect.objectContaining({
+        stepData: expect.objectContaining({ primaryAccount: expect.objectContaining({ depositType: 'percentage', depositAmount: '100' }) }),
+      }));
+    });
+
+    it('accepts more than one bank verification attachment through the shared lifecycle', async () => {
+      const { associateDocument } = setupSession(fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }));
+      const { result } = renderHook(() => useDirectDepositForm());
+      expect(result.current.proofSlot.attachments).toEqual([VALID_PROOF]);
+      await pickAndUpload(result, { ...VALID_PROOF, objectKey: 'uploads/1/second.jpg' });
+      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', 'uploads/1/second.jpg', { mode: 'add' });
     });
 
     it('shows no errors on load even though nothing has been filled in', () => {
@@ -210,14 +257,14 @@ describe('useDirectDepositForm', () => {
       mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file://check.jpg', fileName: 'check.jpg', mimeType: 'image/jpeg', fileSize: 100 }] });
       mockedUploadFile.mockResolvedValue({ ok: true, data: VALID_PROOF });
 
-      await act(async () => { await result.current.capture.pickFromLibrary(); });
-      await act(async () => { void result.current.capture.confirmUse(); await Promise.resolve(); });
-      expect(result.current.attachment.status).toBe('associating');
-      expect(result.current.attachment.file).toBeNull();
+      await act(async () => { await result.current.proofSlot.capture.pickFromLibrary(); });
+      await act(async () => { void result.current.proofSlot.capture.confirmUse(); await Promise.resolve(); });
+      expect(result.current.proofSlot.status).toBe('associating');
+      expect(result.current.proofSlot.file).toBeNull();
 
       await act(async () => { resolveAssociate({ status: 'saved', session: fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }) }); await Promise.resolve(); });
-      expect(result.current.attachment.status).toBe('uploaded');
-      expect(result.current.attachment.file).toEqual(VALID_PROOF);
+      expect(result.current.proofSlot.status).toBe('uploaded');
+      expect(result.current.proofSlot.file).toEqual(VALID_PROOF);
     });
 
     it('associates the uploaded object with the session — independent of Save Progress', async () => {
@@ -228,13 +275,13 @@ describe('useDirectDepositForm', () => {
 
       await pickAndUpload(result);
 
-      expect(result.current.attachment.status).toBe('uploaded');
-      expect(result.current.attachment.file).toEqual(VALID_PROOF);
-      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', VALID_PROOF.objectKey);
+      expect(result.current.proofSlot.status).toBe('uploaded');
+      expect(result.current.proofSlot.file).toEqual(VALID_PROOF);
+      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', VALID_PROOF.objectKey, { mode: 'add' });
       expect(saveStep).not.toHaveBeenCalled();
     });
 
-    it('a failed association never reports success and best-effort deletes the now-orphaned upload', async () => {
+    it('a failed association never reports success, keeps the upload for Retry, and only Cancel deletes it', async () => {
       setupSession(fakeSession(), {
         associateDocument: jest.fn().mockResolvedValue({ status: 'error', error: { code: 'server_error', message: 'Something went wrong on our end.' } }),
       });
@@ -242,13 +289,16 @@ describe('useDirectDepositForm', () => {
 
       await pickAndUpload(result);
 
-      expect(result.current.attachment.status).toBe('failed');
-      expect(result.current.attachment.file).toBeNull();
-      expect(result.current.attachment.errorMessage).toBe('Something went wrong on our end.');
+      expect(result.current.proofSlot.status).toBe('failed');
+      expect(result.current.proofSlot.file).toBeNull();
+      expect(result.current.proofSlot.errorMessage).toBe('Something went wrong on our end.');
+      expect(mockedDeleteUpload).not.toHaveBeenCalled();
+
+      await act(async () => { result.current.proofSlot.cancelFailed(); });
       expect(mockedDeleteUpload).toHaveBeenCalledWith(VALID_PROOF.objectKey);
     });
 
-    it('a conflicted association is retryable and does NOT trigger orphan cleanup (the object is still legitimately theirs)', async () => {
+    it('a conflicted association is retried against the fresh session, leaves the form alone, and does NOT trigger orphan cleanup', async () => {
       const freshSession = fakeSession({ formData: { directDepositData: {} } });
       setupSession(fakeSession(), {
         associateDocument: jest.fn().mockResolvedValue({ status: 'conflict', latestSession: freshSession }),
@@ -257,7 +307,10 @@ describe('useDirectDepositForm', () => {
 
       await pickAndUpload(result);
 
-      expect(result.current.conflict).not.toBeNull();
+      // Stored form fields aren't touched by an upload, so there's nothing for
+      // the Keep/Discard notice to protect.
+      expect(result.current.conflict).toBeNull();
+      expect(result.current.proofSlot.status).toBe('failed');
       expect(mockedDeleteUpload).not.toHaveBeenCalled();
     });
 
@@ -269,23 +322,24 @@ describe('useDirectDepositForm', () => {
       const { result } = renderHook(() => useDirectDepositForm());
 
       await pickAndUpload(result);
-      expect(result.current.attachment.status).toBe('failed');
+      expect(result.current.proofSlot.status).toBe('failed');
       expect(mockedUploadFile).toHaveBeenCalledTimes(1);
 
-      await act(async () => { result.current.attachment.retry(); });
+      await act(async () => { result.current.proofSlot.retry(); });
 
       expect(mockedUploadFile).toHaveBeenCalledTimes(1); // still just once — no re-upload
       expect(associateDocument).toHaveBeenCalledTimes(2);
-      expect(result.current.attachment.status).toBe('uploaded');
+      expect(result.current.proofSlot.status).toBe('uploaded');
     });
 
     it('removeProof clears the attachment locally and calls removeDocument — never the generic saveStep', async () => {
       const { removeDocument, saveStep } = setupSession(fakeSession({ formData: { directDepositProofDocument: VALID_PROOF } }));
-      const { result } = renderHook(() => useDirectDepositForm());
+      const { result, rerender } = renderHook(() => useDirectDepositForm());
 
-      await act(async () => { result.current.removeProof(); });
+      await act(async () => { result.current.proofSlot.remove(); });
+      rerender({});
 
-      expect(result.current.attachment.status).toBe('idle');
+      expect(result.current.proofSlot.status).toBe('idle');
       expect(removeDocument).toHaveBeenCalledWith('direct_deposit_voided_check');
       expect(saveStep).not.toHaveBeenCalled();
     });
@@ -293,7 +347,7 @@ describe('useDirectDepositForm', () => {
     it('validation treats an in-flight upload as "not yet attached" — completion stays blocked until association resolves', () => {
       setupSession(fakeSession());
       const { result } = renderHook(() => useDirectDepositForm());
-      expect(result.current.attachment.file).toBeNull();
+      expect(result.current.proofSlot.file).toBeNull();
       expect(result.current.errors.directDepositProofDocument).toBeUndefined(); // not yet touched
     });
 
@@ -332,7 +386,7 @@ describe('useDirectDepositForm', () => {
 
       await pickAndUpload(result);
 
-      expect(result.current.attachment.status).toBe('uploaded');
+      expect(result.current.proofSlot.status).toBe('uploaded');
       // Cleared immediately — no second Continue tap happened above.
       expect(result.current.errors.directDepositProofDocument).toBeUndefined();
 
@@ -351,8 +405,8 @@ describe('useDirectDepositForm', () => {
       await pickAndUpload(result, { ...VALID_PROOF, type: 'image/png', name: 'check.png' });
 
       expect(mockedUploadFile).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png', name: 'check.png' }));
-      expect(result.current.attachment.status).toBe('uploaded');
-      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', VALID_PROOF.objectKey);
+      expect(result.current.proofSlot.status).toBe('uploaded');
+      expect(associateDocument).toHaveBeenCalledWith('direct_deposit_voided_check', VALID_PROOF.objectKey, { mode: 'add' });
     });
 
     it('a failed upload never marks the attachment complete, and a successful retry does not create a duplicate attachment/upload', async () => {
@@ -366,16 +420,16 @@ describe('useDirectDepositForm', () => {
       });
       const { result } = renderHook(() => useDirectDepositForm());
 
-      await act(async () => { await result.current.capture.pickFromLibrary(); });
-      await act(async () => { await result.current.capture.confirmUse(); });
-      expect(result.current.attachment.status).toBe('failed');
-      expect(result.current.attachment.file).toBeNull();
+      await act(async () => { await result.current.proofSlot.capture.pickFromLibrary(); });
+      await act(async () => { await result.current.proofSlot.capture.confirmUse(); });
+      expect(result.current.proofSlot.status).toBe('failed');
+      expect(result.current.proofSlot.file).toBeNull();
 
-      await act(async () => { result.current.attachment.retry(); });
+      await act(async () => { result.current.proofSlot.retry(); });
 
       expect(mockedUploadFile).toHaveBeenCalledTimes(2);
-      expect(result.current.attachment.status).toBe('uploaded');
-      expect(result.current.attachment.file).toEqual(VALID_PROOF);
+      expect(result.current.proofSlot.status).toBe('uploaded');
+      expect(result.current.proofSlot.file).toEqual(VALID_PROOF);
       // Exactly one upload attempt succeeded — retry re-sent the SAME
       // picked file rather than picking/uploading a second, duplicate one.
       expect(mockedUploadFile).toHaveBeenNthCalledWith(2, expect.objectContaining({ uri: 'file://check.png' }));
@@ -434,8 +488,8 @@ describe('useDirectDepositForm', () => {
       mockedRequestMediaLibrary.mockResolvedValue({ granted: true });
       mockedLaunchLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file://check.jpg', fileName: VALID_PROOF.name, mimeType: VALID_PROOF.type, fileSize: VALID_PROOF.size }] });
       mockedUploadFile.mockResolvedValue({ ok: true, data: VALID_PROOF });
-      await act(async () => { await result.current.capture.pickFromLibrary(); });
-      await act(async () => { void result.current.capture.confirmUse(); await Promise.resolve(); });
+      await act(async () => { await result.current.proofSlot.capture.pickFromLibrary(); });
+      await act(async () => { void result.current.proofSlot.capture.confirmUse(); await Promise.resolve(); });
 
       let outcome;
       await act(async () => { outcome = await result.current.complete(); });
@@ -479,7 +533,7 @@ describe('useDirectDepositForm', () => {
       act(() => result.current.discardAndReloadLatest());
 
       expect(result.current.data.lastName).toBe('ServerWon');
-      expect(result.current.attachment.file).toEqual(VALID_PROOF);
+      expect(result.current.proofSlot.file).toEqual(VALID_PROOF);
       expect(result.current.isDirty).toBe(false);
       expect(result.current.conflict).toBeNull();
     });

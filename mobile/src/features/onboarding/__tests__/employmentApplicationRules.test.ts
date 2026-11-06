@@ -27,6 +27,17 @@ import {
   validateEmploymentReference,
   type EmploymentApplicationData,
   type EmploymentReference,
+  MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION,
+  VERIFIED_LICENSE_DOC_TYPE,
+  allowsMultipleAttachments,
+  clinicalSpecialtyOptionsFor,
+  documentAttachmentsFor,
+  formatYearsOfExperience,
+  getPacket,
+  isApplicantDocType,
+  validateDocuments,
+  withCanonicalSpecialty,
+  withDocumentAttachments,
 } from '@pcs/shared';
 
 // UAT feedback — the shared (@pcs/shared) rules every client and the Worker
@@ -34,6 +45,7 @@ import {
 
 const VALID: EmploymentApplicationData = {
   ...defaultFormData.employmentApplication,
+  totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
   positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
   licenseType: 'RN', licenseNumber: 'RN1', licenseState: 'CA', licenseExpiration: '2028-03-15',
   authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
@@ -112,7 +124,7 @@ describe('validateEmploymentApplication — position and specialty routing', () 
     ['RN', ['icu', 'picu']],
     ['NP', ['psychiatric']],
   ])('accepts %s with a valid specialty for that position', (position, specialties) => {
-    expect(errorsFor({ positionApplied: position, licenseType: position, specialtyPreference: specialties })).toEqual({});
+    expect(errorsFor({ positionApplied: position, licenseType: position, specialtyPreference: specialties, primaryClinicalSpecialty: specialties })).toEqual({});
   });
 
   it('rejects a value outside the five positions', () => {
@@ -211,14 +223,14 @@ describe('validateEmploymentApplication — license expiration', () => {
   });
 });
 
-describe('validateEmploymentApplication — resume-first (experience comes from the resume)', () => {
+describe('validateEmploymentApplication — resume-first (work history comes from the resume)', () => {
   it('the default shape carries no legacy work-history/experience keys', () => {
     for (const key of ['yearsExperience', 'primarySpecialty', 'primarySpecialtyOther', 'currentlyEmployed', 'previouslyWorkedHere', 'hasCPR', 'cprCertNumber', 'cprExpiration']) {
       expect(defaultFormData.employmentApplication).not.toHaveProperty(key);
     }
   });
 
-  it('is valid with no experience fields at all', () => {
+  it('is valid with no legacy work-history fields at all', () => {
     expect(validateEmploymentApplication(VALID)).toEqual({});
   });
 
@@ -343,13 +355,18 @@ describe('date helpers (MM-DD-YYYY display ⇄ YYYY-MM-DD storage)', () => {
 describe('completion — employment application', () => {
   const formData = (ea: Partial<EmploymentApplicationData>) => ({ ...defaultFormData, employmentApplication: { ...VALID, ...ea } });
 
-  it('a valid non-CNA application is 100% (16 items incl. units)', () => {
-    expect(computeStepCompletion(formData({})).employment_application).toMatchObject({ completed: 16, total: 16, percent: 100 });
+  it('a valid non-CNA application is 100% (18 items incl. units and the qualification summary)', () => {
+    expect(computeStepCompletion(formData({})).employment_application).toMatchObject({ completed: 18, total: 18, percent: 100 });
   });
 
   it('CNA has no unit item in the denominator, and is 100% with no units', () => {
-    expect(computeStepCompletion(formData({ positionApplied: 'CNA', specialtyPreference: [] })).employment_application)
-      .toMatchObject({ completed: 15, total: 15, percent: 100 });
+    expect(computeStepCompletion(formData({ positionApplied: 'CNA', specialtyPreference: [], primaryClinicalSpecialty: [] })).employment_application)
+      .toMatchObject({ completed: 16, total: 16, percent: 100 });
+  });
+
+  it('an experience answer below the minimum is not counted complete', () => {
+    expect(computeStepCompletion(formData({ totalYearsExperience: '1.9' })).employment_application.percent).toBeLessThan(100);
+    expect(computeStepCompletion(formData({ primaryClinicalSpecialty: [] })).employment_application.percent).toBeLessThan(100);
   });
 
   it('an invalid date or a legacy employment type is not counted complete; legacy experience fields never count', () => {
@@ -433,5 +450,215 @@ describe('direct deposit — bank account verification', () => {
     expect(errors.directDepositProofDocument).toBe(
       'Upload a voided check or bank document showing your routing and account numbers to complete direct deposit authorization',
     );
+  });
+});
+
+describe('Total Years of Professional Experience', () => {
+  const years = (positionApplied: string, totalYearsExperience: string) =>
+    errorsFor({ positionApplied, licenseType: positionApplied, totalYearsExperience, specialtyPreference: specialtyFor(positionApplied), primaryClinicalSpecialty: specialtyFor(positionApplied) }).totalYearsExperience;
+  const specialtyFor = (position: string) => [...(SPECIALTY_CODES_BY_POSITION[position] ?? [])].slice(0, 1);
+
+  it.each([['CNA', '0.9'], ['RN', '1.9'], ['CNA', '0'], ['RN', '0']])('%s with %s years is below the minimum', (position, value) => {
+    expect(years(position, value)).toMatch(new RegExp(`^${position} applicants need at least`));
+  });
+
+  it.each([['CNA', '1'], ['CNA', '1.5'], ['RN', '2'], ['RN', '2.5'], ['RN', '10']])('%s with %s years qualifies', (position, value) => {
+    expect(years(position, value)).toBeUndefined();
+  });
+
+  it.each(['Tech', 'LVN', 'NP'])('%s has no minimum', (position) => {
+    expect(MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION[position]).toBeUndefined();
+    expect(years(position, '0')).toBeUndefined();
+  });
+
+  it('the only minimums are the two provided', () => {
+    expect(MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION).toEqual({ CNA: 1, RN: 2 });
+  });
+
+  it('re-evaluates when the position changes', () => {
+    expect(years('CNA', '1.5')).toBeUndefined();
+    expect(years('RN', '1.5')).toBe('RN applicants need at least 2 years of professional experience.');
+    expect(years('Tech', '1.5')).toBeUndefined();
+  });
+
+  it('is required, and must be a plain number of years', () => {
+    expect(errorsFor({ totalYearsExperience: '' }).totalYearsExperience).toBe('Total years of professional experience is required');
+    for (const bad of ['five', '1.5 years', '-1', '1,5', '.5', '100']) {
+      expect(errorsFor({ totalYearsExperience: bad }).totalYearsExperience).toMatch(/as a number/);
+    }
+  });
+
+  it('a stored number reads back as text', () => {
+    expect(normalizeEmploymentApplication({ totalYearsExperience: 2.5 }).totalYearsExperience).toBe('2.5');
+  });
+
+  it('formats for display', () => {
+    expect(formatYearsOfExperience('1')).toBe('1 year');
+    expect(formatYearsOfExperience('2.5')).toBe('2.5 years');
+    expect(formatYearsOfExperience('')).toBe('');
+    expect(formatYearsOfExperience(undefined)).toBe('');
+  });
+
+  it('is unrelated to the legacy free-text yearsExperience', () => {
+    expect(normalizeEmploymentApplication({ yearsExperience: '3-5' }).totalYearsExperience).toBe('');
+  });
+});
+
+describe('Primary Clinical Specialty', () => {
+  it('uses the position taxonomy for each position', () => {
+    expect(clinicalSpecialtyOptionsFor('Tech').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.Tech]);
+    expect(clinicalSpecialtyOptionsFor('LVN').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.LVN]);
+    expect(clinicalSpecialtyOptionsFor('RN').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.RN]);
+    expect(clinicalSpecialtyOptionsFor('NP').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.NP]);
+  });
+
+  const clinicalError = (position: string, totalYearsExperience: string) =>
+    errorsFor({ positionApplied: position, licenseType: position, totalYearsExperience, primaryClinicalSpecialty: [] }).primaryClinicalSpecialty;
+
+  it('is multi-select', () => {
+    expect(errorsFor({ primaryClinicalSpecialty: ['icu', 'er', 'or'] }).primaryClinicalSpecialty).toBeUndefined();
+  });
+
+  it.each(['Tech', 'LVN', 'RN', 'NP'])('%s: required once there is any experience', (position) => {
+    for (const years of ['0.5', '1', '2.5', '10']) {
+      expect(clinicalError(position, years)).toBe('Select at least one primary clinical specialty');
+    }
+  });
+
+  it.each(['Tech', 'LVN', 'RN', 'NP'])('%s: may stay empty at 0 years', (position) => {
+    expect(clinicalError(position, '0')).toBeUndefined();
+    expect(clinicalError(position, '0.0')).toBeUndefined();
+  });
+
+  it('a new graduate may still select one', () => {
+    expect(errorsFor({ positionApplied: 'LVN', licenseType: 'LVN', specialtyPreference: ['er'], totalYearsExperience: '0', primaryClinicalSpecialty: ['er'] })).toEqual({});
+  });
+
+  it('a Tech, LVN or NP new graduate is valid overall with it left empty', () => {
+    expect(errorsFor({ positionApplied: 'LVN', licenseType: 'LVN', specialtyPreference: ['er'], totalYearsExperience: '0', primaryClinicalSpecialty: [] })).toEqual({});
+  });
+
+  it('an RN at 0 years is stopped by the minimum, not by this question', () => {
+    const errors = errorsFor({ totalYearsExperience: '0', primaryClinicalSpecialty: [] });
+    expect(errors.totalYearsExperience).toMatch(/at least 2 years/);
+    expect(errors.primaryClinicalSpecialty).toBeUndefined();
+  });
+
+  it('a missing or invalid years answer reports the years, not the specialty', () => {
+    expect(errorsFor({ totalYearsExperience: '', primaryClinicalSpecialty: [] }).primaryClinicalSpecialty).toBeUndefined();
+    expect(errorsFor({ totalYearsExperience: 'five', primaryClinicalSpecialty: [] }).primaryClinicalSpecialty).toBeUndefined();
+  });
+
+  it('is never required of a CNA, at any experience', () => {
+    expect(clinicalError('CNA', '1')).toBeUndefined();
+    expect(clinicalError('CNA', '5')).toBeUndefined();
+  });
+
+  it('completion: at 0 years it is out of the denominator, so a valid new graduate reaches 100%', () => {
+    const newGrad = { ...defaultFormData, employmentApplication: { ...VALID, positionApplied: 'LVN', licenseType: 'LVN', specialtyPreference: ['er'], totalYearsExperience: '0', primaryClinicalSpecialty: [] } };
+    expect(computeStepCompletion(newGrad).employment_application).toMatchObject({ total: 17, percent: 100 });
+    const experienced = { ...newGrad, employmentApplication: { ...newGrad.employmentApplication, totalYearsExperience: '1' } };
+    expect(computeStepCompletion(experienced).employment_application).toMatchObject({ total: 18, completed: 17 });
+  });
+
+  it('a selection from another position is a draft, not an answer', () => {
+    expect(errorsFor({ positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['cst'], primaryClinicalSpecialty: ['icu'] }).primaryClinicalSpecialty).toBeTruthy();
+    const final = finalizeEmploymentApplication({ ...VALID, positionApplied: 'Tech', licenseType: 'Tech', specialtyPreference: ['cst'], primaryClinicalSpecialty: ['icu', 'rrt'] });
+    expect(final.primaryClinicalSpecialty).toEqual(['rrt']);
+  });
+
+  it('a CNA canonicalizes to the single CNA value, keeping other drafts', () => {
+    const saved = withCanonicalSpecialty({ ...VALID, positionApplied: 'CNA', specialtyPreference: [], primaryClinicalSpecialty: ['icu'] });
+    expect(saved.primaryClinicalSpecialty).toEqual(['cna', 'icu']);
+    expect(finalizeEmploymentApplication(saved).primaryClinicalSpecialty).toEqual(['cna']);
+  });
+
+  it('is a separate answer from Specialty / Unit Preference', () => {
+    const final = finalizeEmploymentApplication({ ...VALID, specialtyPreference: ['icu'], primaryClinicalSpecialty: ['er', 'or'] });
+    expect(final.specialtyPreference).toEqual(['icu']);
+    expect(final.primaryClinicalSpecialty).toEqual(['er', 'or']);
+  });
+
+  it('never derives from, or disturbs, the legacy single-value primarySpecialty', () => {
+    const legacy = normalizeEmploymentApplication({ primarySpecialty: 'Critical Care (free text)' });
+    expect(legacy.primaryClinicalSpecialty).toEqual([]);
+    expect(legacy.primarySpecialty).toBe('other');
+    expect(legacy.primarySpecialtyOther).toBe('Critical Care (free text)');
+  });
+
+  it('an application with the old string shape cannot crash validation', () => {
+    expect(() => validateEmploymentApplication({ ...VALID, primaryClinicalSpecialty: 'icu' as unknown as string[] })).not.toThrow();
+  });
+});
+
+describe('document attachments as groups', () => {
+  const A = { name: 'a', size: 1, type: 'image/jpeg', objectKey: 'k/a' };
+  const B = { name: 'b', size: 1, type: 'image/jpeg', objectKey: 'k/b' };
+
+  it('a stored single file reads as a one-item group, for every kind of requirement', () => {
+    expect(documentAttachmentsFor({ uploadedDocuments: { nursingLicense: A } }, 'nursing_license')).toEqual([A]);
+    expect(documentAttachmentsFor({ vaccineProofDocuments: { hep_b_declination: A } }, 'hep_b_vaccination_proof')).toEqual([A]);
+    expect(documentAttachmentsFor({ directDepositProofDocument: A }, 'direct_deposit_voided_check')).toEqual([A]);
+    expect(documentAttachmentsFor({ resumeDocument: A }, 'applicant_resume')).toEqual([A]);
+    expect(documentAttachmentsFor({}, 'nursing_license')).toEqual([]);
+    expect(documentAttachmentsFor(undefined, 'nursing_license')).toEqual([]);
+  });
+
+  it('two or more are stored as a list, with the single-file field holding the first', () => {
+    const data = withDocumentAttachments({}, 'nursing_license', [A, B]);
+    expect(data.documentAttachments).toEqual({ nursing_license: [A, B] });
+    expect(data.uploadedDocuments).toEqual({ nursingLicense: A });
+    expect(documentAttachmentsFor(data, 'nursing_license')).toEqual([A, B]);
+  });
+
+  it('dropping to one attachment leaves exactly the original single-file shape', () => {
+    const data = withDocumentAttachments(withDocumentAttachments({}, 'cpr_cert', [A, B]), 'cpr_cert', [B]);
+    expect(data).toEqual({ uploadedDocuments: { cprCertification: B } });
+  });
+
+  it('leaves other requirements alone', () => {
+    const data = withDocumentAttachments(withDocumentAttachments({}, 'cpr_cert', [A, B]), 'nursing_license', [B]);
+    expect(documentAttachmentsFor(data, 'cpr_cert')).toEqual([A, B]);
+    expect(documentAttachmentsFor(data, 'nursing_license')).toEqual([B]);
+  });
+
+  it('only recognized applicant documents are slots — never the admin Verified License', () => {
+    expect(isApplicantDocType('nursing_license')).toBe(true);
+    expect(isApplicantDocType('hep_b_vaccination_proof')).toBe(true);
+    expect(isApplicantDocType(VERIFIED_LICENSE_DOC_TYPE)).toBe(false);
+    expect(isApplicantDocType('uploadedDocuments')).toBe(false);
+    expect(isApplicantDocType('__proto__')).toBe(false);
+    expect(isApplicantDocType('constructor')).toBe(false);
+  });
+
+  it('the resume is the one single-file document', () => {
+    expect(allowsMultipleAttachments('applicant_resume')).toBe(false);
+    expect(allowsMultipleAttachments('nursing_license')).toBe(true);
+  });
+});
+
+describe('professional license is an optional upload', () => {
+  const documentsStep = (packetId: string) => getPacket(packetId)!.steps.find((s) => s.id === 'documents')!;
+  const CPR = { name: 'c', size: 1, type: 'application/pdf' };
+
+  it.each(['general_rn', 'lvn', 'icu_rn', 'er_rn', 'travel_rn'])('%s: not required, while CPR/BLS and identity remain required', (packetId) => {
+    const step = documentsStep(packetId);
+    expect(step.config?.optionalUploads).toEqual(['nursing_license']);
+    expect(step.config?.requiredUploads).toEqual(['cpr_cert']);
+    expect(validateDocuments({ ...defaultFormData.uploadedDocuments, listA: CPR, cprCertification: CPR }, step)).toEqual({});
+    const missing = validateDocuments(defaultFormData.uploadedDocuments, step);
+    expect(Object.keys(missing).sort()).toEqual(['cprCertification', 'i9']);
+  });
+
+  it('completion never counts it either way', () => {
+    const base = { ...defaultFormData, uploadedDocuments: { ...defaultFormData.uploadedDocuments, listA: CPR, cprCertification: CPR } };
+    expect(computeStepCompletion(base).documents).toMatchObject({ completed: 2, total: 2, percent: 100 });
+    const withLicense = { ...base, uploadedDocuments: { ...base.uploadedDocuments, nursingLicense: CPR } };
+    expect(computeStepCompletion(withLicense).documents).toMatchObject({ completed: 2, total: 2, percent: 100 });
+  });
+
+  it('the structured license details on Applicant Details stay required', () => {
+    expect(errorsFor({ licenseNumber: '' }).licenseNumber).toBeTruthy();
+    expect(errorsFor({ licenseType: '' }).licenseType).toBeTruthy();
   });
 });

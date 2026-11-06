@@ -38,7 +38,7 @@ export async function getAdminToken(): Promise<string | null> {
 /** Forward a JSON request to the Worker as the signed-in admin. */
 export async function proxyAdminJson(
   path: string,
-  init: { method: 'GET' | 'POST'; body?: unknown },
+  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown },
 ): Promise<NextResponse> {
   const token = await getAdminToken();
   if (!token) return jsonError('Unauthorized', 401);
@@ -64,6 +64,33 @@ export async function proxyAdminJson(
     // upstream body.
     const message = typeof parsed?.error === 'string' ? parsed.error : 'Request failed.';
     return jsonError(message, upstream.status);
+  }
+  return NextResponse.json(parsed ?? {}, { status: upstream.status, headers: NO_STORE });
+}
+
+/** Forward a browser's multipart file upload to the Worker as the signed-in admin. */
+export async function proxyAdminUpload(path: string, req: Request, method: 'POST' | 'PUT' = 'POST'): Promise<NextResponse> {
+  const token = await getAdminToken();
+  if (!token) return jsonError('Unauthorized', 401);
+
+  const contentType = req.headers.get('content-type') ?? '';
+  if (!contentType.includes('multipart/form-data')) return jsonError('Expected a file upload', 415);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${getWorkerBaseUrl()}${path}`, {
+      method,
+      headers: { cookie: `admin_token=${token}`, 'Content-Type': contentType },
+      body: await req.arrayBuffer(),
+      cache: 'no-store',
+    });
+  } catch {
+    return jsonError('Unable to reach the server. Please try again.', 502);
+  }
+
+  const parsed = (await upstream.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!upstream.ok) {
+    return jsonError(typeof parsed?.error === 'string' ? parsed.error : 'Upload failed.', upstream.status);
   }
   return NextResponse.json(parsed ?? {}, { status: upstream.status, headers: NO_STORE });
 }

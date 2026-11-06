@@ -130,13 +130,47 @@ export function activeSpecialtySelections(positionApplied: string, selections: r
 
 export const PRIMARY_SPECIALTY_OTHER = 'other';
 
-/** Legacy `primarySpecialty` (manual applications only; no longer asked —
- * a clinical specialty is historical experience, which recruiters read from
- * the resume). Kept so historical applications render with labels. */
+/** Legacy single-value `primarySpecialty` (manual applications only; replaced
+ * by the multi-select `primaryClinicalSpecialty`). Kept so historical
+ * applications render with labels. */
 export const PRIMARY_SPECIALTY_OPTIONS: readonly FieldOption[] = [
   ...SPECIALTY_OPTIONS.filter((o) => o.value !== CNA_SPECIALTY),
   { value: PRIMARY_SPECIALTY_OTHER, label: 'Other' },
 ];
+
+// ── Total Years of Professional Experience ──────────────────────────────────
+//
+// One structured qualification number — not work history, which stays on the
+// resume. Stored as the typed decimal string ('1', '1.5', '2.5').
+
+/** Minimum total years per position. A position that isn't listed has no
+ * minimum: Tech, LVN and NP have none provided. */
+export const MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION: Readonly<Record<string, number>> = {
+  CNA: 1,
+  RN: 2,
+};
+
+const YEARS_OF_EXPERIENCE_PATTERN = /^\d{1,2}(\.\d{1,2})?$/;
+
+/** The stored value as a number; null when it isn't a plain decimal number of years. */
+export function parseYearsOfExperience(value: unknown): number | null {
+  const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  return YEARS_OF_EXPERIENCE_PATTERN.test(text) ? Number(text) : null;
+}
+
+/** Display text ("1 year", "2.5 years"); '' when nothing valid is stored. */
+export function formatYearsOfExperience(value: unknown): string {
+  const years = parseYearsOfExperience(value);
+  if (years === null) return '';
+  return `${years} ${years === 1 ? 'year' : 'years'}`;
+}
+
+/** The Primary Clinical Specialty options for a position. Same taxonomy as
+ * Specialty / Unit Preference, but a different question: this is where the
+ * applicant HAS experience, not where they want to work. */
+export function clinicalSpecialtyOptionsFor(positionApplied: string): FieldOption[] {
+  return specialtyOptionsFor(positionApplied);
+}
 
 /** `employmentType` (multi-select — an applicant may want either or both). */
 export const EMPLOYMENT_TYPE_OPTIONS: readonly FieldOption[] = [
@@ -273,6 +307,8 @@ export const defaultEmploymentApplicationData: EmploymentApplicationData = {
   shiftPreference: [],
   employmentType: [],
   availableStartDate: '',
+  totalYearsExperience: '',
+  primaryClinicalSpecialty: [],
   licenseType: '',
   licenseNumber: '',
   licenseState: '',
@@ -317,6 +353,8 @@ export function normalizeEmploymentApplication(raw: unknown): EmploymentApplicat
     specialtyPreference: normalizeMultiSelect(stored.specialtyPreference, [...SPECIALTY_OPTIONS, ...SPECIALTY_LEGACY_ALIASES]),
     shiftPreference: normalizeMultiSelect(stored.shiftPreference, SHIFT_PREFERENCE_OPTIONS),
     employmentType: normalizeEmploymentType(stored.employmentType),
+    totalYearsExperience: typeof stored.totalYearsExperience === 'number' || typeof stored.totalYearsExperience === 'string' ? String(stored.totalYearsExperience) : '',
+    primaryClinicalSpecialty: normalizeMultiSelect(stored.primaryClinicalSpecialty, SPECIALTY_OPTIONS),
   };
 
   if ('primarySpecialty' in stored) {
@@ -341,6 +379,7 @@ export function dropUnknownSelections(data: EmploymentApplicationData): Employme
   return {
     ...data,
     specialtyPreference: data.specialtyPreference.filter((v) => isOptionValue(SPECIALTY_OPTIONS, v)),
+    primaryClinicalSpecialty: data.primaryClinicalSpecialty.filter((v) => isOptionValue(SPECIALTY_OPTIONS, v)),
     shiftPreference: data.shiftPreference.filter((v) => isOptionValue(SHIFT_PREFERENCE_OPTIONS, v)),
     employmentType: data.employmentType.filter((v) => isOptionValue(EMPLOYMENT_TYPE_OPTIONS, v)),
   };
@@ -352,11 +391,15 @@ export function requiresUnitPreference(positionApplied: string): boolean {
 }
 
 /** For saving an in-progress CNA application: makes sure the canonical CNA
- * specialty is stored (never an empty list) while keeping any draft
- * selections from another position. */
+ * value is stored for both specialty questions (never an empty list) while
+ * keeping any draft selections from another position. */
 export function withCanonicalSpecialty(data: EmploymentApplicationData): EmploymentApplicationData {
-  if (data.positionApplied !== POSITION_WITHOUT_UNIT_PREFERENCE || data.specialtyPreference.includes(CNA_SPECIALTY)) return data;
-  return { ...data, specialtyPreference: [CNA_SPECIALTY, ...data.specialtyPreference] };
+  if (data.positionApplied !== POSITION_WITHOUT_UNIT_PREFERENCE) return data;
+  const withCna = (values: string[]) => (values.includes(CNA_SPECIALTY) ? values : [CNA_SPECIALTY, ...values]);
+  const specialtyPreference = withCna(data.specialtyPreference);
+  const primaryClinicalSpecialty = withCna(data.primaryClinicalSpecialty);
+  if (specialtyPreference === data.specialtyPreference && primaryClinicalSpecialty === data.primaryClinicalSpecialty) return data;
+  return { ...data, specialtyPreference, primaryClinicalSpecialty };
 }
 
 /**
@@ -372,6 +415,7 @@ export function finalizeEmploymentApplication(raw: unknown): EmploymentApplicati
   const finalized: EmploymentApplicationData = {
     ...data,
     specialtyPreference: activeSpecialtySelections(data.positionApplied, data.specialtyPreference),
+    primaryClinicalSpecialty: activeSpecialtySelections(data.positionApplied, data.primaryClinicalSpecialty),
     employmentType: data.employmentType.filter((v) => isOptionValue(EMPLOYMENT_TYPE_OPTIONS, v)),
   };
   if (data.primarySpecialty !== undefined) {
@@ -380,7 +424,7 @@ export function finalizeEmploymentApplication(raw: unknown): EmploymentApplicati
   return finalized;
 }
 
-/** Display text for Primary Clinical Specialty, including the Other text. */
+/** Display text for the legacy single-value specialty, including the Other text. */
 export function formatPrimarySpecialty(primarySpecialty: unknown, primarySpecialtyOther: unknown): string {
   if (typeof primarySpecialty !== 'string' || !primarySpecialty.trim()) return '';
   if (primarySpecialty === PRIMARY_SPECIALTY_OTHER) {

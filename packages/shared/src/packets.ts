@@ -41,7 +41,8 @@ export interface PacketStepConfig {
   maxAttempts?: number;             // default 2
 
   // document_upload
-  requiredUploads?: string[];       // doc type keys: 'nursing_license', 'cpr_cert'
+  requiredUploads?: string[];       // doc type keys that must be uploaded: 'cpr_cert'
+  optionalUploads?: string[];       // doc type keys offered but never required: 'nursing_license'
   i9Uploads?: boolean;              // include I-9 identity document slots (List A / B+C)
 
   // acknowledgement / internal_form / government_form
@@ -388,7 +389,8 @@ const GENERAL_RN_STEPS: PacketStep[] = [
     required: true,
     config:   {
       i9Uploads:       true,
-      requiredUploads: ['nursing_license', 'cpr_cert'],
+      requiredUploads: ['cpr_cert'],
+      optionalUploads: ['nursing_license'],
     },
   },
 
@@ -457,7 +459,7 @@ const VARIANT_BASE_STEPS: PacketStep[] = [
   { id: 'w4',                  type: 'government_form',  subtype: 'w4',   label: 'Tax Forms / W-4',              required: true, config: { requiresSignature: true } },
   { id: 'i9',                  type: 'government_form',  subtype: 'i9',   label: 'Form I-9 (Section 1)',         required: true, config: { requiresSignature: true } },
   { id: 'direct_deposit',      type: 'internal_form',    subtype: 'direct_deposit', label: 'Direct Deposit Authorization', required: true, config: { requiresSignature: true } },
-  { id: 'documents',           type: 'document_upload',      label: 'Documents & Credentials',  required: true, config: { i9Uploads: true, requiredUploads: ['nursing_license', 'cpr_cert'] } },
+  { id: 'documents',           type: 'document_upload',      label: 'Documents & Credentials',  required: true, config: { i9Uploads: true, requiredUploads: ['cpr_cert'], optionalUploads: ['nursing_license'] } },
   { id: 'safety_acknowledgements', type: 'acknowledgement',  label: 'Safety & Education Exam',       required: true, config: { acknowledgementId: 'safety_acknowledgements', requiresSignature: false } },
   { id: 'review',              type: 'review',               label: 'Review & Submit',               required: true },
 ];

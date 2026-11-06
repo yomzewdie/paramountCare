@@ -10,6 +10,8 @@ import {
   employmentReferenceRows,
   flattenForDisplay,
   formatDate,
+  groupDocuments,
+  isVerifiedLicense,
   REDACTED,
 } from '@/lib/admin-display';
 import { labelDocuments } from '@/lib/admin-api';
@@ -319,4 +321,51 @@ describe('UAT follow-up display', () => {
     expect(rowMap(personalInfoRows({ firstName: 'Jane', dateOfBirth: '1990-03-15' }))['Date of Birth']).toBe('03/15/1990');
   });
 
+});
+
+describe('document grouping', () => {
+  const doc = (docType: string | null, label: string | null, id: number) => ({ id, docType, label });
+
+  it('groups attachments of one requirement, keeping first-seen order', () => {
+    const groups = groupDocuments([doc('list_a', 'A', 1), doc('cpr_cert', 'C', 2), doc('list_a', 'A', 3)]);
+    expect(groups.map((g) => [g.label, g.documents.map((d) => d.id)])).toEqual([['A', [1, 3]], ['C', [2]]]);
+  });
+
+  it('never merges unlabeled documents', () => {
+    expect(groupDocuments([doc(null, null, 1), doc(null, null, 2)])).toHaveLength(2);
+  });
+
+  it('identifies the Verified License only by its document type', () => {
+    expect(isVerifiedLicense({ docType: 'verified_license' })).toBe(true);
+    expect(isVerifiedLicense({ docType: 'nursing_license' })).toBe(false);
+    expect(isVerifiedLicense({ docType: null })).toBe(false);
+  });
+
+  it('labels the applicant license and the Verified License differently', () => {
+    const labels = labelDocuments([
+      { id: 1, docType: 'nursing_license', objectKey: 'k/a', fileName: 'a.pdf', fileSize: 1, uploadedAt: '' },
+      { id: 2, docType: 'verified_license', objectKey: 'k/b', fileName: 'b.pdf', fileSize: 1, uploadedAt: '' },
+    ], null).map((d) => d.label);
+    expect(labels).toEqual(['Applicant-provided professional license / certification', 'Verified License (admin-provided)']);
+  });
+});
+
+describe('employment application rows — qualification summary', () => {
+  it('formats the structured values for a current application', () => {
+    const rows = Object.fromEntries(employmentApplicationRows({ totalYearsExperience: '1', primaryClinicalSpecialty: ['cna'] }));
+    expect(rows['Total Years of Professional Experience']).toBe('1 year');
+    expect(rows['Primary Clinical Specialty']).toBe('CNA');
+  });
+
+  it('keeps a legacy answer distinguishable when an application holds both', () => {
+    const rows = Object.fromEntries(employmentApplicationRows({ primarySpecialty: 'icu', primaryClinicalSpecialty: ['er'] }));
+    expect(rows['Primary Clinical Specialty']).toBe('ER');
+    expect(rows['Primary Clinical Specialty (legacy)']).toBe('ICU');
+  });
+
+  it('adds no empty rows to a historical application', () => {
+    const labels = employmentApplicationRows({ positionApplied: 'RN' }).map(([label]) => label);
+    expect(labels).not.toContain('Total Years of Professional Experience');
+    expect(labels).not.toContain('Primary Clinical Specialty');
+  });
 });

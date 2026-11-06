@@ -9,6 +9,7 @@ import {
   removeDocument,
   submitApplication,
   getSession,
+  type AssociateDocumentOptions,
   type SessionResponse,
   type SubmitApplicationSuccess,
   type IncompleteStepInfo,
@@ -59,10 +60,11 @@ interface SessionContextValue {
    * objectKey was actually uploaded by this applicant before writing
    * anything. Same revision-protected/conflict contract as saveStep.
    */
-  associateDocument: (docType: string, objectKey: string) => Promise<SaveStepResult>;
-  /** The counterpart to associateDocument — clears a document slot and
-   * deletes the underlying R2 object server-side. */
-  removeDocument: (docType: string) => Promise<SaveStepResult>;
+  associateDocument: (docType: string, objectKey: string, options?: AssociateDocumentOptions) => Promise<SaveStepResult>;
+  /** The counterpart to associateDocument — removes one attachment (or, with
+   * no objectKey, clears the whole requirement) and deletes the underlying R2
+   * object(s) server-side. */
+  removeDocument: (docType: string, objectKey?: string) => Promise<SaveStepResult>;
   /**
    * M16 (ADR-029) — the real final application submission via
    * `POST /api/sessions/:id/submit`, never a plain PATCH marking `review`
@@ -149,7 +151,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // decides how to fold that into context state and this hook's own
   // SaveStepResult union.
   function applyUpdateResult(result: Awaited<ReturnType<typeof updateSession>>): SaveStepResult {
+    // The ref is updated here too, not only by the effect above: uploading
+    // several files saves them back to back, and the next save must send this
+    // response's revision even if React hasn't committed this update yet.
     if (result.ok) {
+      sessionRef.current = result.data;
       setSession(result.data);
       return { status: 'saved', session: result.data };
     }
@@ -157,6 +163,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // The context always reflects the latest authoritative session, even
       // on conflict — but the caller's own unsaved local edits are never
       // touched here; only the caller can safely decide what to do with them.
+      sessionRef.current = result.current;
       setSession(result.current);
       return { status: 'conflict', latestSession: result.current };
     }
@@ -177,17 +184,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return applyUpdateResult(result);
   }, []);
 
-  const associateDocumentFn = useCallback(async (docType: string, objectKey: string): Promise<SaveStepResult> => {
+  const associateDocumentFn = useCallback(async (docType: string, objectKey: string, options?: AssociateDocumentOptions): Promise<SaveStepResult> => {
     const current = sessionRef.current;
     if (!current) return { status: 'error', error: appError('unknown') };
-    const result = await associateDocument(current.sessionId, docType, { objectKey, revision: current.revision });
+    const result = await associateDocument(current.sessionId, docType, { objectKey, revision: current.revision, ...options });
     return applyUpdateResult(result);
   }, []);
 
-  const removeDocumentFn = useCallback(async (docType: string): Promise<SaveStepResult> => {
+  const removeDocumentFn = useCallback(async (docType: string, objectKey?: string): Promise<SaveStepResult> => {
     const current = sessionRef.current;
     if (!current) return { status: 'error', error: appError('unknown') };
-    const result = await removeDocument(current.sessionId, docType, { revision: current.revision });
+    const result = await removeDocument(current.sessionId, docType, { revision: current.revision, ...(objectKey ? { objectKey } : {}) });
     return applyUpdateResult(result);
   }, []);
 

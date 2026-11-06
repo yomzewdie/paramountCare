@@ -9,7 +9,8 @@ import { OnboardingFormData } from '@/types/onboarding';
 import {
   CLINICAL_UNIT_OPTIONS, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
   POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS,
-  finalizeEmploymentApplication, formatOptionValues, isoDateToDisplay, requiresUnitPreference,
+  finalizeEmploymentApplication, formatOptionValues,
+  formatYearsOfExperience, isoDateToDisplay, requiresUnitPreference,
 } from '@pcs/shared';
 import { isStepValid } from '@/lib/validation';
 import { Card, CardBody } from '@/components/ui/Card';
@@ -140,7 +141,7 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
     { key: 'listA' as const,           label: 'List A — Identity & Work Authorization' },
     { key: 'listB' as const,           label: 'List B — Identity Document' },
     { key: 'listC' as const,           label: 'List C — Work Authorization' },
-    { key: 'nursingLicense' as const,  label: 'Nursing License' },
+    { key: 'nursingLicense' as const,  label: 'Professional License / Certification (optional)' },
     { key: 'cprCertification' as const, label: 'CPR / BLS Certification' },
   ];
 
@@ -183,6 +184,10 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
             <Row label="Position Applied For" value={formatOptionValues(ea.positionApplied, POSITION_OPTIONS) || null} />
             {requiresUnitPreference(ea.positionApplied) && (
               <Row label="Specialty / Unit Preference" value={formatOptionValues(ea.specialtyPreference, CLINICAL_UNIT_OPTIONS) || null} />
+            )}
+            <Row label="Total Years of Professional Experience" value={formatYearsOfExperience(ea.totalYearsExperience) || null} />
+            {requiresUnitPreference(ea.positionApplied) && (
+              <Row label="Primary Clinical Specialty" value={formatOptionValues(ea.primaryClinicalSpecialty, CLINICAL_UNIT_OPTIONS) || null} />
             )}
             <Row label="Employment Type" value={formatOptionValues(ea.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) || null} />
             <Row label="Shift Preference" value={formatOptionValues(ea.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) || null} />

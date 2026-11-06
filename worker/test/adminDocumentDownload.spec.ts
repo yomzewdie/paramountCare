@@ -2,6 +2,7 @@ import { SELF, env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { BASE, uniqueEmail, loginAsAdmin } from './helpers';
 import { buildContentDisposition } from '../src/routes/admin';
+import { insertDocumentStmt } from '../src/db/queries/documents';
 
 // Official Forms Audit finding: uploaded documents (voided checks, vaccine
 // proof, identity/credential documents) were captured and stored correctly
@@ -24,6 +25,9 @@ interface AdminDocument {
   uploadedAt: string;
 }
 
+/** Creates an application, then records `doc` against it directly — the
+ * legacy submit route no longer records client-supplied object keys, and these
+ * tests are about the download route, not how a document got promoted. */
 async function submitWithDocument(
   email: string,
   doc: { objectKey: string; name: string; size: number },
@@ -31,18 +35,17 @@ async function submitWithDocument(
   const res = await SELF.fetch(`${BASE}/api/submit-onboarding`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      firstName: 'Doc',
-      lastName: 'Owner',
-      email,
-      phone: '5551234567',
-      documents: {
-        listA: { objectKey: doc.objectKey, name: doc.name, size: doc.size, uploadedAt: new Date().toISOString() },
-      },
-    }),
+    body: JSON.stringify({ firstName: 'Doc', lastName: 'Owner', email, phone: '5551234567' }),
   });
   expect(res.status).toBe(201);
   const body = await res.json() as SubmitResponse;
+  await insertDocumentStmt(env.DB, {
+    applicationId: body.applicationId,
+    objectKey: doc.objectKey,
+    fileName: doc.name,
+    fileSize: doc.size,
+    uploadedAt: new Date().toISOString(),
+  }).run();
   return body.applicationId;
 }
 

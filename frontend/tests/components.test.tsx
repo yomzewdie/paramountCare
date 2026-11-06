@@ -157,6 +157,69 @@ describe('Application detail — resume-based application', () => {
   });
 });
 
+describe('Application detail — experience, attachments and Verified License', () => {
+  const base = {
+    id: 'APP-888', status: 'pending_review', firstName: 'Vee', lastName: 'Lee', email: 'v@example.com', phone: '555-0100',
+    submittedAt: '2026-11-01T15:00:00.000Z', auditLogs: [],
+  };
+  const doc = (id: number, docType: string, label: string, fileName: string) => ({ id, docType, label, fileName, fileSize: 2048, uploadedAt: '2026-11-01T14:00:00.000Z' });
+  const app: ApplicationDetail = {
+    ...base,
+    payload: { employmentApplication: { positionApplied: 'RN', totalYearsExperience: '2.5', primaryClinicalSpecialty: ['icu', 'l_and_d'], specialtyPreference: ['er'] } },
+    documents: [
+      doc(1, 'nursing_license', 'Applicant-provided professional license / certification', 'license-front.jpg'),
+      doc(2, 'nursing_license', 'Applicant-provided professional license / certification', 'license-back.jpg'),
+      doc(3, 'cpr_cert', 'CPR / BLS certification', 'cpr.pdf'),
+      doc(4, 'verified_license', 'Verified License (admin-provided)', 'board-printout.pdf'),
+    ],
+  };
+  const html = renderToStaticMarkup(<ApplicationDetailView app={app} />);
+
+  it('shows the structured experience and clinical specialties, apart from the unit preference', () => {
+    expect(html).toContain('Total Years of Professional Experience');
+    expect(html).toContain('2.5 years');
+    expect(html).toContain('Primary Clinical Specialty');
+    expect(html).toContain('ICU, L&amp;D / Post-Partum');
+    expect(html).toContain('Specialty / Unit Preference (applicant-selected)');
+    expect(html).toContain('>ER<');
+  });
+
+  it('lists every attachment of a requirement under one heading, each with its own protected download', () => {
+    expect(html).toContain('Applicant-provided professional license / certification — 2 attachments');
+    expect(html).toContain('href="/api/admin/documents/APP-888/1"');
+    expect(html).toContain('href="/api/admin/documents/APP-888/2"');
+    expect(html).toContain('license-back.jpg');
+    expect(html).not.toContain('CPR / BLS certification — ');
+  });
+
+  it('shows the Verified License in its own section, with the admin upload, by document id only', () => {
+    const section = html.slice(html.indexOf('>Verified License<'), html.indexOf('>Uploaded documents<'));
+    expect(section).toContain('board-printout.pdf');
+    expect(section).toContain('href="/api/admin/documents/APP-888/4"');
+    expect(section).toContain('Upload Verified License');
+    expect(section).toContain('aria-label="Replace board-printout.pdf"');
+    expect(section).toContain('aria-label="Remove board-printout.pdf"');
+    expect(section).not.toContain('license-front.jpg');
+    const uploaded = html.slice(html.indexOf('>Uploaded documents<'));
+    expect(uploaded).not.toContain('board-printout.pdf');
+    expect(uploaded).not.toContain('Replace');
+    expect(uploaded).not.toContain('aria-label="Remove');
+  });
+
+  it('offers the upload before any verification exists', () => {
+    const empty = renderToStaticMarkup(<ApplicationDetailView app={{ ...app, documents: [] }} />);
+    expect(empty).toContain('Upload Verified License');
+    expect(empty).toContain('No documents uploaded.');
+  });
+
+  it('a historical application renders without the new fields', () => {
+    const legacy = renderToStaticMarkup(<ApplicationDetailView app={{ ...base, documents: [], payload: { employmentApplication: { positionApplied: 'RN', yearsExperience: '3-5', primarySpecialty: 'icu' } } }} />);
+    expect(legacy).not.toContain('Total Years of Professional Experience');
+    expect(legacy).toContain('Primary Clinical Specialty');
+    expect(legacy).toContain('ICU');
+  });
+});
+
 describe('Application detail', () => {
   const app: ApplicationDetail = {
     id: 'APP-123', status: 'submitted', firstName: 'Jane', lastName: 'Nurse', email: 'jane@example.com', phone: '555-0100',

@@ -12,6 +12,7 @@ import { computeOverallCompletion, computeStepCompletion, defaultFormData, getPa
 const VALID_APPLICATION = {
   ...defaultFormData.employmentApplication,
   positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
+  totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
   licenseType: 'RN', licenseNumber: 'RN123', licenseState: 'CA', licenseExpiration: '2027-01-01',
   authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
   emergencyContactName: 'Jane Smith', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',

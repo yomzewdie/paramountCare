@@ -9,10 +9,11 @@ import {
   activeSpecialtySelections,
   isOptionValue,
   normalizeEmploymentApplication,
+  parseYearsOfExperience,
   requiresUnitPreference,
 } from './employmentApplication';
 import { isValidIsoDate } from './dates';
-import { validatePersonalInfo } from './validation';
+import { validateEmploymentApplication, validatePersonalInfo } from './validation';
 
 export interface StepCompletion {
   step: string;   // packet step ID
@@ -33,7 +34,7 @@ function countStrings(values: string[]): { completed: number; total: number } {
 }
 
 // Counts an item only once it would pass validateEmploymentApplication(), so
-// 100% always means "valid". The unit preference item is not part of the
+// 100% always means "valid". The specialty items are not part of the
 // denominator for a CNA (never asked), and a hidden selection never counts.
 function employmentApplicationCompletion(raw: OnboardingFormData['employmentApplication'] | undefined): StepCompletion {
   const data = normalizeEmploymentApplication(raw);
@@ -41,6 +42,11 @@ function employmentApplicationCompletion(raw: OnboardingFormData['employmentAppl
   const items: boolean[] = [
     isOptionValue(POSITION_OPTIONS, data.positionApplied),
     ...(asksUnits ? [activeSpecialtySelections(data.positionApplied, data.specialtyPreference).length > 0] : []),
+    // Not part of the denominator at 0 years, where validation doesn't require it.
+    ...(asksUnits && parseYearsOfExperience(data.totalYearsExperience) !== 0
+      ? [activeSpecialtySelections(data.positionApplied, data.primaryClinicalSpecialty).length > 0]
+      : []),
+    !validateEmploymentApplication(data).totalYearsExperience,
     data.shiftPreference.length > 0 && data.shiftPreference.every((v) => isOptionValue(SHIFT_PREFERENCE_OPTIONS, v)),
     data.employmentType.length > 0 && data.employmentType.every((v) => isOptionValue(EMPLOYMENT_TYPE_OPTIONS, v)),
     isOptionValue(LICENSE_TYPE_OPTIONS, data.licenseType),
@@ -166,18 +172,18 @@ function directDepositCompletion(
 }
 
 // M14: mirrors validateDocuments()'s own required set exactly (I-9 identity
-// — List A alone, or List B + List C together — plus nursing license and
-// CPR/BLS certification), sourced from packets.ts's `documents` step
-// config, which is identical across every packet today. Each of the 5
-// individual UploadedFile fields only ever gets set via the
-// ownership-verified session-association endpoint, never by a local
-// selection alone, so "completed" here can never mean "picked but not
+// — List A alone, or List B + List C together — plus CPR/BLS certification),
+// sourced from packets.ts's `documents` step config, which is identical
+// across every packet today. The professional license is an optional upload
+// and never part of this count. Each individual UploadedFile field only ever
+// gets set via the ownership-verified session-association endpoint, never by
+// a local selection alone, so "completed" here can never mean "picked but not
 // actually uploaded."
 function documentsCompletion(data: OnboardingFormData['uploadedDocuments']): StepCompletion {
-  const creds = [data.nursingLicense, data.cprCertification].filter(Boolean).length;
+  const cpr = data.cprCertification ? 1 : 0;
   const i9 = (!!data.listA || (!!data.listB && !!data.listC)) ? 1 : 0;
-  const completed = i9 + creds;
-  const total = 3;
+  const completed = i9 + cpr;
+  const total = 2;
   return { step: 'documents', completed, total, percent: pct(completed, total) };
 }
 

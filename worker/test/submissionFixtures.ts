@@ -85,6 +85,7 @@ export const VALID_PERSONAL_INFO = {
 export const VALID_EMPLOYMENT_APPLICATION = {
   positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
   availableStartDate: '2026-01-01',
+  totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
   licenseType: 'RN', licenseNumber: 'RN123456', licenseState: 'CA', licenseExpiration: '2028-01-01',
   authorizedToWork: true, hasConviction: false, convictionDetails: '',
   hasLicenseDiscipline: false, licenseDisciplineDetails: '',
@@ -112,8 +113,12 @@ export const LEGACY_MANUAL_REFERENCE = {
 };
 
 /** An Employment Application exactly as the pre-resume (packet v5) manual form saved it. */
+const EMPLOYMENT_APPLICATION_BEFORE_QUALIFICATIONS = Object.fromEntries(
+  Object.entries(VALID_EMPLOYMENT_APPLICATION).filter(([key]) => key !== 'totalYearsExperience' && key !== 'primaryClinicalSpecialty'),
+);
+
 export const LEGACY_MANUAL_EMPLOYMENT_APPLICATION = {
-  ...VALID_EMPLOYMENT_APPLICATION,
+  ...EMPLOYMENT_APPLICATION_BEFORE_QUALIFICATIONS,
   employmentType: 'per_diem_assignment', // single string, as stored before it became a multi-select
   yearsExperience: '3-5', primarySpecialty: 'med_surg', primarySpecialtyOther: '',
   currentlyEmployed: true, previouslyWorkedHere: false, hasCPR: true, cprCertNumber: '', cprExpiration: '',
@@ -214,7 +219,7 @@ async function completeStep(accessToken: string, session: TestSession, step: Pac
       let current = session;
       const docTypes: string[] = [];
       if (step.config?.i9Uploads) docTypes.push('list_a');
-      for (const key of step.config?.requiredUploads ?? []) docTypes.push(key);
+      for (const key of [...(step.config?.requiredUploads ?? []), ...(step.config?.optionalUploads ?? [])]) docTypes.push(key);
 
       // Each association call already PATCHes formData.uploadedDocuments
       // server-side and returns the updated authoritative session — no

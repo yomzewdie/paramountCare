@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { Image, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { BankAccountType, DepositAllocationType } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
@@ -10,6 +10,7 @@ import { StepActionBar } from '../../components/StepActionBar';
 import { FormFooterStatus } from '../../components/FormFooterStatus';
 import { Button } from '../../components/Button';
 import { ErrorState } from '../../components/StatusStates';
+import { DocumentSlotCard } from '../../components/DocumentSlotCard';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useStepNavigation } from './stepNavigation';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -22,18 +23,14 @@ const ACCOUNT_TYPE_OPTIONS: { value: BankAccountType; label: string }[] = [
 ];
 
 const DEPOSIT_TYPE_OPTIONS: { value: DepositAllocationType; label: string }[] = [
-  { value: 'percentage', label: 'Percentage of paycheck' },
+  { value: 'percentage', label: 'Percentage of Shift' },
   { value: 'dollar', label: 'Fixed dollar amount' },
 ];
 
 const AUTHORIZATION_TEXT =
   'I authorize my employer to make deposits to my account. In the unlikely event of a deposit error, I authorize my employer to make adjustments to correct the error.';
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+const depositAmountLabel = (depositType: DepositAllocationType) => (depositType === 'dollar' ? 'Dollar Amount ($)' : 'Percentage of Shift (%)');
 
 // Visual section order — used only to decide which section to scroll to on
 // a failed Complete attempt. SelectField/SensitiveField don't forward
@@ -84,8 +81,6 @@ export default function DirectDepositScreen() {
     if (outcome.kind === 'saved') nav.afterComplete();
     else if (outcome.kind === 'invalid') scrollToFirstError();
   }
-
-  const { attachment, capture } = form;
 
   return (
     <Screen
@@ -178,7 +173,7 @@ export default function DirectDepositScreen() {
           options={DEPOSIT_TYPE_OPTIONS} error={form.errors.primaryDepositType}
         />
         <TextField
-          label={form.data.primaryAccount.depositType === 'dollar' ? 'Dollar Amount ($)' : 'Percentage (%)'}
+          label={depositAmountLabel(form.data.primaryAccount.depositType)}
           required
           value={form.data.primaryAccount.depositAmount}
           onChangeText={(v) => form.setPrimaryField('depositAmount', v)}
@@ -223,7 +218,7 @@ export default function DirectDepositScreen() {
           options={DEPOSIT_TYPE_OPTIONS} error={form.errors.additionalDepositType}
         />
         <TextField
-          label={form.data.additionalAccount.depositType === 'dollar' ? 'Dollar Amount ($)' : 'Percentage (%)'}
+          label={depositAmountLabel(form.data.additionalAccount.depositType)}
           value={form.data.additionalAccount.depositAmount}
           onChangeText={(v) => form.setAdditionalField('depositAmount', v)}
           onBlur={() => form.blurField('additionalDepositAmount')}
@@ -242,87 +237,13 @@ export default function DirectDepositScreen() {
           Please crop or redact unrelated balances, transactions, or other financial information before uploading.
         </Text>
 
-        {capture.permissionError ? (
-          <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginBottom: theme.spacing.sm }]}>
-            {capture.permissionError}
-          </Text>
-        ) : null}
-
-        {capture.pending ? (
-          <View>
-            {capture.pending.picked.type === 'application/pdf' ? (
-              <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.sm }]}>{capture.pending.picked.name}</Text>
-            ) : (
-              <Image
-                source={{ uri: capture.pending.picked.uri }}
-                accessibilityLabel="Preview of the document you just captured"
-                style={{ width: '100%', height: 220, borderRadius: theme.radii.md, marginBottom: theme.spacing.sm, backgroundColor: theme.colors.surfaceAlt }}
-                resizeMode="contain"
-              />
-            )}
-
-            {capture.pending.issue ? (
-              <Text accessibilityLiveRegion="assertive" style={[theme.typography.caption, { color: theme.colors.danger, marginBottom: theme.spacing.sm }]}>
-                {capture.pending.issue}
-              </Text>
-            ) : (
-              <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-                Make sure the routing and account numbers are visible and easy to read before continuing.
-              </Text>
-            )}
-
-            <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
-              <View style={{ flex: 1 }}>
-                <Button label="Retake" variant="secondary" onPress={capture.retake} accessibilityHint="Discards this capture and lets you try again" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button label="Use Document" onPress={capture.confirmUse} disabled={!!capture.pending.issue} />
-              </View>
-            </View>
-          </View>
-        ) : null}
-
-        {!capture.pending && attachment.status === 'idle' ? (
-          <View style={{ gap: theme.spacing.sm }}>
-            <Button label="Scan Document" onPress={capture.scan} accessibilityHint="Opens your device's document scanner" />
-            <Button label="Take a Photo" variant="secondary" onPress={capture.takePhoto} />
-            <Button label="Choose from Photos" variant="secondary" onPress={capture.pickFromLibrary} />
-            <Button label="Choose a PDF" variant="secondary" onPress={capture.pickDocument} />
-          </View>
-        ) : null}
-
-        {!capture.pending && (attachment.status === 'uploading' || attachment.status === 'associating') ? (
-          <Text style={[theme.typography.body, { color: theme.colors.textMuted }]}>
-            {attachment.status === 'uploading' ? 'Uploading…' : 'Saving…'}
-          </Text>
-        ) : null}
-
-        {!capture.pending && attachment.status === 'uploaded' && attachment.file ? (
-          <View>
-            <Text style={[theme.typography.bodyStrong, { color: theme.colors.text }]}>{attachment.file.name}</Text>
-            <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginBottom: theme.spacing.sm }]}>
-              {formatBytes(attachment.file.size)} — Uploaded
-            </Text>
-            <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
-              <View style={{ flex: 1 }}>
-                <Button label="Replace" variant="secondary" onPress={capture.scan} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button label="Remove" variant="danger" onPress={form.removeProof} />
-              </View>
-            </View>
-          </View>
-        ) : null}
-
-        {!capture.pending && attachment.status === 'failed' ? (
-          <ErrorState message={attachment.errorMessage ?? 'Upload failed. Please try again.'} onRetry={attachment.retry} />
-        ) : null}
-
-        {form.errors.directDepositProofDocument ? (
-          <Text accessibilityLiveRegion="polite" style={[theme.typography.caption, { color: theme.colors.danger, marginTop: theme.spacing.sm }]}>
-            {form.errors.directDepositProofDocument}
-          </Text>
-        ) : null}
+        <DocumentSlotCard
+          slot={{ label: 'Upload bank verification' }}
+          hook={form.proofSlot}
+          required
+          error={form.errors.directDepositProofDocument}
+          previewHint="Make sure the routing and account numbers are visible and easy to read before continuing."
+        />
       </FormSection>
       </View>
 

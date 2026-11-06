@@ -63,6 +63,73 @@ export function insertDocumentIfNotExistsStmt(
     .bind(p.applicationId, p.objectKey, p.fileName, p.fileSize, p.uploadedAt, p.applicationId, p.objectKey);
 }
 
+/** A document recorded directly on a submitted application by staff (never
+ * through an applicant's upload ledger), e.g. a Verified License. */
+export function insertAdminDocumentStmt(
+  db: D1Database,
+  p: InsertDocumentParams & { docType: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO application_documents
+         (application_id, object_key, file_name, file_size, uploaded_at, doc_type)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(p.applicationId, p.objectKey, p.fileName, p.fileSize, p.uploadedAt, p.docType);
+}
+
+// ── Verified License replace/remove ──────────────────────────────────────────
+//
+// Every statement is scoped to (id, application_id, doc_type = verified_license),
+// so none of these can ever reach an applicant's own document. Run together in
+// one batch, audit and insert first: each is guarded by the same EXISTS, so two
+// racing requests produce exactly one replacement or removal, with one audit
+// entry, and the loser's batch changes nothing. The DELETE's `meta.changes` says
+// which request won.
+const VERIFIED_LICENSE_EXISTS = `EXISTS (
+  SELECT 1 FROM application_documents WHERE id = ? AND application_id = ? AND doc_type = 'verified_license'
+)`;
+
+export interface VerifiedLicenseRef {
+  documentId: number;
+  applicationId: string;
+}
+
+export function insertVerifiedLicenseIfExistsStmt(
+  db: D1Database,
+  ref: VerifiedLicenseRef,
+  p: InsertDocumentParams & { docType: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO application_documents
+         (application_id, object_key, file_name, file_size, uploaded_at, doc_type)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE ${VERIFIED_LICENSE_EXISTS}`,
+    )
+    .bind(p.applicationId, p.objectKey, p.fileName, p.fileSize, p.uploadedAt, p.docType, ref.documentId, ref.applicationId);
+}
+
+export function insertVerifiedLicenseAuditIfExistsStmt(
+  db: D1Database,
+  ref: VerifiedLicenseRef,
+  p: { action: string; metadataJson: string; createdAt: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO audit_logs (application_id, action, metadata_json, created_at)
+       SELECT ?, ?, ?, ?
+       WHERE ${VERIFIED_LICENSE_EXISTS}`,
+    )
+    .bind(ref.applicationId, p.action, p.metadataJson, p.createdAt, ref.documentId, ref.applicationId);
+}
+
+export function deleteVerifiedLicenseStmt(db: D1Database, ref: VerifiedLicenseRef): D1PreparedStatement {
+  return db
+    .prepare(`DELETE FROM application_documents WHERE id = ? AND application_id = ? AND doc_type = 'verified_license'`)
+    .bind(ref.documentId, ref.applicationId);
+}
+
 export async function findDocumentsByApplicationId(
   db: D1Database,
   applicationId: string,

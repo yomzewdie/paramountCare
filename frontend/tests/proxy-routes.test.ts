@@ -13,6 +13,8 @@ import { GET as getI9 } from '@/app/api/admin/i9-pdf/[applicationId]/route';
 import { GET as listInvites, POST as createInvite } from '@/app/api/admin/invites/route';
 import { POST as resendInvite } from '@/app/api/admin/invites/[id]/resend/route';
 import { POST as revokeInvite } from '@/app/api/admin/invites/[id]/revoke/route';
+import { POST as uploadVerifiedLicense } from '@/app/api/admin/verified-license/[applicationId]/route';
+import { PUT as replaceVerifiedLicense, DELETE as removeVerifiedLicense } from '@/app/api/admin/verified-license/[applicationId]/[documentId]/route';
 
 beforeEach(() => {
   cookieJar = { admin_token: 'admin-jwt-value' };
@@ -190,5 +192,81 @@ describe('invitation proxy routes', () => {
     const res = await listInvites(new NextRequest('http://localhost:3000/api/admin/invites'));
     expect(res.status).toBe(502);
     expect(await res.text()).not.toContain('10.0.0.1');
+  });
+});
+
+describe('Verified License upload proxy', () => {
+  const body = () => {
+    const form = new FormData();
+    form.append('file', new File(['x'], 'v.pdf', { type: 'application/pdf' }));
+    return form;
+  };
+  const upload = (headers: Record<string, string> = {}) =>
+    new NextRequest('http://localhost:3000/api/admin/verified-license/APP-1', { method: 'POST', body: body(), headers });
+  const params = Promise.resolve({ applicationId: 'APP-1' });
+
+  it('forwards the file to the Worker as the signed-in admin', async () => {
+    const f = stubFetch(() => jsonResponse({ docType: 'verified_license' }, 201));
+    const res = await uploadVerifiedLicense(upload(), { params });
+    expect(res.status).toBe(201);
+    const [url, init] = f.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/api/admin/application/APP-1/verified-license');
+    expect((init.headers as Record<string, string>).cookie).toContain('admin_token=');
+    expect((init.headers as Record<string, string>)['Content-Type']).toContain('multipart/form-data');
+  });
+
+  it('rejects a cross-origin request, and never reaches the Worker', async () => {
+    const f = stubFetch(() => jsonResponse({}));
+    expect((await uploadVerifiedLicense(upload({ Origin: 'https://evil.example' }), { params })).status).toBe(403);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('is 401 without an admin cookie', async () => {
+    cookieJar = {};
+    const f = stubFetch(() => jsonResponse({}));
+    expect((await uploadVerifiedLicense(upload(), { params })).status).toBe(401);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('relays only the Worker error message', async () => {
+    stubFetch(() => jsonResponse({ error: 'A verified license must be a PDF, JPG, or PNG file.', detail: 'secret' }, 415));
+    const res = await uploadVerifiedLicense(upload(), { params });
+    expect(res.status).toBe(415);
+    expect(await res.text()).not.toContain('secret');
+  });
+
+  describe('replace and remove', () => {
+    const docParams = (documentId = '7') => ({ params: Promise.resolve({ applicationId: 'APP-1', documentId }) });
+    const replaceReq = (headers: Record<string, string> = {}) =>
+      new NextRequest('http://localhost:3000/api/admin/verified-license/APP-1/7', { method: 'PUT', body: body(), headers });
+    const removeReq = (headers: Record<string, string> = {}) =>
+      new NextRequest('http://localhost:3000/api/admin/verified-license/APP-1/7', { method: 'DELETE', headers });
+
+    it('forwards a replacement as PUT and a removal as DELETE, by document id', async () => {
+      const f = stubFetch(() => jsonResponse({ success: true }));
+      expect((await replaceVerifiedLicense(replaceReq(), docParams())).status).toBe(200);
+      expect((await removeVerifiedLicense(removeReq(), docParams())).status).toBe(200);
+      const calls = f.mock.calls as unknown as [string, RequestInit][];
+      expect(calls[0][0]).toContain('/api/admin/application/APP-1/verified-license/7');
+      expect(calls[0][1].method).toBe('PUT');
+      expect(calls[1][1].method).toBe('DELETE');
+    });
+
+    it('rejects cross-origin requests and non-numeric ids without reaching the Worker', async () => {
+      const f = stubFetch(() => jsonResponse({}));
+      const evil = { Origin: 'https://evil.example' };
+      expect((await replaceVerifiedLicense(replaceReq(evil), docParams())).status).toBe(403);
+      expect((await removeVerifiedLicense(removeReq(evil), docParams())).status).toBe(403);
+      expect((await removeVerifiedLicense(removeReq(), docParams('../7'))).status).toBe(400);
+      expect(f).not.toHaveBeenCalled();
+    });
+
+    it('is 401 without an admin cookie', async () => {
+      cookieJar = {};
+      const f = stubFetch(() => jsonResponse({}));
+      expect((await replaceVerifiedLicense(replaceReq(), docParams())).status).toBe(401);
+      expect((await removeVerifiedLicense(removeReq(), docParams())).status).toBe(401);
+      expect(f).not.toHaveBeenCalled();
+    });
   });
 });

@@ -6,11 +6,18 @@ import { requireApplicant } from '../middleware/requireApplicant';
 import { createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema, submitSessionSchema } from '../schemas/sessions';
 import { generateSessionId } from '../utils/sessionId';
 import {
+  MAX_ATTACHMENTS_PER_DOCUMENT,
+  RESUME_DOC_TYPE,
+  allowsMultipleAttachments,
+  documentAttachmentsFor,
   getPacket,
+  isApplicantDocType,
   isStepValid,
   computeOverallCompletion,
   defaultFormData,
+  withDocumentAttachments,
   type OnboardingFormData,
+  type UploadedFile,
 } from '@pcs/shared';
 import {
   insertSessionOrGetExisting,
@@ -19,11 +26,10 @@ import {
   updateSessionWithRevision,
   type OnboardingSessionRow,
 } from '../db/queries/onboardingSessions';
-import { findOwnedUpload, findCurrentSlotDocument, associateUploadToSlot } from '../db/queries/uploadedDocuments';
+import { findOwnedUpload, findSlotDocuments, associateUploadToSlot } from '../db/queries/uploadedDocuments';
 import { deleteOwnedUpload } from '../services/documents';
 import { RESUME_CONTENT_TYPES } from './uploads';
 import { submitSession } from '../services/submission';
-import { VACCINE_PROOF_STEP_BY_DOC_TYPE } from '../services/vaccineProof';
 
 // computeOverallCompletion/isStepValid are written against a fully-shaped
 // OnboardingFormData (acknowledgements, employmentReferences, etc. always
@@ -142,12 +148,20 @@ function rejectIfSubmitted(session: OnboardingSessionRow): Response | null {
 
 // ── Server-owned formData keys ───────────────────────────────────────────────
 //
-// The resume reference is written ONLY by the ownership-verified document
-// routes below. The generic PATCH replaces formData wholesale (clients
-// re-send everything they last read), so any value a client sends for it is
-// discarded in favor of what is stored — a client can never forge a resume
-// reference.
-const SERVER_OWNED_FORM_DATA_KEYS = ['resumeDocument'] as const;
+// Every document reference is written ONLY by the ownership-verified document
+// routes below, each backed by the upload ledger. The generic PATCH replaces
+// formData wholesale, and clients legitimately re-send everything they last
+// read — including these keys — so a client's value is not an error, just
+// never used: what is stored always wins. A client therefore can't fabricate a
+// document, point at someone else's file, or complete a document step without
+// a real upload, and installed builds keep working unchanged.
+const SERVER_OWNED_FORM_DATA_KEYS = [
+  'resumeDocument',
+  'uploadedDocuments',
+  'vaccineProofDocuments',
+  'directDepositProofDocument',
+  'documentAttachments',
+] as const;
 
 function withServerOwnedKeys(incoming: Record<string, unknown>, stored: Record<string, unknown>): Record<string, unknown> {
   const out = { ...incoming };
@@ -345,49 +359,16 @@ sessions.patch('/:sessionId', async (c) => {
 
 // ── Document slots — M13 hardening ──────────────────────────────────────────
 //
-// A tiny, explicit allow-list of (docType -> where it lives in formData),
-// not a generic "write to any formData key the client names" endpoint —
-// adding a future document type (e.g. a `documents` step credential slot)
-// is one more map entry, not a redesign. See docs/ARCHITECTURE_DECISION_RECORDS.md
+// An explicit allow-list of document requirements (@pcs/shared's
+// isApplicantDocType), not a generic "write to any formData key the client
+// names" endpoint. Each requirement is a group of attachments, read and
+// written through documentAttachments.ts; a single attachment is stored
+// exactly as it always has been. See docs/ARCHITECTURE_DECISION_RECORDS.md
 // ADR-026.
-interface DocumentFileMeta {
-  name: string;
-  size: number;
-  type: string;
+interface DocumentFileMeta extends UploadedFile {
   objectKey: string;
   uploadedAt: string;
 }
-
-// M14: the `documents` step (License & Credential Uploads) needs five more
-// slots, each nested under `formData.uploadedDocuments` rather than a
-// top-level field — this small helper is the only thing new, the map/route
-// logic around it is unchanged. docType strings match the naming already
-// anticipated (unused, until now) by application_documents.doc_type's own
-// comment in migrations/0002_phase1.sql.
-function applyUploadedDocumentsField(
-  formData: Record<string, unknown>,
-  field: 'listA' | 'listB' | 'listC' | 'nursingLicense' | 'cprCertification',
-  file: DocumentFileMeta | null,
-): Record<string, unknown> {
-  const existing = (formData.uploadedDocuments as Record<string, unknown> | undefined) ?? {};
-  return { ...formData, uploadedDocuments: { ...existing, [field]: file } };
-}
-
-// Vaccination evidence: one slot per vaccine step, stored under
-// `formData.vaccineProofDocuments[stepId]` (the field @pcs/shared already
-// defines for exactly this). docType -> stepId is an explicit allow-list
-// (services/vaccineProof.ts) — the client never names a formData key.
-function applyVaccineProof(stepId: string) {
-  return (formData: Record<string, unknown>, file: DocumentFileMeta | null): Record<string, unknown> => {
-    const existing = (formData.vaccineProofDocuments as Record<string, unknown> | undefined) ?? {};
-    return { ...formData, vaccineProofDocuments: { ...existing, [stepId]: file } };
-  };
-}
-
-// Resume-first onboarding: the applicant's resume, the only content of the
-// "About You & Work History" phase. Its own top-level formData key — see
-// @pcs/shared's OnboardingFormData.resumeDocument.
-const RESUME_DOC_TYPE = 'applicant_resume';
 
 // Slot-specific file types, checked against the type the upload ledger
 // recorded (never anything client-supplied at association time).
@@ -399,22 +380,6 @@ const RESUME_DOC_TYPE = 'applicant_resume';
 const DEFAULT_DOC_TYPE_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const DOC_TYPE_ALLOWED_CONTENT_TYPES: Record<string, ReadonlySet<string>> = {
   [RESUME_DOC_TYPE]: new Set(RESUME_CONTENT_TYPES),
-};
-
-const DOC_TYPE_APPLIERS: Record<
-  string,
-  (formData: Record<string, unknown>, file: DocumentFileMeta | null) => Record<string, unknown>
-> = {
-  direct_deposit_voided_check: (formData, file) => ({ ...formData, directDepositProofDocument: file }),
-  [RESUME_DOC_TYPE]: (formData, file) => ({ ...formData, resumeDocument: file }),
-  list_a:           (formData, file) => applyUploadedDocumentsField(formData, 'listA', file),
-  list_b:           (formData, file) => applyUploadedDocumentsField(formData, 'listB', file),
-  list_c:           (formData, file) => applyUploadedDocumentsField(formData, 'listC', file),
-  nursing_license:  (formData, file) => applyUploadedDocumentsField(formData, 'nursingLicense', file),
-  cpr_cert:         (formData, file) => applyUploadedDocumentsField(formData, 'cprCertification', file),
-  ...Object.fromEntries(
-    Object.entries(VACCINE_PROOF_STEP_BY_DOC_TYPE).map(([docType, stepId]) => [docType, applyVaccineProof(stepId)]),
-  ),
 };
 
 function toFileMeta(row: { file_name: string; file_size: number; content_type: string; object_key: string; uploaded_at: string }): DocumentFileMeta {
@@ -434,8 +399,7 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
   const payload = c.get('jwtPayload');
   if (!payload) return c.json({ error: 'Unauthorized' }, 401);
 
-  const applier = DOC_TYPE_APPLIERS[docType];
-  if (!applier) return c.json({ error: `Unknown document type: ${docType}` }, 422);
+  if (!isApplicantDocType(docType)) return c.json({ error: `Unknown document type: ${docType}` }, 422);
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
@@ -481,9 +445,16 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
     );
   }
 
-  // Whatever currently occupies this slot, read BEFORE any writes — this is
-  // the object to clean up, and only once the new one is safely saved.
-  const previous = await findCurrentSlotDocument(c.env.DB, { sessionId, docType });
+  const { mode, replaceObjectKey, objectKey } = parsed.data;
+  const keepsOtherAttachments = mode === 'add' || !!replaceObjectKey;
+
+  if (keepsOtherAttachments && !allowsMultipleAttachments(docType)) {
+    return c.json({ error: 'This document accepts a single file.' }, 422);
+  }
+  // A file already attached to a different requirement stays where it is.
+  if (keepsOtherAttachments && owned.doc_type && owned.doc_type !== docType) {
+    return c.json({ error: 'This file is already attached to another document.' }, 422);
+  }
 
   let storedFormData: Record<string, unknown>;
   try {
@@ -491,7 +462,36 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
   } catch {
     storedFormData = {};
   }
-  const nextFormData = applier(storedFormData, toFileMeta(owned));
+
+  const current = documentAttachmentsFor(storedFormData, docType);
+  const newFile = toFileMeta(owned);
+  let nextFiles: UploadedFile[];
+  if (replaceObjectKey) {
+    if (!current.some((f) => f.objectKey === replaceObjectKey)) {
+      return c.json({ error: 'The attachment to replace was not found.' }, 404);
+    }
+    nextFiles = current.map((f) => (f.objectKey === replaceObjectKey ? newFile : f));
+  } else if (mode === 'add') {
+    // A retry of an association whose response was lost is a no-op, not a duplicate.
+    nextFiles = current.some((f) => f.objectKey === objectKey) ? current : [...current, newFile];
+  } else {
+    nextFiles = [newFile];
+  }
+  if (nextFiles.length > MAX_ATTACHMENTS_PER_DOCUMENT) {
+    return c.json({ error: `A document can have at most ${MAX_ATTACHMENTS_PER_DOCUMENT} attachments.` }, 422);
+  }
+
+  // What this leaves behind, read BEFORE any writes — these are the objects
+  // to clean up, and only once the new file is safely saved. Nothing else in
+  // the requirement is touched: adding removes nothing, and replacing one
+  // attachment removes only that one.
+  const staleKeys = mode === 'add'
+    ? []
+    : replaceObjectKey
+      ? [replaceObjectKey]
+      : (await findSlotDocuments(c.env.DB, { sessionId, docType })).map((row) => row.object_key);
+
+  const nextFormData = withDocumentAttachments(storedFormData, docType, nextFiles);
 
   const updateResult = await updateSessionWithRevision(c.env.DB, {
     sessionId,
@@ -523,15 +523,16 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
   // never turns an already-successful association into a failure response
   // (M13 hardening §4: never roll back a successful replace).
   try {
-    await associateUploadToSlot(c.env.DB, { objectKey: parsed.data.objectKey, sessionId, docType });
+    await associateUploadToSlot(c.env.DB, { objectKey, sessionId, docType });
   } catch (e) {
     console.error('[sessions] slot bookkeeping update failed after successful association:', e);
   }
 
-  if (previous && previous.object_key !== parsed.data.objectKey) {
-    const cleanup = await deleteOwnedUpload(c.env, { objectKey: previous.object_key, userId: payload.uid });
+  for (const staleKey of staleKeys) {
+    if (staleKey === objectKey) continue;
+    const cleanup = await deleteOwnedUpload(c.env, { objectKey: staleKey, userId: payload.uid });
     if (!cleanup.ok) {
-      console.error(`[sessions] best-effort cleanup of replaced document ${previous.object_key} failed: ${cleanup.reason}`);
+      console.error(`[sessions] best-effort cleanup of replaced document ${staleKey} failed: ${cleanup.reason}`);
     }
   }
 
@@ -551,8 +552,7 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
   const payload = c.get('jwtPayload');
   if (!payload) return c.json({ error: 'Unauthorized' }, 401);
 
-  const applier = DOC_TYPE_APPLIERS[docType];
-  if (!applier) return c.json({ error: `Unknown document type: ${docType}` }, 422);
+  if (!isApplicantDocType(docType)) return c.json({ error: `Unknown document type: ${docType}` }, 422);
 
   const authResult = await loadOwnedSession(c, sessionId);
   if (!authResult.ok) return authResult.response;
@@ -571,15 +571,28 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
     return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
   }
 
-  const current = await findCurrentSlotDocument(c.env.DB, { sessionId, docType });
-
   let storedFormData: Record<string, unknown>;
   try {
     storedFormData = JSON.parse(authResult.session.form_data_json || '{}');
   } catch {
     storedFormData = {};
   }
-  const nextFormData = applier(storedFormData, null);
+
+  // With an objectKey, exactly that attachment goes and the rest stay;
+  // without one, the whole requirement is cleared.
+  const removeOneKey = parsed.data.objectKey;
+  const currentFiles = documentAttachmentsFor(storedFormData, docType);
+  if (removeOneKey && !currentFiles.some((f) => f.objectKey === removeOneKey)) {
+    return c.json({ error: 'The attachment to remove was not found.' }, 404);
+  }
+  const removedKeys = removeOneKey
+    ? [removeOneKey]
+    : (await findSlotDocuments(c.env.DB, { sessionId, docType })).map((row) => row.object_key);
+  const nextFormData = withDocumentAttachments(
+    storedFormData,
+    docType,
+    removeOneKey ? currentFiles.filter((f) => f.objectKey !== removeOneKey) : [],
+  );
 
   const updateResult = await updateSessionWithRevision(c.env.DB, {
     sessionId,
@@ -601,10 +614,10 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
     );
   }
 
-  if (current) {
-    const cleanup = await deleteOwnedUpload(c.env, { objectKey: current.object_key, userId: payload.uid });
+  for (const removedKey of removedKeys) {
+    const cleanup = await deleteOwnedUpload(c.env, { objectKey: removedKey, userId: payload.uid });
     if (!cleanup.ok) {
-      console.error(`[sessions] best-effort delete of removed document ${current.object_key} failed: ${cleanup.reason}`);
+      console.error(`[sessions] best-effort delete of removed document ${removedKey} failed: ${cleanup.reason}`);
     }
   }
 

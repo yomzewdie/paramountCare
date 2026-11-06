@@ -195,6 +195,45 @@ describe('SessionContext', () => {
     });
   });
 
+  describe('attachment groups', () => {
+    it('saves several files back to back, each with the revision the previous save returned', async () => {
+      mockEnsure.mockResolvedValue({ ok: true, session: fakeSession({ revision: 3 }) });
+      mockedAssociateDocument
+        .mockResolvedValueOnce({ ok: true, data: fakeSession({ revision: 4 }) })
+        .mockResolvedValueOnce({ ok: true, data: fakeSession({ revision: 5 }) });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      await act(async () => {
+        await result.current.associateDocument('nursing_license', 'uploads/1/a.jpg', { mode: 'add' });
+        await result.current.associateDocument('nursing_license', 'uploads/1/b.jpg', { mode: 'add' });
+      });
+
+      expect(mockedAssociateDocument.mock.calls).toEqual([
+        ['sess-1', 'nursing_license', { objectKey: 'uploads/1/a.jpg', revision: 3, mode: 'add' }],
+        ['sess-1', 'nursing_license', { objectKey: 'uploads/1/b.jpg', revision: 4, mode: 'add' }],
+      ]);
+    });
+
+    it('passes the attachment to replace, and the one attachment to remove', async () => {
+      mockEnsure.mockResolvedValue({ ok: true, session: fakeSession({ revision: 3 }) });
+      mockedAssociateDocument.mockResolvedValue({ ok: true, data: fakeSession({ revision: 4 }) });
+      mockedRemoveDocument.mockResolvedValue({ ok: true, data: fakeSession({ revision: 5 }) });
+
+      const { result } = renderHook(() => useSession(), { wrapper });
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      await act(async () => {
+        await result.current.associateDocument('cpr_cert', 'uploads/1/new.jpg', { replaceObjectKey: 'uploads/1/old.jpg' });
+        await result.current.removeDocument('cpr_cert', 'uploads/1/other.jpg');
+      });
+
+      expect(mockedAssociateDocument).toHaveBeenCalledWith('sess-1', 'cpr_cert', { objectKey: 'uploads/1/new.jpg', revision: 3, replaceObjectKey: 'uploads/1/old.jpg' });
+      expect(mockedRemoveDocument).toHaveBeenCalledWith('sess-1', 'cpr_cert', { revision: 4, objectKey: 'uploads/1/other.jpg' });
+    });
+  });
+
   describe('associateDocument (M13 hardening)', () => {
     it('sends the current revision to the ownership-verified document endpoint and updates context on success', async () => {
       const initial = fakeSession({ revision: 3, formData: {} });
@@ -395,6 +434,7 @@ describe('SessionContext — progress uses the current rules (Home)', () => {
   const VALID_APPLICATION = {
     ...defaultFormData.employmentApplication,
     positionApplied: 'RN', specialtyPreference: ['icu'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
+    totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
     licenseType: 'RN', licenseNumber: 'RN1', licenseState: 'CA', licenseExpiration: '2028-03-15',
     authorizedToWork: true, hasConviction: false, hasLicenseDiscipline: false, hasLicenseRevocation: false, underInvestigation: false,
     emergencyContactName: 'Jane', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '555-000-1111',

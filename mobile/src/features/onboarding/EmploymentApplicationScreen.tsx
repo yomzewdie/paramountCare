@@ -3,8 +3,11 @@ import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react
 import {
   EMPLOYMENT_TYPE_OPTIONS,
   LICENSE_TYPE_OPTIONS,
+  MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION,
   POSITION_OPTIONS,
   SHIFT_PREFERENCE_OPTIONS,
+  clinicalSpecialtyOptionsFor,
+  parseYearsOfExperience,
   requiresUnitPreference,
   specialtyOptionsFor,
   type EmploymentApplicationData,
@@ -27,12 +30,13 @@ import { US_STATE_OPTIONS } from '../../constants/usStates';
 import { useEmploymentApplicationForm } from './useEmploymentApplicationForm';
 
 // Visual field order — used only to decide where to scroll on a failed
-// Complete attempt. Work history and clinical experience come from the
-// resume (see packets.ts) and are not asked here. Non-text fields (selects, yes/no toggles) are included
+// Complete attempt. Work history comes from the resume (see packets.ts) and is
+// not asked here. Non-text fields (selects, yes/no toggles) are included
 // for scroll targeting even though they never receive a focus-chain ref —
 // same accepted pattern as every prior step screen.
 const FIELD_ORDER: (keyof EmploymentApplicationData)[] = [
   'positionApplied', 'specialtyPreference', 'employmentType', 'shiftPreference', 'availableStartDate',
+  'totalYearsExperience', 'primaryClinicalSpecialty',
   'licenseType', 'licenseNumber', 'licenseState', 'licenseExpiration',
   'authorizedToWork', 'hasConviction', 'convictionDetails',
   'hasLicenseDiscipline', 'licenseDisciplineDetails',
@@ -101,6 +105,9 @@ export default function EmploymentApplicationScreen() {
     error: form.errors[key],
   });
 
+  const minimumYears = MINIMUM_YEARS_OF_EXPERIENCE_BY_POSITION[form.data.positionApplied];
+  const isNewGraduate = parseYearsOfExperience(form.data.totalYearsExperience) === 0;
+
   const yesNo = (key: keyof EmploymentApplicationData) => ({
     value: form.data[key] as boolean | null,
     onChange: (v: boolean) => form.setField(key, v as EmploymentApplicationData[typeof key]),
@@ -126,7 +133,7 @@ export default function EmploymentApplicationScreen() {
     >
       <Text style={[theme.typography.title, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Applicant Details</Text>
       <Text style={[theme.typography.body, { color: theme.colors.textMuted, marginBottom: theme.spacing.lg }]}>
-        Tell us about the role you&rsquo;re seeking, your professional license, and your background. Your work history comes from your resume. All questions in the Eligibility &amp; Background section are required — a &ldquo;Yes&rdquo; answer does not automatically disqualify you.
+        Tell us about the role you&rsquo;re seeking, your experience, your professional license, and your background. Your work history comes from your resume. All questions in the Eligibility &amp; Background section are required — a &ldquo;Yes&rdquo; answer does not automatically disqualify you.
       </Text>
 
       {form.conflict ? (
@@ -179,6 +186,29 @@ export default function EmploymentApplicationScreen() {
           value={form.slashDateDisplay('availableStartDate')}
           onChangeText={(t) => form.setSlashDateInput('availableStartDate', t)}
         />
+      </FormSection>
+
+      <FormSection title="Experience">
+        <TextField
+          label="Total Years of Professional Experience" required keyboardType="decimal-pad" placeholder="e.g. 1.5" returnKeyType="next"
+          hint={minimumYears !== undefined ? `${form.data.positionApplied} applicants need at least ${minimumYears} ${minimumYears === 1 ? 'year' : 'years'}. Your employers and dates come from your resume.` : 'Your total, such as 1, 1.5, or 2.5. Your employers and dates come from your resume.'}
+          onSubmitEditing={() => focusNext('totalYearsExperience')}
+          {...field('totalYearsExperience')}
+        />
+        {/* Where the applicant HAS experience — distinct from the Specialty /
+            Unit Preference above. Same CNA rule: not asked, stored canonically.
+            Not required at 0 years: a new graduate has no specialty to name. */}
+        {form.data.positionApplied && requiresUnitPreference(form.data.positionApplied) ? (
+          <View onLayout={(e) => setFieldOffset('primaryClinicalSpecialty', e)}>
+            <MultiSelectField
+              label="Primary Clinical Specialty" required={!isNewGraduate}
+              hint={isNewGraduate ? 'Optional with no professional experience yet' : 'Clinical areas where you have experience — select all that apply'}
+              options={clinicalSpecialtyOptionsFor(form.data.positionApplied)} values={form.data.primaryClinicalSpecialty}
+              onToggle={(v) => form.toggleSelection('primaryClinicalSpecialty', v)}
+              error={form.errors.primaryClinicalSpecialty}
+            />
+          </View>
+        ) : null}
       </FormSection>
 
       <FormSection title="Professional License">

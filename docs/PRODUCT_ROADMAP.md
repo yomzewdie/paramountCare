@@ -113,3 +113,34 @@ Deliberately **not** built yet. It needs its own design and approval for: an out
 - The RN minimum of 2 years of relevant professional experience is **not** enforced automatically.
 - Recruiters verify professional experience manually from the applicant's uploaded resume (Admin Portal → Resume → Download).
 - The app does not parse resumes and does not collect manual work history (employers, titles, dates, years of experience). The only automatic eligibility rule is age: applicants must be at least 18 (Personal Information → Date of Birth), enforced on mobile and at Worker submission.
+
+## Facility-specific requirements (separate release)
+
+UAT asked for Valley Presbyterian Hospital (VPH) vaccine rules: Hep-B titer or 3 doses, MMR titer or 2 doses, Varicella titer or 2 doses. These are not in the current release and must never be applied globally.
+
+Today nothing identifies a facility: not invitations, sessions, packets, or applications, and every applicant gets the same default packet.
+
+Approved design:
+
+1. The recruiter selects the facility on the invitation.
+2. The facility is copied to the onboarding session, and then to the application.
+3. Facility-specific requirements are applied from that value.
+
+VPH needs its own implementation, because it requires:
+
+- a facility field and model
+- a migration
+- an MMR step
+- a Varicella step
+- titer vs. dose logic
+- dose-count validation
+
+Open question for that work: Hep-B already has a declination statement, while MMR and Varicella have none, so how each reconciles with declining needs a business decision and approved text.
+
+## Social Security Card handling (de-scoped)
+
+Evaluate Admin Portal-side Social Security Card document handling in a future phase. Not an applicant upload; the I-9 List A / List B + List C flow is unchanged.
+
+## Direct deposit split rule (payroll clarification)
+
+Two accounts are supported, and nothing checks that their percentages total 100%, so 100% + 50% currently passes. A combined rule waits on payroll's answer. The "Percentage of Shift" wording is the UAT-requested wording, also to confirm with payroll.

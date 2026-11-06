@@ -30,14 +30,25 @@ export type UpdateSessionPayload = z.infer<typeof updateSessionSchema>;
 // of updateSessionSchema, not a formData field, since the objectKey itself
 // requires a server-side ownership check the generic PATCH path has no way
 // to perform (see routes/sessions.ts, services/documents.ts).
+//
+// A document requirement is a group of one or more attachments. A request with
+// neither `mode` nor `replaceObjectKey` keeps the original meaning (this file
+// becomes the requirement's only attachment), so app builds already installed
+// keep working unchanged.
 export const associateDocumentSchema = z.object({
   objectKey: z.string().min(1, 'objectKey is required'),
   revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+  /** Adds this file to the requirement's existing attachments. */
+  mode: z.literal('add').optional(),
+  /** Swaps this one existing attachment for the new file, in place. */
+  replaceObjectKey: z.string().min(1).optional(),
 });
 export type AssociateDocumentPayload = z.infer<typeof associateDocumentSchema>;
 
 export const removeDocumentSchema = z.object({
   revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+  /** Removes just this attachment; omitted, the whole requirement is cleared. */
+  objectKey: z.string().min(1).optional(),
 });
 export type RemoveDocumentPayload = z.infer<typeof removeDocumentSchema>;
 

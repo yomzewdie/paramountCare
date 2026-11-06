@@ -23,3 +23,10 @@ export function generateObjectKey(userId: number, fileName: string): string {
   const sanitized = sanitizeFileName(fileName);
   return `uploads/${userId}/${year}/${month}/${uuid}-${sanitized}`;
 }
+
+/** Key for a document staff attach to a submitted application. Lives outside
+ * `uploads/<uid>/` — it has no applicant owner and never appears in the
+ * applicant upload ledger, so no applicant route can ever reach it. */
+export function generateVerifiedLicenseObjectKey(applicationId: string, fileName: string): string {
+  return `verified-licenses/${sanitizeFileName(applicationId)}/${crypto.randomUUID()}-${sanitizeFileName(fileName)}`;
+}
