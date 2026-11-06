@@ -3,6 +3,13 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 export default defineWorkersConfig({
 	test: {
 		setupFiles: ['./test/setup.ts'],
+		// End-to-end tests here register applicants (PBKDF2 hashing) and
+		// submit full packets (I-9/W-4 PDF generation). Alone they take under
+		// 1s, but with every test file running in parallel on a 4-vCPU CI
+		// runner the slowest land around Vitest's 5s default and time out
+		// intermittently. 10s is headroom for that contention, not a fix for a
+		// hang; tests that need more still set their own per-test timeout.
+		testTimeout: 10_000,
 		// test/node/** runs under vitest.config.node.mts's plain-Node project
 		// instead (see that file's own doc comment for why) — excluded here so
 		// it is never picked up by the default include glob and run under the
