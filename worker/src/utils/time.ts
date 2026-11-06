@@ -19,3 +19,13 @@ export function nowIso(): string {
 export function isoInSeconds(seconds: number): string {
   return new Date(Date.now() + seconds * 1000).toISOString();
 }
+
+const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
+
+/** A stored timestamp in either format — ISO, or SQLite's `datetime('now')`,
+ * which is UTC — as canonical ISO. Null when it isn't a timestamp at all. */
+export function toIsoTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(SQLITE_DATETIME.test(value) ? `${value.replace(' ', 'T')}Z` : value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}

@@ -6,14 +6,17 @@ import { LayoutList, Mail, ChevronRight } from 'lucide-react';
 
 const NAV_ITEMS = [
   {
-    label: 'Applications',
+    label: 'Clinicians',
     href: '/admin/applications',
     icon: LayoutList,
+    // An in-progress clinician's onboarding summary belongs to the same list.
+    also: ['/admin/onboarding'],
   },
   {
     label: 'Invitations',
     href: '/admin/invitations',
     icon: Mail,
+    also: [] as string[],
   },
 ];
 
@@ -22,8 +25,8 @@ export function AdminNav() {
 
   return (
     <nav className="flex-1 px-3 py-2 md:py-4 flex md:flex-col gap-1 md:space-y-1 overflow-x-auto">
-      {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
-        const active = pathname.startsWith(href);
+      {NAV_ITEMS.map(({ label, href, icon: Icon, also }) => {
+        const active = [href, ...also].some((prefix) => pathname.startsWith(prefix));
         return (
           <Link
             key={href}

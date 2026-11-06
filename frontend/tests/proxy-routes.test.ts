@@ -8,6 +8,9 @@ vi.mock('next/headers', () => ({ cookies: async () => mockCookies(cookieJar).coo
 process.env.WORKER_API_BASE_URL = 'https://worker.test';
 
 import { GET as getDocument } from '@/app/api/admin/documents/[applicationId]/[documentId]/route';
+import { GET as previewDocument } from '@/app/api/admin/documents/[applicationId]/[documentId]/preview/route';
+import { GET as downloadSessionDocument } from '@/app/api/admin/sessions/[sessionId]/documents/[uploadId]/route';
+import { GET as previewSessionDocument } from '@/app/api/admin/sessions/[sessionId]/documents/[uploadId]/preview/route';
 import { GET as getW4 } from '@/app/api/admin/w4-pdf/[applicationId]/route';
 import { GET as getI9 } from '@/app/api/admin/i9-pdf/[applicationId]/route';
 import { GET as listInvites, POST as createInvite } from '@/app/api/admin/invites/route';
@@ -99,6 +102,88 @@ describe('protected downloads', () => {
   it('a Worker 403 (non-admin token) is passed through as 403', async () => {
     stubFetch(() => jsonResponse({ error: 'Forbidden' }, 403));
     expect((await getI9(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'A' }))).status).toBe(403);
+  });
+});
+
+describe('document preview proxy', () => {
+  it('forwards application + numeric document id with the admin cookie, keeping the inline disposition', async () => {
+    const f = stubFetch(() => new Response('pdf-bytes', { headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="cpr.pdf"' } }));
+    const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '42' }));
+
+    expect(res.status).toBe(200);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe('https://worker.test/api/admin/application/APP-1/documents/42/preview');
+    expect((init!.headers as Record<string, string>).cookie).toBe('admin_token=admin-jwt-value');
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(res.headers.get('content-disposition')).toBe('inline; filename="cpr.pdf"');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toBe('pdf-bytes');
+  });
+
+  it('relays the Worker refusing to preview a file type (415), with only its short message', async () => {
+    stubFetch(() => jsonResponse({ error: 'Preview is not available for this file type.' }, 415));
+    const res = await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '5' }));
+    expect(res.status).toBe(415);
+    expect(await res.json()).toEqual({ error: 'Preview is not available for this file type.' });
+  });
+
+  it('rejects a non-numeric document id, and needs the admin cookie, without calling the Worker', async () => {
+    const f = stubFetch(() => new Response('x'));
+    for (const bad of ['abc', '1/../2', 'uploads/2026/x.pdf', '']) {
+      expect((await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: bad }))).status).toBe(400);
+    }
+    cookieJar = {};
+    expect((await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: 'APP-1', documentId: '1' }))).status).toBe(401);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('URL-encodes the application id so it cannot alter the upstream path', async () => {
+    const f = stubFetch(() => new Response('x', { headers: { 'content-type': 'image/png' } }));
+    await previewDocument(new NextRequest('http://localhost:3000/x'), p({ applicationId: '../../auth/logout-all', documentId: '1' }));
+    expect(f.mock.calls[0][0]).toBe('https://worker.test/api/admin/application/..%2F..%2Fauth%2Flogout-all/documents/1/preview');
+  });
+});
+
+describe('in-progress session document proxies', () => {
+  it.each([
+    ['preview', previewSessionDocument, 'preview', 'inline; filename="cpr.png"'],
+    ['download', downloadSessionDocument, 'download', 'attachment; filename="cpr.png"'],
+  ] as const)('%s forwards session + numeric upload id with the admin cookie', async (_label, handler, upstreamPath, disposition) => {
+    const f = stubFetch(() => new Response('png-bytes', { headers: { 'content-type': 'image/png', 'content-disposition': disposition } }));
+    const res = await handler(new NextRequest('http://localhost:3000/x'), p({ sessionId: 'sess-1', uploadId: '7' }));
+
+    expect(res.status).toBe(200);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe(`https://worker.test/api/admin/sessions/sess-1/documents/7/${upstreamPath}`);
+    expect((init!.headers as Record<string, string>).cookie).toBe('admin_token=admin-jwt-value');
+    expect(res.headers.get('content-disposition')).toBe(disposition);
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toBe('png-bytes');
+  });
+
+  it('relays a 415 for a file that cannot be previewed and a 404 for one this session does not have', async () => {
+    stubFetch(() => jsonResponse({ error: 'Preview is not available for this file type.' }, 415));
+    expect((await previewSessionDocument(new NextRequest('http://localhost:3000/x'), p({ sessionId: 's', uploadId: '1' }))).status).toBe(415);
+    stubFetch(() => jsonResponse({ error: 'Document not found for this onboarding session' }, 404));
+    const res = await downloadSessionDocument(new NextRequest('http://localhost:3000/x'), p({ sessionId: 's', uploadId: '1' }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Document not found for this onboarding session' });
+  });
+
+  it('rejects a non-numeric upload id or a missing admin cookie without calling the Worker, and encodes the session id', async () => {
+    const f = stubFetch(() => new Response('x', { headers: { 'content-type': 'application/pdf' } }));
+    for (const handler of [previewSessionDocument, downloadSessionDocument]) {
+      for (const bad of ['abc', '1/../2', 'uploads/1/x.pdf', '']) {
+        expect((await handler(new NextRequest('http://localhost:3000/x'), p({ sessionId: 's', uploadId: bad }))).status).toBe(400);
+      }
+    }
+    expect(f).not.toHaveBeenCalled();
+    await downloadSessionDocument(new NextRequest('http://localhost:3000/x'), p({ sessionId: '../../auth/logout-all', uploadId: '1' }));
+    expect(f.mock.calls[0][0]).toBe('https://worker.test/api/admin/sessions/..%2F..%2Fauth%2Flogout-all/documents/1/download');
+    cookieJar = {};
+    expect((await previewSessionDocument(new NextRequest('http://localhost:3000/x'), p({ sessionId: 's', uploadId: '1' }))).status).toBe(401);
   });
 });
 

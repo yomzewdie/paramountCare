@@ -13,6 +13,7 @@ import {
   listOnboardingInvites,
   rotateOnboardingInvite,
   revokeOnboardingInvite,
+  inviteStatus,
   type OnboardingInviteRow,
 } from '../db/queries/onboardingInvites';
 import { isoInSeconds } from '../utils/time';
@@ -25,13 +26,6 @@ invites.use('*', requireAuth);
 invites.use('*', requireRole('admin', 'super_admin'));
 
 const INVITE_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
-
-function inviteStatus(row: OnboardingInviteRow): 'used' | 'revoked' | 'expired' | 'pending' {
-  if (row.used_at) return 'used';
-  if (row.revoked_at) return 'revoked';
-  if (new Date(row.expires_at).getTime() < Date.now()) return 'expired';
-  return 'pending';
-}
 
 // Never includes token_hash — the raw token is only ever emailed once, and
 // its hash never needs to leave the server after that.

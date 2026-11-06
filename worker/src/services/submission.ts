@@ -1,9 +1,7 @@
 import {
   APPLICANT_DOC_TYPES,
-  DIRECT_DEPOSIT_DOC_TYPE,
-  RESUME_DOC_TYPE,
-  VACCINE_PROOF_STEP_BY_DOC_TYPE,
   documentAttachmentsFor,
+  requiredDocumentGroupsForStep,
   getPacket,
   isStepValid,
   defaultFormData,
@@ -536,22 +534,13 @@ function toI9PdfInput(data: OnboardingFormData, applicationId: string, now: stri
  * The session PATCH can no longer write those references, but a session saved
  * before it stopped could already hold one — and an object can be deleted out
  * from under its reference. A required document must be a live, owned upload
- * occupying its slot in THIS session, or the step is incomplete. Steps with no
- * required document return true.
+ * occupying its slot in THIS session, or the step is incomplete. Which documents
+ * a step requires is the shared definition (requiredDocuments.ts); steps with
+ * no required document return true.
  */
 function hasRequiredLedgerUpload(step: PacketStep, formData: OnboardingFormData, liveUploads: UploadedDocumentRow[]): boolean {
   const has = (docType: string) => liveUploads.some((doc) => doc.doc_type === docType);
-
-  if (step.type === 'document_upload') {
-    if (step.subtype === 'resume') return has(RESUME_DOC_TYPE);
-    const identity = !step.config?.i9Uploads || has('list_a') || (has('list_b') && has('list_c'));
-    return identity && (step.config?.requiredUploads ?? []).every(has);
-  }
-  if (step.type === 'internal_form' && step.subtype === 'direct_deposit') return has(DIRECT_DEPOSIT_DOC_TYPE);
-  if (step.config?.hasDeclination && formData.acknowledgements?.[step.id]?.decision === 'providing_proof') {
-    return Object.entries(VACCINE_PROOF_STEP_BY_DOC_TYPE).some(([docType, stepId]) => stepId === step.id && has(docType));
-  }
-  return true;
+  return requiredDocumentGroupsForStep(step, formData, has).every((group) => group.satisfied);
 }
 
 /**

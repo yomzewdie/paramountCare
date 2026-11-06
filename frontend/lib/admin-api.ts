@@ -6,6 +6,8 @@ import { cookies } from 'next/headers';
 
 import { getWorkerBaseUrl } from './server-config';
 import type { InvitesPage } from './invitations';
+import { DOC_TYPE_LABELS } from './document-labels';
+import type { ClinicianPage, ClinicianQueryParams, OnboardingSummary } from './clinicians';
 
 function getApiBase(): string {
   return getWorkerBaseUrl();
@@ -25,26 +27,6 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-export interface ApplicationSummary {
-  applicationId: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  status: string;
-  submittedAt: string;
-  documentCount: number;
-}
-
-export interface ApplicationsPage {
-  data: ApplicationSummary[];
-  pagination: {
-    page: number;
-    pageSize: number;
-    total: number;
-    totalPages: number;
-  };
-}
 
 // The Worker's detail response includes each document's R2 `objectKey`; it is
 // used here only to label the document (see labelDocuments) and is then
@@ -82,25 +64,20 @@ export interface ApplicationDetail {
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
-export interface FetchApplicationsParams {
-  page?: number;
-  pageSize?: number;
-  search?: string;
-  status?: string;
+/** One page of the clinician list, filtered, sorted and paged by the Worker. */
+export async function fetchClinicians(params: ClinicianQueryParams = {}, pageSize = 20): Promise<ClinicianPage> {
+  const qs = new URLSearchParams({ ...params, pageSize: String(pageSize) });
+  const res = await adminFetch(`/api/admin/clinicians?${qs.toString()}`);
+  if (!res.ok) throw new Error(`Failed to fetch clinicians: ${res.status}`);
+  return res.json() as Promise<ClinicianPage>;
 }
 
-export async function fetchApplications(
-  params: FetchApplicationsParams = {},
-): Promise<ApplicationsPage> {
-  const url = new URL(`${getApiBase()}/api/admin/applications`);
-  if (params.page)     url.searchParams.set('page',     String(params.page));
-  if (params.pageSize) url.searchParams.set('pageSize', String(params.pageSize));
-  if (params.search)   url.searchParams.set('search',   params.search);
-  if (params.status)   url.searchParams.set('status',   params.status);
-
-  const res = await adminFetch(`/api/admin/applications?${url.searchParams.toString()}`);
-  if (!res.ok) throw new Error(`Failed to fetch applications: ${res.status}`);
-  return res.json() as Promise<ApplicationsPage>;
+/** A clinician's read-only onboarding summary; null when no such session exists. */
+export async function fetchOnboardingSummary(sessionId: string): Promise<OnboardingSummary | null> {
+  const res = await adminFetch(`/api/admin/sessions/${encodeURIComponent(sessionId)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch onboarding summary: ${res.status}`);
+  return res.json() as Promise<OnboardingSummary>;
 }
 
 interface WorkerDocumentRecord {
@@ -113,26 +90,7 @@ interface WorkerDocumentRecord {
   uploadedAt: string;
 }
 
-// Authoritative labels, keyed by the doc_type the Worker records for each
-// upload slot (worker/src/routes/sessions.ts DOC_TYPE_APPLIERS). Vaccination
-// proof is identified per vaccine.
-export const DOC_TYPE_LABELS: Record<string, string> = {
-  applicant_resume: 'Resume',
-  hep_b_vaccination_proof: 'Hepatitis B vaccination proof',
-  tdap_vaccination_proof: 'Tdap vaccination proof',
-  flu_vaccination_proof: 'Influenza vaccination proof',
-  // doc_type key kept for stored-data compatibility; the slot accepts any
-  // bank account verification document (voided check, bank letter, or
-  // banking-app screenshot).
-  direct_deposit_voided_check: 'Direct deposit — bank account verification',
-  list_a: 'I-9 List A document',
-  list_b: 'I-9 List B document',
-  list_c: 'I-9 List C document',
-  nursing_license: 'Applicant-provided professional license / certification',
-  cpr_cert: 'CPR / BLS certification',
-  // Uploaded by staff in the Admin Portal, never by the applicant.
-  verified_license: 'Verified License (admin-provided)',
-};
+export { DOC_TYPE_LABELS } from './document-labels';
 
 const UPLOADED_DOCUMENT_LABELS: Record<string, string> = {
   listA: DOC_TYPE_LABELS.list_a,

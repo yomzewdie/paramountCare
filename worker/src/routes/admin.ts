@@ -19,9 +19,22 @@ import {
 } from '../db/queries/documents';
 import { findAuditLogsByApplicationId, insertAuditLogStmt } from '../db/queries/auditLogs';
 import { ALLOWED_TYPES as ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_SIZE_BYTES } from './uploads';
-import { buildContentDisposition } from '../utils/contentDisposition';
+import { buildContentDisposition, buildInlineContentDisposition } from '../utils/contentDisposition';
 import { generateVerifiedLicenseObjectKey } from '../utils/objectKey';
-import { VERIFIED_LICENSE_DOC_TYPE } from '@pcs/shared';
+import { POSITION_OPTIONS, SPECIALTY_OPTIONS, VERIFIED_LICENSE_DOC_TYPE, isOptionValue } from '@pcs/shared';
+import { loadClinicianSession, loadClinicianSources } from '../db/queries/clinicians';
+import {
+  CLINICIAN_SORTS,
+  ONBOARDING_QUEUES,
+  buildClinicians,
+  onboardingSummary,
+  queryClinicians,
+  visibleSessionUploads,
+  type ClinicianQuery,
+  type ClinicianSort,
+  type DateRange,
+  type OnboardingQueue,
+} from '../services/clinicians';
 
 export const admin = new Hono<AppEnv>();
 
@@ -58,6 +71,83 @@ admin.get('/applications', async (c) => {
     })),
     pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
   });
+});
+
+// ── GET /api/admin/clinicians ─────────────────────────────────────────────────
+//
+// Every clinician from invitation through submitted application, with the
+// calculated onboarding queue, completion and required documents (see
+// services/clinicians.ts). Search, filters and sort apply to the complete set
+// before paging. Query parameters: page, pageSize, search, sort
+// (recent | name_asc | name_desc), queue, position, specialty, and
+// startedFrom/startedTo, lastActiveFrom/lastActiveTo, completedFrom/completedTo
+// as YYYY-MM-DD (UTC, inclusive).
+
+const DATE_PARAM = /^\d{4}-\d{2}-\d{2}$/;
+
+function isCalendarDate(value: string): boolean {
+  if (!DATE_PARAM.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+type ParsedClinicianQuery = { ok: true; query: ClinicianQuery } | { ok: false; error: string };
+
+function parseClinicianQuery(c: Context<AppEnv>): ParsedClinicianQuery {
+  const param = (name: string) => c.req.query(name)?.trim() || undefined;
+
+  const sort = (param('sort') ?? 'recent') as ClinicianSort;
+  if (!CLINICIAN_SORTS.includes(sort)) return { ok: false, error: 'Unknown sort' };
+  const queue = param('queue') as OnboardingQueue | undefined;
+  if (queue && !ONBOARDING_QUEUES.includes(queue)) return { ok: false, error: 'Unknown queue' };
+  const position = param('position');
+  if (position && !isOptionValue(POSITION_OPTIONS, position)) return { ok: false, error: 'Unknown position' };
+  const specialty = param('specialty');
+  if (specialty && !isOptionValue(SPECIALTY_OPTIONS, specialty)) return { ok: false, error: 'Unknown specialty' };
+
+  const ranges: Record<'started' | 'lastActive' | 'completed', DateRange> = { started: {}, lastActive: {}, completed: {} };
+  for (const field of ['started', 'lastActive', 'completed'] as const) {
+    for (const end of ['from', 'to'] as const) {
+      const value = param(`${field}${end === 'from' ? 'From' : 'To'}`);
+      if (!value) continue;
+      if (!isCalendarDate(value)) return { ok: false, error: `Invalid date: ${field}${end === 'from' ? 'From' : 'To'}` };
+      ranges[field][end] = value;
+    }
+  }
+
+  return {
+    ok: true,
+    query: {
+      search: param('search'),
+      queue,
+      position,
+      specialty,
+      ...ranges,
+      sort,
+      page: Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(c.req.query('pageSize') ?? '20', 10) || 20)),
+    },
+  };
+}
+
+admin.get('/clinicians', async (c) => {
+  const parsed = parseClinicianQuery(c);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const clinicians = buildClinicians(await loadClinicianSources(c.env.DB));
+  return c.json(queryClinicians(clinicians, parsed.query));
+});
+
+// ── GET /api/admin/sessions/:sessionId ───────────────────────────────────────
+//
+// Read-only onboarding summary for a clinician who has started but may not
+// have submitted: their list row, step progress, required documents, and the
+// files attached so far (by upload id — viewed through the session document
+// routes below). No answers — a submitted clinician's full record is the
+// application.
+admin.get('/sessions/:sessionId', async (c) => {
+  const loaded = await loadClinicianSession(c.env.DB, c.req.param('sessionId'));
+  if (!loaded) return c.json({ error: 'Onboarding session not found' }, 404);
+  return c.json(onboardingSummary(loaded.session, loaded.application, loaded.invites, loaded.uploads));
 });
 
 // ── GET /api/admin/application/:id ────────────────────────────────────────────
@@ -148,6 +238,46 @@ admin.get('/application/:id/w4-pdf', async (c) => {
   return new Response(obj.body, { headers });
 });
 
+/** Serves a stored file under the protected-file headers. The content type
+ * is the one recorded when the file was stored, and only if it is still on
+ * the upload allowlist — anything else is an opaque download. A preview is
+ * inline and only for a PDF, JPEG or PNG — judged by that recorded type,
+ * never the file name; anything else (Word resumes, files with no recorded
+ * type) is refused with 415 and stays download-only. */
+async function serveStoredFile(c: Context<AppEnv>, objectKey: string, fileName: string, mode: 'download' | 'preview'): Promise<Response> {
+  const obj = await c.env.UPLOADS_BUCKET.get(objectKey);
+  if (!obj) return c.json({ error: 'Document file not found in storage' }, 404);
+
+  // Never trust whatever content-type happens to be stored on the R2
+  // object's own metadata beyond the same allowlist uploads were accepted
+  // under in the first place — an unexpected/unrecognized type is served as
+  // a forced download (application/octet-stream) rather than something a
+  // browser might try to render inline.
+  const storedContentType = obj.httpMetadata?.contentType ?? '';
+  const contentType = ALLOWED_UPLOAD_CONTENT_TYPES.has(storedContentType)
+    ? storedContentType
+    : 'application/octet-stream';
+
+  if (mode === 'preview' && !INLINE_PREVIEW_CONTENT_TYPES.has(contentType)) {
+    await obj.body.cancel();
+    return c.json({ error: 'Preview is not available for this file type.' }, 415);
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type',           contentType);
+  headers.set('Content-Disposition',    mode === 'preview' ? buildInlineContentDisposition(fileName) : buildContentDisposition(fileName));
+  headers.set('Cache-Control',          'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return new Response(obj.body, { headers });
+}
+
+export const INLINE_PREVIEW_CONTENT_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+
+const parseDocumentId = (value: string | undefined) => {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
 // ── GET /api/admin/application/:id/documents/:documentId/download ────────────
 //
 // Official Forms Audit finding: the voided check, vaccine-proof uploads, and
@@ -165,38 +295,43 @@ admin.get('/application/:id/w4-pdf', async (c) => {
 // but belongs to a different application matches no row at all, so this can
 // never be used to fetch another application's file by guessing/incrementing
 // an id.
-admin.get('/application/:id/documents/:documentId/download', async (c) => {
-  const applicationId = c.req.param('id');
-  const documentId = Number(c.req.param('documentId'));
+/** The application's document named by the URL, served as a download or an
+ * inline preview (GET .../documents/:documentId/preview, for viewing inside
+ * the Admin Portal). */
+async function serveApplicationDocument(c: Context<AppEnv>, mode: 'download' | 'preview'): Promise<Response> {
+  const documentId = parseDocumentId(c.req.param('documentId'));
+  if (documentId === null) return c.json({ error: 'Invalid document id' }, 400);
 
-  if (!Number.isInteger(documentId) || documentId <= 0) {
-    return c.json({ error: 'Invalid document id' }, 400);
-  }
-
-  const doc = await findDocumentByIdForApplication(c.env.DB, documentId, applicationId);
+  const doc = await findDocumentByIdForApplication(c.env.DB, documentId, c.req.param('id')!);
   if (!doc) return c.json({ error: 'Document not found for this application' }, 404);
+  return serveStoredFile(c, doc.object_key, doc.file_name, mode);
+}
 
-  const obj = await c.env.UPLOADS_BUCKET.get(doc.object_key);
-  if (!obj) return c.json({ error: 'Document file not found in storage' }, 404);
+admin.get('/application/:id/documents/:documentId/download', (c) => serveApplicationDocument(c, 'download'));
+admin.get('/application/:id/documents/:documentId/preview', (c) => serveApplicationDocument(c, 'preview'));
 
-  // Never trust whatever content-type happens to be stored on the R2
-  // object's own metadata beyond the same allowlist uploads were accepted
-  // under in the first place — an unexpected/unrecognized type is served as
-  // a forced download (application/octet-stream) rather than something a
-  // browser might try to render inline.
-  const storedContentType = obj.httpMetadata?.contentType ?? '';
-  const contentType = ALLOWED_UPLOAD_CONTENT_TYPES.has(storedContentType)
-    ? storedContentType
-    : 'application/octet-stream';
+// ── GET /api/admin/sessions/:sessionId/documents/:uploadId/(download|preview) ─
+//
+// A file an applicant still onboarding has attached, by its upload-ledger id —
+// so recruiters can review documents before final submission. Only a file the
+// onboarding summary lists can be fetched: a live upload attached to this
+// session by the session's own applicant, for a document the session still
+// counts (a vaccination proof whose answer is now a declination is not). An
+// id belonging to any other session, a deleted upload, or anything else is
+// simply not found. Read-only: nothing about the session or ledger changes,
+// so the applicant's Last Active is untouched.
+async function serveSessionDocument(c: Context<AppEnv>, mode: 'download' | 'preview'): Promise<Response> {
+  const uploadId = parseDocumentId(c.req.param('uploadId'));
+  if (uploadId === null) return c.json({ error: 'Invalid document id' }, 400);
 
-  const headers = new Headers();
-  headers.set('Content-Type',           contentType);
-  headers.set('Content-Disposition',    buildContentDisposition(doc.file_name));
-  headers.set('Cache-Control',          'private, no-store');
-  headers.set('X-Content-Type-Options', 'nosniff');
+  const loaded = await loadClinicianSession(c.env.DB, c.req.param('sessionId')!);
+  const upload = loaded ? visibleSessionUploads(loaded.session, loaded.uploads).find((u) => u.id === uploadId) : undefined;
+  if (!upload) return c.json({ error: 'Document not found for this onboarding session' }, 404);
+  return serveStoredFile(c, upload.object_key, upload.file_name, mode);
+}
 
-  return new Response(obj.body, { headers });
-});
+admin.get('/sessions/:sessionId/documents/:uploadId/download', (c) => serveSessionDocument(c, 'download'));
+admin.get('/sessions/:sessionId/documents/:uploadId/preview', (c) => serveSessionDocument(c, 'preview'));
 
 // ── Verified License ─────────────────────────────────────────────────────────
 //

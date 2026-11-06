@@ -14,15 +14,15 @@ import {
   groupDocuments,
   isVerifiedLicense,
   personalInfoRows,
-  formatFileSize,
   humanizeKey,
 } from '@/lib/admin-display';
 import { StatusBadge } from '../StatusBadge';
 import { VerifiedLicensePanel } from './VerifiedLicensePanel';
+import { ApplicantDocuments, ResumeActions } from './ApplicantDocuments';
 
-function Section({ title, icon: Icon, children }: { title: string; icon: ElementType; children: ReactNode }) {
+function Section({ title, icon: Icon, children, id }: { title: string; icon: ElementType; children: ReactNode; id?: string }) {
   return (
-    <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <section id={id} className="bg-white rounded-xl border border-slate-200 overflow-hidden scroll-mt-4">
       <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-100 bg-slate-50">
         <Icon size={16} className="text-slate-500" strokeWidth={1.8} />
         <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
@@ -117,31 +117,6 @@ function DownloadLink({ href, label, filename }: { href: string; label: string; 
   );
 }
 
-function DocumentList({ documents, applicationId }: { documents: ApplicationDetail['documents']; applicationId: string }) {
-  return (
-    <ul className="space-y-2">
-      {documents.map((doc) => (
-        <li key={doc.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1.5">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-slate-800 truncate min-w-0">{doc.fileName}</p>
-            <a
-              href={`/api/admin/documents/${applicationId}/${doc.id}`}
-              download={doc.fileName}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex-shrink-0"
-            >
-              <Download size={13} />
-              Download
-            </a>
-          </div>
-          <p className="text-xs text-slate-500">
-            {formatFileSize(doc.fileSize)} · {formatDate(doc.uploadedAt)}
-          </p>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
   const id = encodeURIComponent(app.id);
   const fullName = [app.firstName, app.lastName].filter(Boolean).join(' ') || '—';
@@ -149,13 +124,14 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
   const resume = app.documents.find((d) => d.docType === 'applicant_resume');
   const verifiedLicenses = app.documents.filter(isVerifiedLicense);
   const applicantDocuments = groupDocuments(app.documents.filter((d) => !isVerifiedLicense(d)));
+  const source = { kind: 'application', applicationId: app.id } as const;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-6 py-4 bg-white border-b border-slate-200 flex-shrink-0">
         <Link href="/admin/applications" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors">
           <ChevronLeft size={16} />
-          Applications
+          Clinicians
         </Link>
         <span className="text-slate-300">/</span>
         <span className="text-sm font-semibold text-slate-800">{fullName}</span>
@@ -197,12 +173,7 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
           <div className="space-y-6">
             <Section title="Resume" icon={FileText}>
               {resume ? (
-                <div className="space-y-2">
-                  <DownloadLink href={`/api/admin/documents/${id}/${resume.id}`} label="Download Resume" filename={resume.fileName} />
-                  <p className="text-xs text-slate-500 truncate">
-                    {resume.fileName} · {formatFileSize(resume.fileSize)}
-                  </p>
-                </div>
+                <ResumeActions source={source} resume={resume} />
               ) : format === 'manual' ? (
                 <p className="text-sm text-slate-500">
                   Submitted before resume upload was introduced — work history was entered manually and appears in the application details.
@@ -226,23 +197,11 @@ export function ApplicationDetailView({ app }: { app: ApplicationDetail }) {
               <VerifiedLicensePanel applicationId={app.id} documents={verifiedLicenses} />
             </Section>
 
-            <Section title="Uploaded documents" icon={FileText}>
+            <Section title="Uploaded documents" icon={FileText} id="documents">
               {applicantDocuments.length === 0 ? (
                 <p className="text-sm text-slate-400 italic">No documents uploaded.</p>
               ) : (
-                <div className="space-y-4">
-                  {applicantDocuments.map((group, index) => (
-                    <div key={group.label ?? `document-${index}`} className="space-y-1.5">
-                      {group.label && (
-                        <p className="text-xs font-semibold text-slate-500">
-                          {group.label}
-                          {group.documents.length > 1 && ` — ${group.documents.length} attachments`}
-                        </p>
-                      )}
-                      <DocumentList documents={group.documents} applicationId={id} />
-                    </div>
-                  ))}
-                </div>
+                <ApplicantDocuments source={source} groups={applicantDocuments} />
               )}
             </Section>
 

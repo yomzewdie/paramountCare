@@ -17,6 +17,15 @@ export interface OnboardingInviteRow {
   updated_at: string;
 }
 
+export type InviteStatus = 'used' | 'revoked' | 'expired' | 'pending';
+
+export function inviteStatus(row: Pick<OnboardingInviteRow, 'used_at' | 'revoked_at' | 'expires_at'>): InviteStatus {
+  if (row.used_at) return 'used';
+  if (row.revoked_at) return 'revoked';
+  if (new Date(row.expires_at).getTime() < Date.now()) return 'expired';
+  return 'pending';
+}
+
 export async function insertOnboardingInvite(
   db: D1Database,
   p: { email: string; tokenHash: string; expiresAt: string; createdBy: number },

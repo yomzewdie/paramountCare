@@ -2,9 +2,11 @@
 
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Upload } from 'lucide-react';
+import { Download, Eye, Upload } from 'lucide-react';
 import type { DocumentRecord } from '@/lib/admin-api';
 import { formatDate, formatFileSize } from '@/lib/admin-display';
+import { downloadUrl } from '@/lib/document-viewer';
+import { useDocumentViewer } from './DocumentViewer';
 
 // The Worker accepts up to 10 MB, but these uploads pass through a Vercel
 // function, whose request bodies are limited to 4.5 MB.
@@ -24,6 +26,8 @@ export function VerifiedLicensePanel({ applicationId, documents }: { application
   const replacing = useRef<DocumentRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const source = { kind: 'application', applicationId } as const;
+  const { openViewer, viewer } = useDocumentViewer(source);
   const base = `/api/admin/verified-license/${encodeURIComponent(applicationId)}`;
 
   async function send(url: string, init: RequestInit, failure: string) {
@@ -69,15 +73,24 @@ export function VerifiedLicensePanel({ applicationId, documents }: { application
 
       {documents.length > 0 && (
         <ul className="space-y-2">
-          {documents.map((doc) => (
+          {documents.map((doc, index) => (
             <li key={doc.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 space-y-1.5">
               <p className="text-sm font-medium text-slate-800 truncate">{doc.fileName}</p>
               <p className="text-xs text-slate-500">
                 {formatFileSize(doc.fileSize)} · {formatDate(doc.uploadedAt)}
               </p>
               <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
+                <button
+                  type="button"
+                  aria-label={`View ${doc.fileName}`}
+                  onClick={() => openViewer('Verified License', documents, index)}
+                  className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800"
+                >
+                  <Eye size={13} />
+                  View
+                </button>
                 <a
-                  href={`/api/admin/documents/${encodeURIComponent(applicationId)}/${doc.id}`}
+                  href={downloadUrl(source, doc.id)}
                   download={doc.fileName}
                   className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800"
                 >
@@ -131,6 +144,7 @@ export function VerifiedLicensePanel({ applicationId, documents }: { application
       </button>
       <p className="text-xs text-slate-500">PDF, JPG, or PNG, up to 4.5 MB.</p>
       {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+      {viewer}
     </div>
   );
 }

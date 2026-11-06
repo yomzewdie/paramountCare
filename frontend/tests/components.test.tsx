@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ApplicationDetail, ApplicationSummary } from '@/lib/admin-api';
+import type { ApplicationDetail } from '@/lib/admin-api';
 import type { InviteRecord } from '@/lib/invitations';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/admin/invitations', useRouter: () => ({}), useSearchParams: () => new URLSearchParams() }));
@@ -11,7 +11,6 @@ import AdminLayout from '@/app/admin/layout';
 import { InvitationsTable } from '@/app/admin/invitations/InvitationsTable';
 import { DeliveryBanner } from '@/app/admin/invitations/DeliveryBanner';
 import { InvitationsManager } from '@/app/admin/invitations/InvitationsManager';
-import { ApplicationsTableView } from '@/app/admin/applications/ApplicationsTableView';
 import { ApplicationDetailView } from '@/app/admin/applications/[applicationId]/ApplicationDetailView';
 import { describeDelivery } from '@/lib/invitations';
 
@@ -21,11 +20,11 @@ const invite = (over: Partial<InviteRecord>): InviteRecord => ({
 });
 
 describe('admin navigation', () => {
-  it('shows Applications and Invitations links', () => {
+  it('shows Clinicians and Invitations links', () => {
     const html = renderToStaticMarkup(<AdminNav />);
     expect(html).toContain('href="/admin/applications"');
     expect(html).toContain('href="/admin/invitations"');
-    expect(html).toContain('Applications');
+    expect(html).toContain('Clinicians');
     expect(html).toContain('Invitations');
   });
   it('layout has the brand, nav and a Sign Out control', () => {
@@ -99,26 +98,6 @@ describe('Invitations manager (initial render)', () => {
   });
 });
 
-describe('Applications list', () => {
-  const rows: ApplicationSummary[] = [
-    { applicationId: 'APP-123', firstName: 'Jane', lastName: 'Nurse', email: 'jane@example.com', status: 'submitted', submittedAt: '2026-09-26T15:00:00.000Z', documentCount: 2 },
-  ];
-  it('renders name, email, application id, status, submitted date and a detail link', () => {
-    const html = renderToStaticMarkup(<ApplicationsTableView data={rows} total={1} />);
-    for (const s of ['Jane Nurse', 'jane@example.com', 'APP-123', 'Submitted', 'Sep 26, 2026']) expect(html).toContain(s);
-    expect(html).toContain('href="/admin/applications/APP-123"');
-  });
-  it('does not render sensitive fields even if the API row carried them', () => {
-    const tainted = [{ ...rows[0], ssn: '123-45-6789', accountNumber: '000111222', payload: { secret: 'x' } }] as unknown as ApplicationSummary[];
-    const html = renderToStaticMarkup(<ApplicationsTableView data={tainted} total={1} />);
-    for (const s of ['123-45-6789', '000111222', 'secret']) expect(html).not.toContain(s);
-  });
-  it('has empty states', () => {
-    expect(renderToStaticMarkup(<ApplicationsTableView data={[]} total={0} />)).toContain('No applications yet');
-    expect(renderToStaticMarkup(<ApplicationsTableView data={[]} total={0} search="zzz" />)).toContain('No applications match');
-  });
-});
-
 describe('Application detail — resume-based application', () => {
   const app: ApplicationDetail = {
     id: 'APP-777', status: 'pending_review', firstName: 'Rae', lastName: 'Sume', email: 'rae@example.com', phone: '555-0177',
@@ -138,6 +117,7 @@ describe('Application detail — resume-based application', () => {
   it('shows the format, a Resume section, and a protected download by document id', () => {
     expect(html).toContain('Resume-based application');
     expect(html).toContain('Download Resume');
+    expect(html).toContain('View Resume');
     expect(html).toContain('href="/api/admin/documents/APP-777/21"');
     expect(html).toContain('Rae Sume Resume.pdf');
   });
@@ -184,8 +164,11 @@ describe('Application detail — experience, attachments and Verified License', 
     expect(html).toContain('>ER<');
   });
 
-  it('lists every attachment of a requirement under one heading, each with its own protected download', () => {
+  it('lists every attachment of a requirement under one heading, each with its own View and protected download', () => {
     expect(html).toContain('Applicant-provided professional license / certification — 2 attachments');
+    expect(html).toContain('aria-label="View all 2 attachments of Applicant-provided professional license / certification"');
+    expect(html).toContain('aria-label="View license-front.jpg"');
+    expect(html).toContain('aria-label="View license-back.jpg"');
     expect(html).toContain('href="/api/admin/documents/APP-888/1"');
     expect(html).toContain('href="/api/admin/documents/APP-888/2"');
     expect(html).toContain('license-back.jpg');
@@ -199,6 +182,7 @@ describe('Application detail — experience, attachments and Verified License', 
     expect(section).toContain('Upload Verified License');
     expect(section).toContain('aria-label="Replace board-printout.pdf"');
     expect(section).toContain('aria-label="Remove board-printout.pdf"');
+    expect(section).toContain('aria-label="View board-printout.pdf"');
     expect(section).not.toContain('license-front.jpg');
     const uploaded = html.slice(html.indexOf('>Uploaded documents<'));
     expect(uploaded).not.toContain('board-printout.pdf');

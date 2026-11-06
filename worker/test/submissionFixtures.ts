@@ -94,8 +94,8 @@ export const VALID_EMPLOYMENT_APPLICATION = {
   emergencyContactName: 'John Doe', emergencyContactRelationship: 'Spouse', emergencyContactPhone: '5559876543',
 };
 
-const SIGNED_ACK = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z' };
-const DECLINING_VACCINE = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' };
+export const SIGNED_ACK = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z' };
+export const DECLINING_VACCINE = { checked: true, typedSignature: 'Jane Doe', signedAt: '2026-01-01T00:00:00.000Z', decision: 'declining' };
 
 // Resume-first reference: who to contact + permission (employment details are on the resume).
 export const VALID_REFERENCE = {
@@ -124,7 +124,7 @@ export const LEGACY_MANUAL_EMPLOYMENT_APPLICATION = {
   currentlyEmployed: true, previouslyWorkedHere: false, hasCPR: true, cprCertNumber: '', cprExpiration: '',
 };
 
-const VALID_W4 = {
+export const VALID_W4 = {
   firstNameMI: 'Jane', lastName: 'Doe', ssn: '123-45-6789',
   address: '123 Main St', cityStateZip: 'Los Angeles, CA 90001', filingStatus: 'single_mfs',
   multipleJobs: false, qualifyingChildren: '', otherDependents: '', totalDependents: '', otherIncome: '', deductions: '', extraWithholding: '',
@@ -132,14 +132,14 @@ const VALID_W4 = {
   typedSignature: 'Jane Doe', signedDate: '01/01/2026',
 };
 
-const VALID_I9 = {
+export const VALID_I9 = {
   dateOfBirth: '01/01/1990', citizenshipStatus: 'citizen',
   alienRegistrationNumber: '', alienWorkAuthExpiration: '', alienWorkAuthType: '', alienNumber: '', i94Number: '',
   foreignPassportNumber: '', foreignPassportCountry: '',
   i9SignatureDataUrl: '', i9SignatureType: 'typed', i9TypedSignature: 'Jane Doe', i9SignedDate: '01/01/2026',
 };
 
-const SAFETY_ALL_TRUE = {
+export const SAFETY_ALL_TRUE = {
   patientSafety: true, infectionControl: true, fireSafety: true, patientRightsHipaa: true,
   workplaceViolence: true, backSafety: true, hazardousMaterials: true, documentationStandards: true,
   examAttestation: true,

@@ -1,22 +1,23 @@
 import { Suspense } from 'react';
-import { fetchApplications } from '@/lib/admin-api';
-import { ApplicationsFilter } from './ApplicationsFilter';
-import { ApplicationsTableView } from './ApplicationsTableView';
+import { fetchClinicians } from '@/lib/admin-api';
+import { hasActiveFilters, pickClinicianQuery, type ClinicianQueryParams } from '@/lib/clinicians';
+import { ClinicianFilters } from './ClinicianFilters';
+import { ClinicianTable, QueueTabs } from './ClinicianTable';
 import { Pagination } from './Pagination';
 
-// ── Table skeleton ─────────────────────────────────────────────────────────────
+const PAGE_SIZE = 20;
 
 function TableSkeleton() {
   return (
     <div className="animate-pulse">
       {Array.from({ length: 8 }).map((_, i) => (
         <div key={i} className="flex items-center gap-4 px-6 py-4 border-b border-slate-100">
+          <div className="h-4 w-40 bg-slate-200 rounded" />
+          <div className="h-4 w-12 bg-slate-100 rounded" />
+          <div className="h-4 w-24 bg-slate-100 rounded" />
           <div className="h-4 w-28 bg-slate-200 rounded" />
-          <div className="h-4 w-36 bg-slate-200 rounded" />
+          <div className="h-5 w-24 bg-slate-200 rounded-full" />
           <div className="h-4 flex-1 bg-slate-100 rounded" />
-          <div className="h-5 w-20 bg-slate-200 rounded-full" />
-          <div className="h-4 w-36 bg-slate-100 rounded" />
-          <div className="h-4 w-8 bg-slate-100 rounded" />
           <div className="h-8 w-16 bg-slate-200 rounded-lg" />
         </div>
       ))}
@@ -24,43 +25,38 @@ function TableSkeleton() {
   );
 }
 
-// ── Applications table ────────────────────────────────────────────────────────
+// ── Clinician list ─────────────────────────────────────────────────────────────
 
-async function ApplicationsTable({
-  page,
-  search,
-  status,
-}: {
-  page: number;
-  search?: string;
-  status?: string;
-}) {
+async function Clinicians({ params }: { params: ClinicianQueryParams }) {
   let result;
   try {
-    result = await fetchApplications({ page, pageSize: 20, search, status });
+    result = await fetchClinicians(params, PAGE_SIZE);
   } catch {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-red-600 font-medium">Failed to load applications</p>
-        <p className="text-slate-400 text-sm mt-1">
-          Check that the Worker API is reachable and try again.
-        </p>
+        <p className="text-red-600 font-medium">Failed to load clinicians</p>
+        <p className="text-slate-400 text-sm mt-1">Check that the Worker API is reachable and try again.</p>
       </div>
     );
   }
 
-  const { data, pagination } = result;
-
+  const { data, pagination, queueCounts } = result;
   return (
     <>
-      <ApplicationsTableView data={data} total={pagination.total} search={search} status={status} />
+      <QueueTabs params={params} counts={queueCounts} />
+      <div className="px-6 py-3 border-b border-slate-100 bg-slate-50">
+        <p className="text-xs text-slate-500">
+          {pagination.total === 0 ? 'No results' : `${pagination.total} clinician${pagination.total !== 1 ? 's' : ''}`}
+          {params.search && (
+            <span className="ml-1">
+              matching <span className="font-medium text-slate-700">&ldquo;{params.search}&rdquo;</span>
+            </span>
+          )}
+        </p>
+      </div>
+      <ClinicianTable data={data} filtered={hasActiveFilters(params) || !!params.queue} />
       {data.length > 0 && (
-        <Pagination
-          page={pagination.page}
-          totalPages={pagination.totalPages}
-          total={pagination.total}
-          pageSize={pagination.pageSize}
-        />
+        <Pagination page={pagination.page} totalPages={pagination.totalPages} total={pagination.total} pageSize={pagination.pageSize} />
       )}
     </>
   );
@@ -68,33 +64,28 @@ async function ApplicationsTable({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default async function ApplicationsPage({
+export default async function CliniciansPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; search?: string; status?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
-  const page = Math.max(1, parseInt(params.page ?? '1', 10) || 1);
-  const search = params.search?.trim() || undefined;
-  const status = params.status?.trim() || undefined;
+  const params = pickClinicianQuery(await searchParams);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Page header */}
-      <header className="flex items-center justify-between px-6 py-5 bg-white border-b border-slate-200 flex-shrink-0">
+      <header className="flex flex-col gap-4 px-6 py-5 bg-white border-b border-slate-200 flex-shrink-0">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Applications</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Review submitted onboarding applications</p>
+          <h1 className="text-xl font-semibold text-slate-900">Clinicians</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Everyone from invitation through submitted application</p>
         </div>
-        <Suspense fallback={<div className="h-9 w-64 bg-slate-100 rounded-lg animate-pulse" />}>
-          <ApplicationsFilter />
+        <Suspense fallback={<div className="h-9 w-full max-w-xl bg-slate-100 rounded-lg animate-pulse" />}>
+          <ClinicianFilters />
         </Suspense>
       </header>
 
-      {/* Table area */}
-      <div className="flex-1 bg-white overflow-hidden flex flex-col">
-        <Suspense fallback={<TableSkeleton />}>
-          <ApplicationsTable page={page} search={search} status={status} />
+      <div className="flex-1 bg-white overflow-auto flex flex-col">
+        <Suspense key={JSON.stringify(params)} fallback={<TableSkeleton />}>
+          <Clinicians params={params} />
         </Suspense>
       </div>
     </div>

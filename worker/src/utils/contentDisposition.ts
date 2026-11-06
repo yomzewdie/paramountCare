@@ -7,11 +7,20 @@
  * correctly in browsers that support it.
  */
 export function buildContentDisposition(rawFileName: string): string {
+  return contentDisposition('attachment', rawFileName);
+}
+
+/** The same sanitized filename, for a file shown in the browser rather than saved. */
+export function buildInlineContentDisposition(rawFileName: string): string {
+  return contentDisposition('inline', rawFileName);
+}
+
+function contentDisposition(type: 'attachment' | 'inline', rawFileName: string): string {
   // Deliberately matching control characters (CR/LF included) is the whole
   // point of this header-injection sanitizer, not an accidental regex mistake.
   // eslint-disable-next-line no-control-regex
   const cleaned = rawFileName.replace(/[\r\n\x00-\x1f]/g, '').trim() || 'document';
   const asciiFallback = cleaned.replace(/["\\]/g, '_').replace(/[^\x20-\x7e]/g, '_');
   const encoded = encodeURIComponent(cleaned);
-  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+  return `${type}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
