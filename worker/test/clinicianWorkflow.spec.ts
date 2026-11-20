@@ -591,45 +591,57 @@ describe('clearance', () => {
   });
 
   it('clearance decided on facts that changed before the write is refused, not applied', async () => {
+    // One clearable clinician, restored to clearable between scenarios: each
+    // stale context passes the checklist when read, so every refusal below
+    // comes from the write-time guard ("Something changed…"), not the
+    // up-front checklist. A fresh context at the end does clear, proving the
+    // guard refuses stale facts rather than everything.
     const cookie = await loginAsAdmin();
     const api = adminApi(cookie);
-    const clear = async (clinicianId: number, ctx: NonNullable<Awaited<ReturnType<typeof loadClinicianContext>>>) =>
+    const clear = async (ctx: NonNullable<Awaited<ReturnType<typeof loadClinicianContext>>>) =>
       clearClinician(env.DB, ctx, { adminId: 1, adminRole: 'admin', override: false, reason: undefined });
-    const cleared = async (id: number) => (await env.DB.prepare('SELECT cleared_at FROM clinicians WHERE id = ?').bind(id).first<{ cleared_at: string | null }>())!.cleared_at;
+    const RACE_REFUSED = { ok: false, status: 409, error: expect.stringContaining('Something changed') };
+    const c = await submittedClinician('race');
+    const id = c.clinicianId;
+    const cleared = async () => (await env.DB.prepare('SELECT cleared_at FROM clinicians WHERE id = ?').bind(id).first<{ cleared_at: string | null }>())!.cleared_at;
+    const read = async () => (await loadClinicianContext(env.DB, id))!;
+    const cprReview = (d: Detail) => d.documentReviews.requirements.find((r) => r.requirement === 'cpr_cert')!;
+    let detail = await makeClearable(cookie, id);
 
     // A verification reopened after the checklist was read.
-    const a = await submittedClinician('race-verification');
-    await makeClearable(cookie, a.clinicianId);
-    let stale = (await loadClinicianContext(env.DB, a.clinicianId))!;
-    await api.ok(api.put(`/${a.clinicianId}/verifications/i9_verification`, { status: 'needs_review' }));
-    expect(await clear(a.clinicianId, stale)).toMatchObject({ ok: false, status: 409 });
-    expect(await cleared(a.clinicianId)).toBeNull();
+    let stale = await read();
+    await api.ok(api.put(`/${id}/verifications/i9_verification`, { status: 'needs_review' }));
+    expect(await clear(stale)).toMatchObject(RACE_REFUSED);
+    expect(await cleared()).toBeNull();
+    detail = await api.ok(api.put(`/${id}/verifications/i9_verification`, { status: 'complete' }));
 
     // A document review reset after the checklist was read.
-    const b = await submittedClinician('race-review');
-    await makeClearable(cookie, b.clinicianId);
-    stale = (await loadClinicianContext(env.DB, b.clinicianId))!;
-    await api.ok(api.put(`/${b.clinicianId}/document-reviews/cpr_cert`, { status: 'pending' }));
-    expect(await clear(b.clinicianId, stale)).toMatchObject({ ok: false, status: 409 });
-    expect(await cleared(b.clinicianId)).toBeNull();
+    stale = await read();
+    detail = await api.ok(api.put(`/${id}/document-reviews/cpr_cert`, { status: 'pending' }));
+    expect(await clear(stale)).toMatchObject(RACE_REFUSED);
+    expect(await cleared()).toBeNull();
+    detail = await api.ok(api.put(`/${id}/document-reviews/cpr_cert`, { status: 'accepted', expectedUpdatedAt: cprReview(detail).updatedAt }));
 
     // The applicant changed a file (a correction upload) after it was read.
-    const c = await submittedClinician('race-applicant');
-    let ready = await makeClearable(cookie, c.clinicianId);
-    const cpr = ready.documentReviews.requirements.find((r) => r.requirement === 'cpr_cert')!;
-    ready = await api.ok(api.put(`/${c.clinicianId}/document-reviews/cpr_cert`, { status: 'needs_correction', note: 'Blurry', expectedUpdatedAt: cpr.updatedAt }));
-    const reaccept = ready.documentReviews.requirements.find((r) => r.requirement === 'cpr_cert')!;
-    await api.ok(api.put(`/${c.clinicianId}/document-reviews/cpr_cert`, { status: 'accepted', expectedUpdatedAt: reaccept.updatedAt }));
-    stale = (await loadClinicianContext(env.DB, c.clinicianId))!;
+    detail = await api.ok(api.put(`/${id}/document-reviews/cpr_cert`, { status: 'needs_correction', note: 'Blurry', expectedUpdatedAt: cprReview(detail).updatedAt }));
+    detail = await api.ok(api.put(`/${id}/document-reviews/cpr_cert`, { status: 'accepted', expectedUpdatedAt: cprReview(detail).updatedAt }));
+    expect(detail.clearance.ready).toBe(true);
+    stale = await read();
     await env.DB.prepare('UPDATE onboarding_sessions SET revision = revision + 1 WHERE session_id = ?').bind(c.latest.sessionId).run();
-    expect(await clear(c.clinicianId, stale)).toMatchObject({ ok: false, status: 409 });
+    expect(await clear(stale)).toMatchObject(RACE_REFUSED);
+    expect(await cleared()).toBeNull();
 
     // On Hold placed after it was read: refused even though everything else held.
-    stale = (await loadClinicianContext(env.DB, c.clinicianId))!;
-    await env.DB.prepare(`UPDATE clinicians SET on_hold_at = '2026-11-01T00:00:00.000Z' WHERE id = ?`).bind(c.clinicianId).run();
-    expect(await clear(c.clinicianId, stale)).toMatchObject({ ok: false, status: 409 });
-    expect(await cleared(c.clinicianId)).toBeNull();
-    for (const id of [a.clinicianId, b.clinicianId, c.clinicianId]) expect((await auditActions(id)).some((x) => x.action === 'clinician_cleared')).toBe(false);
+    stale = await read();
+    await env.DB.prepare(`UPDATE clinicians SET on_hold_at = '2026-11-01T00:00:00.000Z' WHERE id = ?`).bind(id).run();
+    expect(await clear(stale)).toMatchObject(RACE_REFUSED);
+    expect(await cleared()).toBeNull();
+    expect((await auditActions(id)).some((x) => x.action === 'clinician_cleared')).toBe(false);
+
+    // Control: the same clinician, read fresh once the hold is lifted, clears.
+    await env.DB.prepare('UPDATE clinicians SET on_hold_at = NULL WHERE id = ?').bind(id).run();
+    expect(await clear(await read())).toEqual({ ok: true });
+    expect(await cleared()).not.toBeNull();
   });
 
   it('a super_admin demoted after signing in can no longer override', async () => {
