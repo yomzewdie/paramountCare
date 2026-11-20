@@ -155,7 +155,7 @@ describe('resume removed → Resume is required again', () => {
 describe('Applicant Details asks for the qualification summary, never work history', () => {
   it('collects Primary Clinical Specialty as its own question, not the legacy single value', () => {
     const source = readFileSync(join(__dirname, '..', 'EmploymentApplicationScreen.tsx'), 'utf8');
-    expect(source).toContain('Primary Clinical Specialty');
+    expect(source).toContain('Preferred Primary Specialties');
     expect(source).toContain('Specialty / Unit Preference');
     expect(source).toContain('Total Years of Professional Experience');
     expect(source).not.toMatch(/primarySpecialty\b/);

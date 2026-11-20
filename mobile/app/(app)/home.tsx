@@ -13,7 +13,7 @@ import { LoadingState, ErrorState, SuccessState } from '../../src/components/Sta
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { useSession } from '../../src/features/onboarding/SessionContext';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
-import { groupStepsIntoPhases, derivePhaseStatus, derivePhaseRequiredCounts, findCurrentPhaseId } from '../../src/features/onboarding/phases';
+import { groupStepsIntoPhases, derivePhaseStatus, derivePhaseRequiredCounts, findCurrentPhaseId, continueStepForPhase } from '../../src/features/onboarding/phases';
 
 // The real "My Onboarding" dashboard (docs/PRODUCT_ROADMAP.md item #3,
 // pulled into M4). Every number and step name here comes from the
@@ -33,6 +33,7 @@ export default function Home() {
   const theme = useTheme();
   const router = useRouter();
   const { status, session, progress, error, refresh, corrections } = useSession();
+  const openStep = (stepId: string) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId, origin: 'home' } });
   const fixDocument = (requirement: string) => router.push({ pathname: '/(app)/correction/[requirement]', params: { requirement } });
   const { isConnected } = useNetworkStatus();
 
@@ -122,7 +123,7 @@ export default function Home() {
         <ContinueOnboardingCard
           stepLabel={progress.nextStep.label}
           phaseLabel={phases.find((p) => p.id === currentPhaseId)?.label ?? progress.packetName}
-          onPress={() => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: progress.nextStep!.id, origin: 'home' } })}
+          onPress={() => openStep(progress.nextStep!.id)}
         />
       ) : (
         // Every required step is done but at least one OPTIONAL step is
@@ -146,6 +147,7 @@ export default function Home() {
         {phases.map((phase, i) => {
           const phaseStatus = derivePhaseStatus(phase.steps, stepStates);
           const { completedRequired, totalRequired } = derivePhaseRequiredCounts(phase.steps);
+          const continueStepId = phase.id === currentPhaseId ? continueStepForPhase(phase, progress.nextStep?.id) : null;
           return (
             <View key={phase.id} style={i > 0 ? { borderTopWidth: 1, borderTopColor: theme.colors.border } : undefined}>
               <OnboardingPhaseHeader
@@ -154,6 +156,7 @@ export default function Home() {
                 completedRequired={completedRequired}
                 totalRequired={totalRequired}
                 isCurrent={phase.id === currentPhaseId}
+                onContinue={continueStepId ? () => openStep(continueStepId) : undefined}
               />
             </View>
           );

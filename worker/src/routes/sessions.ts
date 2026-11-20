@@ -14,6 +14,9 @@ import {
   isApplicantDocType,
   isStepValid,
   computeOverallCompletion,
+  applicantTodayIso,
+  CLIENT_TIME_ZONE_HEADER,
+  START_DATE_IN_PAST_MESSAGE,
   defaultFormData,
   withDocumentAttachments,
   docTypesForRequirement,
@@ -320,6 +323,27 @@ sessions.get('/:sessionId', async (c) => {
 
 // ── PATCH /api/sessions/:sessionId — optimistic-concurrency partial update ──
 
+function startDateOf(formData: Record<string, unknown> | undefined): string {
+  const app = formData?.employmentApplication;
+  const value = app && typeof app === 'object' ? (app as Record<string, unknown>).availableStartDate : undefined;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** A newly entered or changed Available Start Date before the applicant's
+ * local today — computed from the Worker's own clock in the applicant's time
+ * zone (see applicantTodayIso), never a date the client supplies. */
+export function pastStartDateError(
+  incoming: Record<string, unknown> | undefined,
+  stored: Record<string, unknown>,
+  now: Date,
+  timeZone: string | null | undefined,
+): string | null {
+  if (!incoming || !('employmentApplication' in incoming)) return null;
+  const next = startDateOf(incoming);
+  if (!next || next === startDateOf(stored) || !/^\d{4}-\d{2}-\d{2}$/.test(next)) return null;
+  return next < applicantTodayIso(now, timeZone) ? START_DATE_IN_PAST_MESSAGE : null;
+}
+
 sessions.patch('/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const payload = c.get('jwtPayload');
@@ -355,6 +379,16 @@ sessions.patch('/:sessionId', async (c) => {
     storedFormData = {};
   }
   const incomingFormData = p.formData ? withServerOwnedKeys(p.formData, storedFormData) : undefined;
+
+  // Available Start Date can't be entered or changed to a date already past
+  // — on any save, draft or complete, so a past date never gets stored to be
+  // completed later. An unchanged stored date that has since passed is left
+  // alone (and never blocks submission). "Today" is the applicant's own
+  // calendar day, in the time zone their device reports.
+  const startDateError = pastStartDateError(incomingFormData, storedFormData, new Date(), c.req.header(CLIENT_TIME_ZONE_HEADER));
+  if (startDateError) {
+    return c.json({ error: 'Validation failed', field: 'employment_application', issues: [{ field: 'availableStartDate', message: startDateError }] }, 422);
+  }
 
   if (p.stepStates) {
     const packet = getPacket(authResult.session.packet_id);

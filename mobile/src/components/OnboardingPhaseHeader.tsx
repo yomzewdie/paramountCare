@@ -18,6 +18,11 @@ interface OnboardingPhaseHeaderProps {
    * uses for its own onPress prop. */
   onPress?: () => void;
   expanded?: boolean;
+  /** Makes "Continue →" itself tappable, opening the phase's next step. It
+   * is its own button beside the row — never nested inside the row's own
+   * pressable — so the two touch targets (and their screen-reader
+   * elements) never conflict. */
+  onContinue?: () => void;
 }
 
 const STATUS_WORDS: Record<PhaseStatus, string> = {
@@ -29,7 +34,7 @@ const STATUS_WORDS: Record<PhaseStatus, string> = {
 /** Never conveys phase status by glyph/color alone — accessibilityLabel
  * below states it in words, and the glyph shape itself (✓ / ● / ○) differs,
  * not just its color, matching StepRow's own established convention. */
-export function OnboardingPhaseHeader({ label, status, completedRequired, totalRequired, isCurrent, onPress, expanded }: OnboardingPhaseHeaderProps) {
+export function OnboardingPhaseHeader({ label, status, completedRequired, totalRequired, isCurrent, onPress, expanded, onContinue }: OnboardingPhaseHeaderProps) {
   const theme = useTheme();
 
   const glyph = status === 'completed' ? '✓' : status === 'in_progress' ? '●' : '○';
@@ -37,19 +42,20 @@ export function OnboardingPhaseHeader({ label, status, completedRequired, totalR
   const statusLine = status === 'in_progress' ? `${completedRequired} of ${totalRequired} complete` : STATUS_WORDS[status];
 
   const interactive = !!onPress;
-  const a11yLabel = [label, STATUS_WORDS[status], isCurrent ? 'continue here' : null, interactive ? (expanded ? 'expanded' : 'collapsed') : null]
+  const continueButton = !!(isCurrent && onContinue);
+  const a11yLabel = [label, STATUS_WORDS[status], isCurrent && !continueButton ? 'continue here' : null, interactive ? (expanded ? 'expanded' : 'collapsed') : null]
     .filter(Boolean)
     .join(', ');
 
   const content = (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: theme.spacing.sm }}>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingTop: theme.spacing.sm, paddingBottom: continueButton ? 0 : theme.spacing.sm }}>
       <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ fontSize: 20, width: 26, color: glyphColor }}>
         {glyph}
       </Text>
       <View style={{ flex: 1 }}>
         <Text style={[theme.typography.bodyStrong, { color: theme.colors.text }]}>{label}</Text>
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: 2 }]}>{statusLine}</Text>
-        {isCurrent ? (
+        {isCurrent && !continueButton ? (
           <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '700', marginTop: 2 }]}>Continue →</Text>
         ) : null}
       </View>
@@ -59,24 +65,39 @@ export function OnboardingPhaseHeader({ label, status, completedRequired, totalR
     </View>
   );
 
-  if (interactive) {
-    return (
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={a11yLabel}
-        accessibilityState={{ expanded }}
-        hitSlop={4}
-        style={({ pressed }) => [{ minHeight: theme.minTouchTarget, justifyContent: 'center', opacity: pressed ? 0.7 : 1 }]}
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  return (
+  const header = interactive ? (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+      accessibilityState={{ expanded }}
+      hitSlop={4}
+      style={({ pressed }) => [{ minHeight: continueButton ? undefined : theme.minTouchTarget, justifyContent: 'center', opacity: pressed ? 0.7 : 1 }]}
+    >
+      {content}
+    </Pressable>
+  ) : (
     <View accessible accessibilityLabel={a11yLabel}>
       {content}
+    </View>
+  );
+
+  if (!continueButton) return header;
+
+  return (
+    <View>
+      {header}
+      <Pressable
+        onPress={onContinue}
+        accessibilityRole="button"
+        accessibilityLabel={`Continue ${label}`}
+        accessibilityHint="Opens your next onboarding step in this section"
+        hitSlop={{ top: 6, bottom: 6, left: 8, right: 24 }}
+        testID="phase-continue"
+        style={({ pressed }) => [{ alignSelf: 'flex-start', marginLeft: 26, minHeight: 36, paddingTop: 2, paddingBottom: theme.spacing.sm, justifyContent: 'flex-start', opacity: pressed ? 0.6 : 1 }]}
+      >
+        <Text style={[theme.typography.caption, { color: theme.colors.primary, fontWeight: '700' }]}>Continue →</Text>
+      </Pressable>
     </View>
   );
 }

@@ -1,6 +1,6 @@
 import type { ElementType, ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, Download, FileSignature, BadgeCheck } from 'lucide-react';
+import { ChevronLeft, User, FileText, ClipboardList, Activity, ShieldCheck, FileSignature, BadgeCheck } from 'lucide-react';
 import type { ApplicationDetail } from '@/lib/admin-api';
 import type { ApplicationFormat } from '@/lib/admin-display';
 import {
@@ -18,7 +18,7 @@ import {
 } from '@/lib/admin-display';
 import { StatusBadge } from '../StatusBadge';
 import { VerifiedLicensePanel } from './VerifiedLicensePanel';
-import { ApplicantDocuments, ResumeActions } from './ApplicantDocuments';
+import { ApplicantDocuments, GeneratedForms, ResumeActions } from './ApplicantDocuments';
 import type { ClinicianWorkflow } from '@/lib/clinician-workflow';
 import { AuditSection, DocumentReviewSection, WorkflowSection } from '../../clinicians/WorkflowSections';
 import { AuditHistory } from '../../clinicians/AuditHistory';
@@ -108,19 +108,6 @@ function PayloadSummary({ payload, format }: { payload: Record<string, unknown> 
   );
 }
 
-function DownloadLink({ href, label, filename }: { href: string; label: string; filename: string }) {
-  return (
-    <a
-      href={href}
-      download={filename}
-      className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
-    >
-      <Download size={15} />
-      {label}
-    </a>
-  );
-}
-
 export function ApplicationDetailView({ app, workflow = null }: { app: ApplicationDetail; workflow?: ClinicianWorkflow | null }) {
   const id = encodeURIComponent(app.id);
   const fullName = [app.firstName, app.lastName].filter(Boolean).join(' ') || '—';
@@ -131,7 +118,9 @@ export function ApplicationDetailView({ app, workflow = null }: { app: Applicati
   // kept (submitted evidence) and listed apart.
   const current = app.documents.filter((d) => !d.supersededAt);
   const replaced = app.documents.filter((d) => !!d.supersededAt);
-  const applicantDocuments = groupDocuments(current.filter((d) => !isVerifiedLicense(d)));
+  // The generated I-9 / W-4 are shown under Generated forms, not as uploads.
+  const applicantDocuments = groupDocuments(current.filter((d) => !isVerifiedLicense(d) && !d.generatedForm));
+  const generatedForm = (form: 'i9' | 'w4') => current.find((d) => d.generatedForm === form) ?? null;
   const source = { kind: 'application', applicationId: app.id } as const;
 
   return (
@@ -201,8 +190,13 @@ export function ApplicationDetailView({ app, workflow = null }: { app: Applicati
 
             <Section title="Generated forms" icon={FileSignature}>
               <div className="space-y-3">
-                <DownloadLink href={`/api/admin/w4-pdf/${id}`} label="Download Signed W-4" filename={`W4-${app.id}.pdf`} />
-                <DownloadLink href={`/api/admin/i9-pdf/${id}`} label="Download Signed I-9" filename={`I9-Section1-${app.id}.pdf`} />
+                <GeneratedForms
+                  source={source}
+                  forms={[
+                    { title: 'Signed W-4', document: generatedForm('w4'), fallbackHref: `/api/admin/w4-pdf/${id}`, fallbackFileName: `W4-${app.id}.pdf` },
+                    { title: 'Signed I-9 (Section 1)', document: generatedForm('i9'), fallbackHref: `/api/admin/i9-pdf/${id}`, fallbackFileName: `I9-Section1-${app.id}.pdf` },
+                  ]}
+                />
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Generated at submission and stored privately. The W-4 contains the applicant&apos;s full SSN — handle accordingly.
                 </p>

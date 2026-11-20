@@ -8,6 +8,7 @@ import {
   POSITION_OPTIONS,
   SHIFT_PREFERENCE_OPTIONS,
   clinicalSpecialtyOptionsFor,
+  localIsoDateOf,
   parseYearsOfExperience,
   requiresUnitPreference,
   type FieldOption,
@@ -188,7 +189,7 @@ export function EmploymentApplicationSection({
             {requiresUnitPreference(data.positionApplied) && (
               <div className="sm:col-span-2">
                 <MultiSelectField
-                  label="Primary Clinical Specialty"
+                  label="Preferred Primary Specialties"
                   required={parseYearsOfExperience(data.totalYearsExperience) !== 0}
                   options={clinicalSpecialtyOptionsFor(data.positionApplied)}
                   values={data.primaryClinicalSpecialty}
@@ -212,7 +213,8 @@ export function EmploymentApplicationSection({
               type="date"
               value={data.availableStartDate}
               onChange={update('availableStartDate')}
-              hint="Optional — approximate date you can begin"
+              min={localIsoDateOf(new Date())}
+              hint="Optional — approximate date you can begin (today or later)"
             />
           </div>
         </CardBody>

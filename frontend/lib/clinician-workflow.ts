@@ -61,6 +61,8 @@ export interface ClinicianWorkflow {
     ready: boolean;
     /** Incomplete only in ways a super_admin may override — never not submitted or On Hold. */
     overrideAllowed: boolean;
+    /** Whether the applicant was emailed about this clearance (absent on older Workers). */
+    email?: 'sent' | 'failed' | null;
   };
   documentReviews: { source: 'application' | 'session' | null; requirements: RequirementReview[] };
   auditLogs: AuditEntry[];
@@ -152,6 +154,8 @@ export function describeAuditEvent(action: string, metadata: Record<string, unkn
     case 'resumed_from_hold': return { title: 'Onboarding resumed', details: [] };
     case 'clinician_cleared': return { title: m.override === true ? 'Cleared (with override)' : 'Cleared', details: [] };
     case 'clearance_revoked': return { title: 'Clearance revoked', details: details(text('reason')) };
+    case 'clearance_email_sent': return { title: 'Clearance email sent to the applicant', details: [] };
+    case 'clearance_email_failed': return { title: 'Clearance email not delivered', details: [m.reason === 'not_configured' ? 'Email is not configured' : 'The email service did not accept it'] };
     case 'clearance_overridden': {
       const incomplete = Array.isArray(m.incomplete) ? (m.incomplete as { label?: string }[]).map((i) => i.label).filter(Boolean).join(', ') : '';
       return { title: 'Clearance requirements overridden', details: details(text('reason') && `Reason: ${text('reason')}`, incomplete && `Incomplete at the time: ${incomplete}`) };

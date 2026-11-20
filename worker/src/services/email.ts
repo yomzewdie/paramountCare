@@ -215,3 +215,30 @@ export async function sendDocumentCorrectionRequest(
     text,
   });
 }
+
+interface ClearanceEmailData {
+  to: string;
+  firstName: string | null;
+}
+
+/** The applicant has been cleared to work. Says only that — nothing about
+ * their documents, verifications or anything else in their file. */
+export async function sendClearanceNotification(apiKey: string, data: ClearanceEmailData): Promise<void> {
+  const text = [
+    `Hi ${data.firstName?.trim() || 'there'},`,
+    '',
+    'Good news — your application has been reviewed and you are cleared to begin picking up shifts with Paramount Care Staffing.',
+    '',
+    'Our staffing manager will reach out to you soon with the information you need to get started.',
+    '',
+    'Welcome aboard,',
+    'Paramount Care Staffing',
+  ].join('\n');
+
+  await sendEmail(apiKey, {
+    from: TRANSACTIONAL_FROM_ADDRESS,
+    to: data.to,
+    subject: "You're cleared to start picking up shifts",
+    text,
+  });
+}

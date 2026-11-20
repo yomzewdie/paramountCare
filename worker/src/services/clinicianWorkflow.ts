@@ -18,9 +18,10 @@ import {
 } from '../db/queries/clinicians';
 import { findDocumentsByApplicationId, type DocumentRow } from '../db/queries/documents';
 import { findReviewsForClinician, type DocumentReviewRow } from '../db/queries/documentReviews';
-import { findAuditLogsForClinician, insertClinicianAuditIfChangedStmt, type AuditLogRow } from '../db/queries/auditLogs';
+import { findAuditLogsForClinician, insertClinicianAuditIfChangedStmt, insertClinicianAuditStmt, type AuditLogRow } from '../db/queries/auditLogs';
 import { latestInviteByEmail, notStartedClinician, parseObject, sessionClinician, visibleSessionUploads, type ClinicianListItem } from './clinicians';
-import { requirementReviewStates, sendHeldCorrectionNotices, type RequirementReviewState } from './documentReviews';
+import { applicantFirstName, requirementReviewStates, sendHeldCorrectionNotices, type RequirementReviewState } from './documentReviews';
+import { sendClearanceNotification } from './email';
 import { inviteStatus } from '../db/queries/onboardingInvites';
 import { toIsoTimestamp } from '../utils/time';
 import { publicAuditMetadata } from './auditDisplay';
@@ -304,6 +305,53 @@ export async function clearClinician(
     : { ok: false, status: 409, error: 'Something changed since this page loaded. Refresh and review the checklist again.' };
 }
 
+export type ClearanceEmail = 'sent' | 'failed';
+
+/**
+ * Tells the applicant they are cleared — called only after clearClinician
+ * succeeded, i.e. once per transition from not cleared to cleared (normal or
+ * super_admin override alike: both set the same cleared state). Reads,
+ * refreshes and verification changes never call this; a revoke doesn't; a
+ * later re-clearance is a new transition and sends again. Delivery failure
+ * never undoes the clearance: it is audited, and shown to the recruiter, so
+ * they can let the applicant know another way. No retry is scheduled.
+ */
+export async function notifyClearance(env: { DB: D1Database; RESEND_API_KEY?: string }, recordId: number): Promise<ClearanceEmail> {
+  const ctx = await loadClinicianContext(env.DB, recordId);
+  if (!ctx?.record.cleared_at) return 'failed';
+  let outcome: ClearanceEmail = 'sent';
+  let reason: string | null = null;
+  if (!env.RESEND_API_KEY) {
+    outcome = 'failed';
+    reason = 'not_configured';
+  } else {
+    try {
+      await sendClearanceNotification(env.RESEND_API_KEY, { to: ctx.record.email, firstName: await applicantFirstName(env.DB, ctx.record) });
+    } catch (e) {
+      console.error('[clearance] clearance email failed:', e);
+      outcome = 'failed';
+      reason = 'delivery_failed';
+    }
+  }
+  const now = new Date().toISOString();
+  await insertClinicianAuditStmt(env.DB, {
+    ...auditBase(ctx, now),
+    action: outcome === 'sent' ? 'clearance_email_sent' : 'clearance_email_failed',
+    metadata: { clearedAt: ctx.record.cleared_at, ...(reason ? { reason } : {}) },
+  }).run();
+  return outcome;
+}
+
+/** The clearance email's outcome for the current clearance, from the audit
+ * trail — null before the clinician is cleared or if nothing was recorded. */
+function clearanceEmailStatus(logs: AuditLogRow[], clearedAt: string | null): ClearanceEmail | null {
+  if (!clearedAt) return null;
+  const latest = logs
+    .filter((l) => (l.action === 'clearance_email_sent' || l.action === 'clearance_email_failed') && publicAuditMetadata(l.metadata_json)?.clearedAt === clearedAt)
+    .sort((a, b) => b.id - a.id)[0];
+  return latest ? (latest.action === 'clearance_email_sent' ? 'sent' : 'failed') : null;
+}
+
 export async function revokeClearance(db: D1Database, ctx: ClinicianContext, adminId: number, reason: unknown): Promise<WorkflowResult> {
   const now = new Date().toISOString();
   const note = reasonOrNull(reason);
@@ -341,6 +389,8 @@ export interface ClinicianWorkflowDetail {
     ready: boolean;
     /** Incomplete, but only in ways a super_admin may override (never not submitted or On Hold). */
     overrideAllowed: boolean;
+    /** Whether the applicant was emailed about the current clearance. */
+    email: ClearanceEmail | null;
   };
   documentReviews: { source: ReviewFileSource; requirements: RequirementReview[] };
   /** Who did it (the admin's email), when an admin did. */
@@ -392,6 +442,7 @@ export async function workflowDetail(db: D1Database, ctx: ClinicianContext, view
       checklist,
       ready: checklist.every((i) => i.met),
       overrideAllowed: overrideAllowed(checklist),
+      email: clearanceEmailStatus(logs, r.cleared_at),
     },
     documentReviews: documentReviews(ctx),
     auditLogs: logs.map((l) => {

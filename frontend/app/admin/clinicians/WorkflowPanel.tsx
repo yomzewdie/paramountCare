@@ -105,6 +105,12 @@ export function WorkflowPanel({ workflow }: { workflow: ClinicianWorkflow }) {
               <ShieldCheck size={15} />
               Cleared {formatDate(clearance.clearedAt)}{clearance.clearedBy ? ` — ${clearance.clearedBy}` : ''}
             </p>
+            {clearance.email === 'sent' && <p className="text-xs text-teal-800">The applicant was emailed that they are cleared to start picking up shifts.</p>}
+            {clearance.email === 'failed' && (
+              <p role="status" className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                The clinician is cleared, but the clearance email could not be delivered. Please let the applicant know directly.
+              </p>
+            )}
             <label className="block text-xs text-slate-600" htmlFor="revoke-reason">Reason for revoking (optional)</label>
             <textarea id="revoke-reason" rows={2} maxLength={500} className={textareaClass} value={revokeReason} onChange={(e) => setRevokeReason(e.target.value)} />
             <button type="button" disabled={busy} className={secondary} onClick={() => {

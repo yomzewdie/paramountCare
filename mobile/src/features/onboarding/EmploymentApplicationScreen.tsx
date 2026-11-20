@@ -180,7 +180,7 @@ export default function EmploymentApplicationScreen() {
           />
         </View>
         <TextField
-          label="Available Start Date" hint="Optional — MM/DD/YYYY" placeholder="MM/DD/YYYY" keyboardType="number-pad" maxLength={10}
+          label="Available Start Date" hint="Optional — MM/DD/YYYY, today or later" placeholder="MM/DD/YYYY" keyboardType="number-pad" maxLength={10}
           returnKeyType="next" onSubmitEditing={() => fieldRefs.current.licenseNumber?.focus()}
           {...field('availableStartDate')}
           value={form.slashDateDisplay('availableStartDate')}
@@ -201,7 +201,7 @@ export default function EmploymentApplicationScreen() {
         {form.data.positionApplied && requiresUnitPreference(form.data.positionApplied) ? (
           <View onLayout={(e) => setFieldOffset('primaryClinicalSpecialty', e)}>
             <MultiSelectField
-              label="Primary Clinical Specialty" required={!isNewGraduate}
+              label="Preferred Primary Specialties" required={!isNewGraduate}
               hint={isNewGraduate ? 'Optional with no professional experience yet' : 'Clinical areas where you have experience — select all that apply'}
               options={clinicalSpecialtyOptionsFor(form.data.positionApplied)} values={form.data.primaryClinicalSpecialty}
               onToggle={(v) => form.toggleSelection('primaryClinicalSpecialty', v)}

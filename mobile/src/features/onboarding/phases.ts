@@ -170,3 +170,14 @@ export function findCurrentPhaseId(phases: OnboardingPhaseGroup[], nextStepId: s
   if (!nextStepId) return null;
   return phases.find((phase) => phase.steps.some((s) => s.id === nextStepId))?.id ?? null;
 }
+
+/**
+ * Where a phase row's "Continue →" goes: the authoritative next required
+ * step when it is in this phase (always true for the current phase), else
+ * the phase's first incomplete required step, else its first incomplete
+ * step. Null when nothing in the phase is left to do.
+ */
+export function continueStepForPhase(phase: OnboardingPhaseGroup, nextStepId: string | null | undefined): string | null {
+  if (nextStepId && phase.steps.some((s) => s.id === nextStepId)) return nextStepId;
+  return (phase.steps.find((s) => s.required && !s.completed) ?? phase.steps.find((s) => !s.completed))?.id ?? null;
+}

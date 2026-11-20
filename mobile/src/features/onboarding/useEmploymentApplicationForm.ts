@@ -5,6 +5,7 @@ import {
   dropUnknownSelections,
   isoDateToDisplay,
   isoDateToSlash,
+  localIsoDateOf,
   maskDisplayDateInput,
   normalizeEmploymentApplication,
   slashInputToStored,
@@ -75,7 +76,14 @@ export function useEmploymentApplicationForm() {
 
   const isCompleted = session?.stepStates[STEP_ID] === 'completed';
 
-  const errors = useMemo<FieldErrors>(() => validateEmploymentApplication(data), [data]);
+  // Available Start Date can't be entered or changed to a past date (the
+  // device's own calendar day — today is fine). A saved date that has since
+  // passed isn't flagged until it is changed, exactly as the Worker treats it.
+  const savedStartDate = readStored(session?.formData).availableStartDate;
+  const errors = useMemo<FieldErrors>(
+    () => validateEmploymentApplication(data, data.availableStartDate === savedStartDate ? {} : { earliestStartDate: localIsoDateOf(new Date()) }),
+    [data, savedStartDate],
+  );
   const shownErrors = useMemo<FieldErrors>(() => revealTouched(errors, touched), [errors, touched]);
 
   function setField<K extends keyof EmploymentApplicationData>(field: K, value: EmploymentApplicationData[K]): void {

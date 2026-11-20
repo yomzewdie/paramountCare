@@ -17,12 +17,14 @@ interface OnboardingPhaseCardProps {
   stepStates: Partial<Record<string, StepStatus>>;
   defaultExpanded: boolean;
   onStepPress: (stepId: string) => void;
+  /** Opens the phase's next step from its "Continue →" (current phase only). */
+  onContinue?: () => void;
 }
 
 /** One collapsible phase container for the Onboarding journey screen.
  * Reuses StepRow for each step inside — no new per-step row component, no
  * second completion/status derivation (see phases.ts's own doc comment). */
-export function OnboardingPhaseCard({ phase, isCurrent, stepStates, defaultExpanded, onStepPress }: OnboardingPhaseCardProps) {
+export function OnboardingPhaseCard({ phase, isCurrent, stepStates, defaultExpanded, onStepPress, onContinue }: OnboardingPhaseCardProps) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const status = derivePhaseStatus(phase.steps, stepStates);
@@ -38,6 +40,7 @@ export function OnboardingPhaseCard({ phase, isCurrent, stepStates, defaultExpan
         isCurrent={isCurrent}
         expanded={expanded}
         onPress={() => setExpanded((v) => !v)}
+        onContinue={onContinue}
       />
       {expanded ? (
         <View style={{ marginTop: theme.spacing.xs, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: theme.spacing.xs }}>

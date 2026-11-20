@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export interface W4PdfInput {
@@ -48,18 +48,17 @@ export interface W4PdfInput {
 //      against `pdfjs-dist`'s extracted text-run positions for the SAME
 //      page, so every mapping below is anchored to the actual printed
 //      label next to it, not to a plausible-looking guess. In particular,
-//      the bottom-of-page-1 row was ambiguous by position alone (three
-//      fields sit in the same row as "Employee's signature", "Date", AND
-//      the "Employers Only" row's "Employer identification number (EIN)")
-//      until each field's rect was matched against the nearest text run:
-//      f1_12 (x=95,w=293,h=30 — wide and tall, under "Employee's
-//      signature"), f1_13 (x=390,w=77 — under "Date"), and f1_14
-//      (x=469,w=107, MaxLen=10 — matching a 9-digit-plus-dash EIN, under
-//      "Employer identification number (EIN)"). "Employer's name and
-//      address" and "First date of employment" have NO corresponding
-//      AcroForm field at all in this edition of the form — they are print-
-//      only in this PDF — which is fine, since both are employer-only and
-//      out of scope for this app regardless.
+//      the bottom of page 1 is where an earlier pass went wrong: three
+//      fields (f1_12 x=95,y=36,w=293,h=30; f1_13 x=390; f1_14 x=469) sit
+//      in the "Employers Only" row — under "Employer's name and address"
+//      (label y=68), "First date of employment", and "Employer
+//      identification number (EIN)" — NOT on the Step 5 line above it.
+//      UAT found the employee's signature printed in the employer box as a
+//      result. The Step 5 "Employee's signature" and "Date" lines (labels
+//      at y=82, the signature rule at y≈89 spanning x≈99–445 and the date
+//      rule x≈459–575) have NO AcroForm field at all in this edition, so
+//      the signature and date are drawn onto the page there instead (see
+//      STEP5 below). All three employer-only fields stay empty.
 //   Pages 3 and 4 (f3_01-06, f4_01-23) are the Multiple Jobs Worksheet and
 //   Deductions Worksheet — both explicitly marked "(Keep for your records)"
 //   on the form itself. They are personal calculation aids the employee
@@ -83,10 +82,19 @@ const FIELD = {
   deductions: 'topmostSubform[0].Page1[0].f1_10[0]',
   extraWithholding: 'topmostSubform[0].Page1[0].f1_11[0]',
   exemptFromWithholding: 'topmostSubform[0].Page1[0].c1_3[0]',
-  signature: 'topmostSubform[0].Page1[0].f1_12[0]',
-  signedDate: 'topmostSubform[0].Page1[0].f1_13[0]',
-  // f1_14 = Employer identification number (EIN) — employer-only, never
-  // populated by this app. Intentionally absent from this map.
+  // f1_12 (Employer's name and address), f1_13 (First date of employment)
+  // and f1_14 (EIN) are employer-only and never populated by this app.
+  // Intentionally absent from this map.
+} as const;
+
+/** Step 5 has no form fields: the signature and date are drawn just above
+ * their printed rules (y≈89), between them and the perjury statement
+ * (y≈116). Coordinates are PDF points on page 1 of w4-2026.pdf. */
+const STEP5 = {
+  baselineY: 92,
+  signature: { x: 103, maxWidth: 338 },
+  date: { x: 463, maxWidth: 110 },
+  fontSize: 11,
 } as const;
 
 const FILING_STATUS_FIELD: Record<string, string> = {
@@ -134,6 +142,25 @@ async function embedUnicodeFont(pdfDoc: PDFDocument, unicodeFontBytes?: Uint8Arr
     console.error('[w4pdf] Unicode font embed failed — falling back to WinAnsi standard fonts:', e);
     return null;
   }
+}
+
+/** Draws one line of applicant text on the Step 5 baseline, shrunk to fit
+ * its rule. A character the fallback (WinAnsi) font can't encode becomes
+ * "?" rather than failing the whole submission. */
+function drawFitted(page: PDFPage, font: PDFFont, raw: string, x: number, maxWidth: number): void {
+  const text = (raw ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (!text) return;
+  let safe = text;
+  try {
+    font.encodeText(safe);
+  } catch {
+    safe = Array.from(text).map((ch) => {
+      try { font.encodeText(ch); return ch; } catch { return '?'; }
+    }).join('');
+  }
+  const width = font.widthOfTextAtSize(safe, STEP5.fontSize);
+  const size = width > maxWidth ? Math.max(6, (STEP5.fontSize * maxWidth) / width) : STEP5.fontSize;
+  page.drawText(safe, { x, y: STEP5.baselineY, size, font, color: rgb(0, 0, 0) });
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -204,11 +231,7 @@ export async function generateW4Pdf(
       form.getCheckBox(FIELD.exemptFromWithholding).check();
     }
 
-    // ── Step 5 — Sign Here ──────────────────────────────────────────────────
-    // W4Data has no drawn-signature mode (unlike I9Data) — every W-4
-    // signature is typed text, so there is no image-overlay step here.
-    form.getTextField(FIELD.signature).setText(input.typedSignature || '');
-    form.getTextField(FIELD.signedDate).setText(input.signedDate || '');
+    // Step 5 is drawn after flatten() — it has no AcroForm fields (see STEP5).
   } catch (e) {
     throw new Error(
       `W-4 PDF generation failed — a required AcroForm field could not be set (the template may have changed): ${e instanceof Error ? e.message : String(e)}`,
@@ -224,11 +247,18 @@ export async function generateW4Pdf(
 
   form.flatten();
 
+  // ── Step 5 — Sign Here ────────────────────────────────────────────────────
+  // W4Data has no drawn-signature mode (unlike I9Data) — every W-4
+  // signature is typed text, drawn on the employee's own lines.
+  const page1 = pdfDoc.getPages()[0];
+  const step5Font = unicodeFont ?? (await pdfDoc.embedFont(StandardFonts.Helvetica));
+  drawFitted(page1, step5Font, input.typedSignature, STEP5.signature.x, STEP5.signature.maxWidth);
+  drawFitted(page1, step5Font, input.signedDate, STEP5.date.x, STEP5.date.maxWidth);
+
   // Footer stamp, positioned in the small margin below the official form's
   // own printed footer ("Cat. No. 10220Q ... Form W-4 (2026) Created
   // 12/8/25", verified to sit at y≈26-40) — low enough (y=8) to avoid any
   // visual collision with that real IRS text.
-  const page1 = pdfDoc.getPages()[0];
   const italic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
   page1.drawText(
     `Electronically completed via Paramount Care Staffing, LLC  ·  App ID: ${input.applicationId}  ·  ${input.generatedAt}`,

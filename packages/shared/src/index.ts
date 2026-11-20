@@ -4,5 +4,6 @@ export * from './employmentApplication';
 export * from './documentAttachments';
 export * from './requiredDocuments';
 export * from './dates';
+export * from './phone';
 export * from './validation';
 export * from './completion';

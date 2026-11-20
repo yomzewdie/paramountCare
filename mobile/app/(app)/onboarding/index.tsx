@@ -8,7 +8,7 @@ import { OnboardingPhaseCard } from '../../../src/components/OnboardingPhaseCard
 import { LoadingState, ErrorState } from '../../../src/components/StatusStates';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { useSession } from '../../../src/features/onboarding/SessionContext';
-import { groupStepsIntoPhases, findCurrentPhaseId } from '../../../src/features/onboarding/phases';
+import { groupStepsIntoPhases, findCurrentPhaseId, continueStepForPhase } from '../../../src/features/onboarding/phases';
 
 // The full onboarding journey — reached via the Onboarding tab or the
 // dashboard's Continue card. Presented as four collapsible phase containers
@@ -71,6 +71,8 @@ export default function OnboardingOverview() {
           // visually emphasized; a future not-yet-reached phase collapses
           // too, but — per the same "no invented locking" reasoning above —
           // stays fully expandable and tappable, never gated.
+          const openStep = (stepId: string) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId, origin: 'onboarding' } });
+          const continueStepId = isCurrent ? continueStepForPhase(phase, progress.nextStep?.id) : null;
           return (
             <OnboardingPhaseCard
               key={phase.id}
@@ -78,7 +80,8 @@ export default function OnboardingOverview() {
               isCurrent={isCurrent}
               stepStates={stepStates}
               defaultExpanded={isCurrent}
-              onStepPress={(stepId) => router.push({ pathname: '/(app)/onboarding/[stepId]', params: { stepId, origin: 'onboarding' } })}
+              onStepPress={openStep}
+              onContinue={continueStepId ? () => openStep(continueStepId) : undefined}
             />
           );
         })}

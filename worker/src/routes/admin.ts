@@ -182,6 +182,14 @@ admin.route('/clinicians', clinicianAdmin);
 
 // ── GET /api/admin/application/:id ────────────────────────────────────────────
 
+/** The generated forms' storage keys are fixed by application id (see
+ * services/submission.ts), so a document is one only by exact key. */
+function generatedFormOf(applicationId: string, objectKey: string): 'i9' | 'w4' | null {
+  if (objectKey === `i9/${applicationId}/i9-section1-signed.pdf`) return 'i9';
+  if (objectKey === `w4/${applicationId}/w4-2026-signed.pdf`) return 'w4';
+  return null;
+}
+
 admin.get('/application/:id', async (c) => {
   const id = c.req.param('id');
   const db = c.env.DB;
@@ -227,6 +235,9 @@ admin.get('/application/:id', async (c) => {
       fileSize:   d.file_size,
       uploadedAt: d.uploaded_at,
       supersededAt: d.superseded_at ?? null,
+      // The signed I-9 / W-4 generated at submission (never an applicant
+      // upload), so the portal can offer them under Generated forms.
+      generatedForm: generatedFormOf(app.application_id, d.object_key),
     })),
     auditLogs: logs.map((l) => ({
       id:        l.id,
@@ -250,6 +261,7 @@ admin.get('/application/:id/i9-pdf', async (c) => {
   headers.set('Content-Type',        'application/pdf');
   headers.set('Content-Disposition', `attachment; filename="I9-Section1-${id}.pdf"`);
   headers.set('Cache-Control',       'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
 
   return new Response(obj.body, { headers });
 });
@@ -274,6 +286,7 @@ admin.get('/application/:id/w4-pdf', async (c) => {
   headers.set('Content-Type',        'application/pdf');
   headers.set('Content-Disposition', `attachment; filename="W4-${id}.pdf"`);
   headers.set('Cache-Control',       'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
 
   return new Response(obj.body, { headers });
 });

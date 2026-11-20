@@ -29,6 +29,7 @@ import {
   requiresUnitPreference,
 } from './employmentApplication';
 import { ageOnDate, isValidIsoDate, isoDateOf } from './dates';
+import { US_PHONE_INVALID_MESSAGE } from './phone';
 
 export type FieldErrors = Record<string, string>;
 
@@ -67,7 +68,7 @@ const personalInfoSchema = z.object({
   firstName:   z.string().min(1, 'First name is required'),
   lastName:    z.string().min(1, 'Last name is required'),
   email:       z.string().min(1, 'Email is required').email('Enter a valid email address'),
-  phone:       z.string().min(1, 'Phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
+  phone:       z.string().min(1, 'Phone is required').regex(phoneRegex, US_PHONE_INVALID_MESSAGE),
   address:     z.string().min(3, 'Street address is required'),
   city:        z.string().min(1, 'City or town is required'),
   state:       z.string().min(2, 'State is required'),
@@ -115,7 +116,17 @@ export function validatePersonalInfo(data: PersonalInfo, asOf: Date = new Date()
 // qualification summary; the per-position minimum is checked here, so the
 // mobile form, step completion and the Worker's final submission all apply it
 // to whatever position is currently selected.
-export function validateEmploymentApplication(raw: EmploymentApplicationData): FieldErrors {
+export interface EmploymentApplicationValidationOptions {
+  /** YYYY-MM-DD. When given, an Available Start Date before it is rejected —
+   * for an applicant entering or changing it on an active application. Left
+   * out when re-checking stored data (completion, submission), so an
+   * application whose start date has since passed is never invalidated. */
+  earliestStartDate?: string;
+}
+
+export const START_DATE_IN_PAST_MESSAGE = 'Available start date can’t be in the past.';
+
+export function validateEmploymentApplication(raw: EmploymentApplicationData, options: EmploymentApplicationValidationOptions = {}): FieldErrors {
   const errors: FieldErrors = {};
   const data = normalizeEmploymentApplication(raw);
 
@@ -153,7 +164,7 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
     requiresUnitPreference(data.positionApplied) && isOptionValue(POSITION_OPTIONS, data.positionApplied) &&
     activeSpecialtySelections(data.positionApplied, data.primaryClinicalSpecialty).length === 0
   ) {
-    errors.primaryClinicalSpecialty = 'Select at least one primary clinical specialty';
+    errors.primaryClinicalSpecialty = 'Select at least one preferred primary specialty';
   }
 
   if (data.shiftPreference.length === 0) {
@@ -196,6 +207,8 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
 
   if (data.availableStartDate.trim() && !isValidIsoDate(data.availableStartDate)) {
     errors.availableStartDate = 'Enter a valid date (MM/DD/YYYY)';
+  } else if (options.earliestStartDate && data.availableStartDate.trim() && data.availableStartDate < options.earliestStartDate) {
+    errors.availableStartDate = START_DATE_IN_PAST_MESSAGE;
   }
 
   if (data.hasLicenseRevocation === null) {
@@ -214,7 +227,7 @@ export function validateEmploymentApplication(raw: EmploymentApplicationData): F
   if (!data.emergencyContactName.trim())         errors.emergencyContactName         = 'Emergency contact name is required';
   if (!data.emergencyContactRelationship.trim())  errors.emergencyContactRelationship  = 'Relationship is required';
   if (!data.emergencyContactPhone.trim())         errors.emergencyContactPhone         = 'Emergency contact phone is required';
-  else if (!phoneRegex.test(data.emergencyContactPhone)) errors.emergencyContactPhone = 'Enter a valid 10-digit phone number.';
+  else if (!phoneRegex.test(data.emergencyContactPhone)) errors.emergencyContactPhone = US_PHONE_INVALID_MESSAGE;
 
   return errors;
 }
@@ -282,7 +295,7 @@ const employmentReferenceSchema = z.object({
   supervisorName:     z.string().min(1, 'Supervisor name is required'),
   supervisorTitle:    z.string().trim().min(1, 'Supervisor title is required'),
   employerName:       z.string().min(1, 'Facility or employer is required'),
-  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, 'Enter a valid 10-digit phone number.'),
+  supervisorPhone:    z.string().min(1, 'Supervisor phone is required').regex(phoneRegex, US_PHONE_INVALID_MESSAGE),
   permissionGranted:  z.boolean(),
 });
 

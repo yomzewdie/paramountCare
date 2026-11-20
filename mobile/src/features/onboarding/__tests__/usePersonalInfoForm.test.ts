@@ -137,7 +137,7 @@ describe('usePersonalInfoForm — phone number (physical-UAT bug fix)', () => {
 
     act(() => result.current.blurField('phone'));
 
-    expect(result.current.errors.phone).toBe('Enter a valid 10-digit phone number.');
+    expect(result.current.errors.phone).toBe('Enter a complete 10-digit U.S. phone number, e.g. (555) 123-4567.');
   });
 
   it.each([
@@ -185,7 +185,7 @@ describe('usePersonalInfoForm — phone number (physical-UAT bug fix)', () => {
     expect(outcome).toEqual({ kind: 'invalid' });
     expect(saveStep).not.toHaveBeenCalled();
     expect(result.current.data.phone).toBe('123456'); // typed value preserved, never wiped
-    expect(result.current.errors.phone).toBe('Enter a valid 10-digit phone number.');
+    expect(result.current.errors.phone).toBe('Enter a complete 10-digit U.S. phone number, e.g. (555) 123-4567.');
   });
 
   it('correcting an invalid phone to a valid one clears the error and permits completion', async () => {

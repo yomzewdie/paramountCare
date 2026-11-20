@@ -23,6 +23,13 @@ describe('authenticatedFetch', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("sends the device's IANA time zone so the Worker knows the applicant's local today", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    await authenticatedFetch('https://test.invalid/api/sessions/s1', { method: 'PATCH' });
+    const headers = (globalThis.fetch as jest.Mock).mock.calls[0][1].headers as Headers;
+    expect(headers.get('X-Client-Time-Zone')).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  });
+
   it('on a 401 with a stored refresh token, refreshes once and retries exactly once', async () => {
     mockedSecureStore.getStoredRefreshToken.mockResolvedValue('old-refresh-token');
     mockedSecureStore.setStoredRefreshToken.mockResolvedValue(undefined);

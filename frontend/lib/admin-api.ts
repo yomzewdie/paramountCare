@@ -44,6 +44,8 @@ export interface DocumentRecord {
   /** Set when a targeted correction replaced or removed this submitted file
    * (kept, but no longer current). */
   supersededAt?: string | null;
+  /** The signed I-9 or W-4 generated at submission; null for everything else. */
+  generatedForm?: 'i9' | 'w4' | null;
 }
 
 export interface AuditLogRecord {
@@ -104,6 +106,7 @@ interface WorkerDocumentRecord {
   fileSize: number;
   uploadedAt: string;
   supersededAt?: string | null;
+  generatedForm?: 'i9' | 'w4' | null;
 }
 
 export { DOC_TYPE_LABELS } from './document-labels';
@@ -149,6 +152,7 @@ export function labelDocuments(docs: WorkerDocumentRecord[]): DocumentRecord[] {
     fileSize: d.fileSize,
     uploadedAt: d.uploadedAt,
     supersededAt: d.supersededAt ?? null,
+    generatedForm: d.generatedForm === 'i9' || d.generatedForm === 'w4' ? d.generatedForm : null,
   }));
 }
 

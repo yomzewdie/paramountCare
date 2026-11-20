@@ -12,6 +12,10 @@ interface OnboardingHeaderProps {
   stepNumber: number;
   totalSteps: number;
   onBack: () => void;
+  /** The previous step's label and how to open it — omitted on the first
+   * step, after submission, and when the step was opened from Review. */
+  previousLabel?: string;
+  onPrevious?: () => void;
 }
 
 /** Replaces the native Stack header on every onboarding step screen.
@@ -22,22 +26,36 @@ interface OnboardingHeaderProps {
  * first content element (e.g. "Form I-9 (Section 1)"), so this header
  * would otherwise duplicate it. Providing a custom `header` loses the
  * native back button, so this renders its own. */
-export function OnboardingHeader({ phaseLabel, stepNumber, totalSteps, onBack }: OnboardingHeaderProps) {
+export function OnboardingHeader({ phaseLabel, stepNumber, totalSteps, onBack, previousLabel, onPrevious }: OnboardingHeaderProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const percent = totalSteps > 0 ? (stepNumber / totalSteps) * 100 : 0;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
-      <Pressable
-        onPress={onBack}
-        accessibilityRole="button"
-        accessibilityLabel="Go back"
-        hitSlop={8}
-        style={[styles.backButton, { minHeight: theme.minTouchTarget }]}
-      >
-        <Text style={[styles.backLabel, { color: theme.colors.primary }]}>‹ Back</Text>
-      </Pressable>
+      <View style={styles.topRow}>
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={8}
+          style={[styles.backButton, { minHeight: theme.minTouchTarget }]}
+        >
+          <Text style={[styles.backLabel, { color: theme.colors.primary }]}>‹ Back</Text>
+        </Pressable>
+        {onPrevious ? (
+          <Pressable
+            onPress={onPrevious}
+            accessibilityRole="button"
+            accessibilityLabel={previousLabel ? `Previous step: ${previousLabel}` : 'Previous step'}
+            hitSlop={8}
+            testID="previous-step"
+            style={[styles.backButton, { minHeight: theme.minTouchTarget }]}
+          >
+            <Text style={[styles.previousLabel, { color: theme.colors.primary }]}>Previous step</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.sm }}>
         <Text style={[theme.typography.caption, { color: theme.colors.textMuted }]} numberOfLines={1}>
           {phaseLabel}
@@ -55,4 +73,6 @@ const styles = StyleSheet.create({
   container: { borderBottomWidth: StyleSheet.hairlineWidth },
   backButton: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 12 },
   backLabel: { fontSize: 17, fontWeight: '600' },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previousLabel: { fontSize: 15, fontWeight: '600' },
 });

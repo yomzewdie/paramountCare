@@ -6,6 +6,7 @@ import { VERIFICATION_KINDS, VERIFICATION_STATUSES, type VerificationKind } from
 import { REVIEW_STATUSES } from '../db/queries/documentReviews';
 import {
   clearClinician,
+  notifyClearance,
   documentReviews,
   loadClinicianContext,
   placeOnHold,
@@ -223,9 +224,12 @@ clinicianAdmin.post('/:id/clearance', async (c) => {
   if (!loaded.ok) return loaded.response;
   const parsed = clearanceSchema.safeParse((await jsonBody(c)) ?? {});
   if (!parsed.success) return validationError(c, parsed.error);
-  return respond(c, loaded.ctx.record.id, await clearClinician(c.env.DB, loaded.ctx, {
+  const result = await clearClinician(c.env.DB, loaded.ctx, {
     adminId: loaded.adminId, adminRole: await adminRole(c), override: !!parsed.data.override, reason: parsed.data.reason,
-  }));
+  });
+  // Only a successful transition to cleared notifies the applicant.
+  const clearanceEmail = result.ok ? await notifyClearance(c.env, loaded.ctx.record.id) : undefined;
+  return respond(c, loaded.ctx.record.id, result, clearanceEmail ? { clearanceEmail } : {});
 });
 
 clinicianAdmin.post('/:id/clearance/revoke', async (c) => {

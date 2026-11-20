@@ -93,6 +93,60 @@ export function isoDateOf(instant: Date): string {
   return instant.toISOString().slice(0, 10);
 }
 
+/** The calendar date on this device's own clock as YYYY-MM-DD — "today" for
+ * the person in front of it, never shifted a day by UTC conversion. */
+export function localIsoDateOf(instant: Date): string {
+  const y = instant.getFullYear();
+  const m = String(instant.getMonth() + 1).padStart(2, '0');
+  const d = String(instant.getDate()).padStart(2, '0');
+  return `${String(y).padStart(4, '0')}-${m}-${d}`;
+}
+
+// ── The applicant's own calendar day ─────────────────────────────────────────
+//
+// "Not in the past" means before the applicant's local today. Clients send
+// their IANA time zone (the device's own, never a typed-in value) in this
+// header; the Worker computes today in that zone from its own clock, so the
+// date itself is never taken from the client.
+
+export const CLIENT_TIME_ZONE_HEADER = 'X-Client-Time-Zone';
+
+/** Paramount Care's own time zone — "today" for a request that names no
+ * usable zone (an older client). */
+export const DEFAULT_APPLICANT_TIME_ZONE = 'America/Los_Angeles';
+
+const TIME_ZONE_NAME = /^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/;
+
+/** The calendar date at `instant` in an IANA time zone, as YYYY-MM-DD; null
+ * when the zone isn't a valid IANA name. */
+export function isoDateInTimeZone(instant: Date, timeZone: string | null | undefined): string | null {
+  if (!timeZone || !TIME_ZONE_NAME.test(timeZone)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+    const part = (type: string) => parts.find((p) => p.type === type)?.value;
+    const [y, m, d] = [part('year'), part('month'), part('day')];
+    return y && m && d && /^\d{4}$/.test(y) ? `${y}-${m}-${d}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The applicant's local today for a request: in the zone it names, or in
+ * Paramount Care's own zone when it names none (or an invalid one). */
+export function applicantTodayIso(instant: Date, timeZone: string | null | undefined): string {
+  return isoDateInTimeZone(instant, timeZone) ?? isoDateInTimeZone(instant, DEFAULT_APPLICANT_TIME_ZONE)!;
+}
+
+/** This device's IANA time zone, or null if the runtime can't say. */
+export function deviceTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone && TIME_ZONE_NAME.test(zone) ? zone : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whole years of age on `onIsoDate` for someone born on `birthIsoDate`, by
  * calendar comparison (never currentYear − birthYear): the age increases on

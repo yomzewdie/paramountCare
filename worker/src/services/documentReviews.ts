@@ -156,6 +156,13 @@ export async function decideDocumentReview(
   return { ok: true, review, notification };
 }
 
+/** The name a recruiter entered, else the one the applicant gave themselves. */
+export async function applicantFirstName(db: D1Database, record: ClinicianRecordRow): Promise<string | null> {
+  if (record.first_name || record.user_id === null) return record.first_name;
+  const session = await db.prepare('SELECT first_name FROM onboarding_sessions WHERE user_id = ?').bind(record.user_id).first<{ first_name: string | null }>();
+  return session?.first_name ?? null;
+}
+
 export type CorrectionNotification = 'sent' | 'suppressed_on_hold' | 'failed' | 'not_configured';
 
 /** Emails the applicant about a requested correction — unless they are On
@@ -168,12 +175,7 @@ export async function notifyCorrection(
 ): Promise<CorrectionNotification> {
   if (record.on_hold_at) return 'suppressed_on_hold';
   if (!env.RESEND_API_KEY) return 'not_configured';
-  // The name a recruiter entered, else the one the applicant gave themselves.
-  let firstName = record.first_name;
-  if (!firstName && record.user_id !== null) {
-    const session = await env.DB.prepare('SELECT first_name FROM onboarding_sessions WHERE user_id = ?').bind(record.user_id).first<{ first_name: string | null }>();
-    firstName = session?.first_name ?? null;
-  }
+  const firstName = await applicantFirstName(env.DB, record);
   try {
     await sendDocumentCorrectionRequest(env.RESEND_API_KEY, {
       to: record.email,

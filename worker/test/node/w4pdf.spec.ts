@@ -251,14 +251,65 @@ describe('generateW4Pdf — 2026 Step 5 placement regression', () => {
   const within = (p: { x: number; y: number }, r: { x: number; y: number; width: number; height: number }) =>
     p.x >= r.x - 2 && p.x <= r.x + r.width + 2 && p.y >= r.y - 2 && p.y <= r.y + r.height + 2;
 
-  it('puts the employee signature and date in Step 5 and leaves the employer-only EIN field (f1_14) empty', async () => {
+  /** A template label's text run, so placements are checked against the
+   * printed form itself rather than against numbers copied from the code. */
+  async function label(text: string) {
+    const blank = await runs(decodeTemplate());
+    const found = blank.find((t) => t.str.includes(text));
+    if (!found) throw new Error(`label not found: ${text}`);
+    return found;
+  }
+
+  it('puts the employee signature and date on the Step 5 lines — never in the Employers Only row', async () => {
     const bytes = await generateW4Pdf({ ...BASE_INPUT, typedSignature: 'Jane M Doe', signedDate: '10/21/2026' }, decodeTemplate(), null);
     const text = await runs(bytes);
-    const sig = text.find((t) => t.str.includes('Jane M Doe'));
-    const date = text.find((t) => t.str.includes('10/21/2026'));
-    expect(sig && within(sig, await rect('topmostSubform[0].Page1[0].f1_12[0]'))).toBe(true);
-    expect(date && within(date, await rect('topmostSubform[0].Page1[0].f1_13[0]'))).toBe(true);
-    const ein = await rect('topmostSubform[0].Page1[0].f1_14[0]');
-    expect(text.filter((t) => t.x >= ein.x && t.x <= ein.x + ein.width && t.y >= ein.y && t.y <= ein.y + ein.height).map((t) => t.str)).toEqual([]);
+    const sig = text.find((t) => t.str.includes('Jane M Doe'))!;
+    const date = text.find((t) => t.str.includes('10/21/2026'))!;
+    expect(sig).toBeDefined();
+    expect(date).toBeDefined();
+
+    const sigLabel = await label('Employee’s signature');
+    const dateLabel = await label('Date');
+    const perjury = await label('Under penalties of perjury');
+    const employerRow = await label('Employer’s name and address');
+
+    // Above the "Employee's signature" / "Date" captions and below the
+    // perjury statement: the Step 5 band.
+    for (const run of [sig, date]) {
+      expect(run.y).toBeGreaterThan(sigLabel.y);
+      expect(run.y).toBeLessThan(perjury.y);
+      expect(run.y).toBeGreaterThan(employerRow.y);
+    }
+    // The signature on the left rule, the date over the "Date" caption.
+    expect(sig.x).toBeGreaterThanOrEqual(sigLabel.x - 5);
+    expect(sig.x).toBeLessThan(dateLabel.x - 50);
+    expect(date.x).toBeGreaterThanOrEqual(dateLabel.x - 5);
+
+    // Nothing at all in the employer-only fields.
+    for (const name of ['f1_12', 'f1_13', 'f1_14']) {
+      const r = await rect(`topmostSubform[0].Page1[0].${name}[0]`);
+      expect(text.filter((t) => within(t, r) && !t.str.startsWith('Electronically completed')).map((t) => t.str)).toEqual([]);
+    }
+  });
+
+  it('every applicant-filled field stays above the Employers Only row', async () => {
+    const bytes = await generateW4Pdf({
+      ...BASE_INPUT, multipleJobs: true, qualifyingChildren: '4400', otherDependents: '500', totalDependents: '4900',
+      otherIncome: '1000', deductions: '2000', extraWithholding: '50',
+    }, decodeTemplate(), null);
+    const blank = new Set((await runs(decodeTemplate())).map((t) => `${t.str}@${Math.round(t.x)},${Math.round(t.y)}`));
+    const employerRow = await label('Employer’s name and address');
+    const added = (await runs(bytes)).filter((t) => !blank.has(`${t.str}@${Math.round(t.x)},${Math.round(t.y)}`) && !t.str.startsWith('Electronically completed'));
+    expect(added.length).toBeGreaterThan(5);
+    for (const run of added) expect(run.y).toBeGreaterThan(employerRow.y + 4);
+  });
+
+  it('shrinks a long signature to its line, and keeps a non-Latin signature without failing', async () => {
+    const long = 'Maria Guadalupe Fernandez-Rodriguez de la Cruz Montenegro';
+    const text = await runs(await generateW4Pdf({ ...BASE_INPUT, typedSignature: long }, decodeTemplate(), null));
+    const sig = text.find((t) => t.str.includes('Montenegro'))!;
+    const dateLabel = await label('Date');
+    expect(sig.x).toBeLessThan(dateLabel.x);
+    await expect(generateW4Pdf({ ...BASE_INPUT, typedSignature: 'Zoë Ŵ 李' }, decodeTemplate(), null)).resolves.toBeInstanceOf(Uint8Array);
   });
 });

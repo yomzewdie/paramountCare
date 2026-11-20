@@ -187,7 +187,7 @@ export function ReviewSection({ data, onEditStep }: ReviewSectionProps) {
             )}
             <Row label="Total Years of Professional Experience" value={formatYearsOfExperience(ea.totalYearsExperience) || null} />
             {requiresUnitPreference(ea.positionApplied) && (
-              <Row label="Primary Clinical Specialty" value={formatOptionValues(ea.primaryClinicalSpecialty, CLINICAL_UNIT_OPTIONS) || null} />
+              <Row label="Preferred Primary Specialties" value={formatOptionValues(ea.primaryClinicalSpecialty, CLINICAL_UNIT_OPTIONS) || null} />
             )}
             <Row label="Employment Type" value={formatOptionValues(ea.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS) || null} />
             <Row label="Shift Preference" value={formatOptionValues(ea.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS) || null} />

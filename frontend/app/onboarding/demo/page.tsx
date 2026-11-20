@@ -6,7 +6,8 @@ import {
   ChevronLeft, ChevronRight, Send, HeartPulse,
   CheckCircle2, Loader2, Save, Trash2, Mail, Calendar, ArrowRight, Phone,
 } from 'lucide-react';
-import { PACKETS, canNavigateToStep, type StepStates, type PacketStep } from '@pcs/shared';
+import { PACKETS, canNavigateToStep, localIsoDateOf, type StepStates, type PacketStep } from '@pcs/shared';
+import { startDateErrors } from '@/lib/start-date';
 import {
   OnboardingFormData, defaultFormData,
   PersonalInfo, EmploymentApplicationData, I9Data, EmploymentReference, SafetyEducationData,
@@ -260,6 +261,10 @@ export default function OnboardingDemoPage() {
   const isFirst = currentIndex === 0;
   const isLast  = currentIndex === PACKET.steps.length - 1;
 
+  // The Available Start Date restored from this browser's draft, if any — a
+  // date that has since passed stays allowed until it is changed.
+  const savedStartDateRef = useRef('');
+
   // ── Restore session ──────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -278,6 +283,7 @@ export default function OnboardingDemoPage() {
     // mount-only restore (empty dependency array below).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFormData(saved.formData);
+    savedStartDateRef.current = saved.formData.employmentApplication?.availableStartDate ?? '';
     setCurrentStep(saved.currentStepId);
     setStepStates(saved.stepStates);
     setHasRestoredSession(true);
@@ -320,6 +326,9 @@ export default function OnboardingDemoPage() {
   const advance = () => {
     const currentPacketStep = PACKET.steps[currentIndex];
     const errs = validateStep(currentStep, formData, currentPacketStep);
+    if (currentStep === 'employment_application') {
+      Object.assign(errs, startDateErrors(formData.employmentApplication.availableStartDate, savedStartDateRef.current, localIsoDateOf(new Date())));
+    }
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       setTimeout(() => {

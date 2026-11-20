@@ -240,9 +240,28 @@ describe('Application detail', () => {
     expect(html).toContain('href="/api/admin/i9-pdf/APP-123"');
     expect(html).toContain('href="/api/admin/documents/APP-123/7"');
     expect(html).toContain('href="/api/admin/documents/APP-123/8"');
-    expect(html).toContain('Download Signed W-4');
-    expect(html).toContain('Download Signed I-9');
+    // No generated-form document rows in this fixture: download-only fallback.
+    expect(html).toContain('aria-label="Download original Signed W-4"');
+    expect(html).toContain('aria-label="Download original Signed I-9 (Section 1)"');
+    expect(html).not.toContain('aria-label="View Signed W-4"');
     expect(html).toContain('Direct deposit — bank account verification');
+  });
+  it('opens the generated I-9 and W-4 in the document viewer by document id, with Download Original, and not as uploads', () => {
+    const withForms = renderToStaticMarkup(
+      <ApplicationDetailView app={{ ...app, documents: [
+        ...app.documents,
+        { id: 21, docType: null, label: null, fileName: 'W4-APP-123.pdf', fileSize: 10, uploadedAt: '2026-09-26T14:00:00.000Z', generatedForm: 'w4' },
+        { id: 22, docType: null, label: null, fileName: 'I9-Section1-APP-123.pdf', fileSize: 10, uploadedAt: '2026-09-26T14:00:00.000Z', generatedForm: 'i9' },
+      ] }} />,
+    );
+    expect(withForms).toContain('aria-label="View Signed W-4"');
+    expect(withForms).toContain('aria-label="View Signed I-9 (Section 1)"');
+    expect(withForms).toContain('href="/api/admin/documents/APP-123/21"');
+    expect(withForms).toContain('href="/api/admin/documents/APP-123/22"');
+    expect(withForms).not.toContain('href="/api/admin/w4-pdf/APP-123"');
+    // Listed once, under Generated forms — not again among the applicant's uploads.
+    expect(withForms).not.toContain('aria-label="View W4-APP-123.pdf"');
+    expect(withForms).not.toContain('aria-label="View I9-Section1-APP-123.pdf"');
   });
   it('shows vaccination evidence only for documents the application actually contains (a declined vaccine has none)', () => {
     const withProof = renderToStaticMarkup(

@@ -84,7 +84,8 @@ export const VALID_PERSONAL_INFO = {
 
 export const VALID_EMPLOYMENT_APPLICATION = {
   positionApplied: 'RN', specialtyPreference: ['med_surg'], shiftPreference: ['am'], employmentType: ['per_diem_assignment'],
-  availableStartDate: '2026-01-01',
+  // Always in the future: a past start date can't be entered (see sessions.ts).
+  availableStartDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
   totalYearsExperience: '3', primaryClinicalSpecialty: ['med_surg'],
   licenseType: 'RN', licenseNumber: 'RN123456', licenseState: 'CA', licenseExpiration: '2028-01-01',
   authorizedToWork: true, hasConviction: false, convictionDetails: '',

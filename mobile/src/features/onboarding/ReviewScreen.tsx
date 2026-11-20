@@ -279,7 +279,7 @@ export default function ReviewScreen() {
         <FieldRow label="Position Applied For" value={formatOptionValues(employmentApplication.positionApplied, POSITION_OPTIONS)} />
         <FieldRow label="Specialty / Unit Preference" value={formatOptionValues(employmentApplication.specialtyPreference, SPECIALTY_OPTIONS)} />
         <FieldRow label="Total Years of Professional Experience" value={formatYearsOfExperience(employmentApplication.totalYearsExperience)} />
-        <FieldRow label="Primary Clinical Specialty" value={formatOptionValues(employmentApplication.primaryClinicalSpecialty, SPECIALTY_OPTIONS)} />
+        <FieldRow label="Preferred Primary Specialties" value={formatOptionValues(employmentApplication.primaryClinicalSpecialty, SPECIALTY_OPTIONS)} />
         <FieldRow label="Employment Type" value={formatOptionValues(employmentApplication.employmentType, EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS)} />
         <FieldRow label="Shift Preference" value={formatOptionValues(employmentApplication.shiftPreference, SHIFT_PREFERENCE_OPTIONS, LEGACY_SHIFT_PREFERENCE_LABELS)} />
         <FieldRow label="License / Certification" value={[formatOptionValues(employmentApplication.licenseType, LICENSE_TYPE_OPTIONS, LEGACY_LICENSE_TYPE_LABELS), employmentApplication.licenseNumber, employmentApplication.licenseState].filter(Boolean).join(' · ')} />

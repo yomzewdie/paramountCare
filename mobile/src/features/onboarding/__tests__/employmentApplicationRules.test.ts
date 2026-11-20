@@ -504,7 +504,7 @@ describe('Total Years of Professional Experience', () => {
   });
 });
 
-describe('Primary Clinical Specialty', () => {
+describe('Preferred Primary Specialties', () => {
   it('uses the position taxonomy for each position', () => {
     expect(clinicalSpecialtyOptionsFor('Tech').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.Tech]);
     expect(clinicalSpecialtyOptionsFor('LVN').map((o) => o.value)).toEqual([...SPECIALTY_CODES_BY_POSITION.LVN]);
@@ -521,7 +521,7 @@ describe('Primary Clinical Specialty', () => {
 
   it.each(['Tech', 'LVN', 'RN', 'NP'])('%s: required once there is any experience', (position) => {
     for (const years of ['0.5', '1', '2.5', '10']) {
-      expect(clinicalError(position, years)).toBe('Select at least one primary clinical specialty');
+      expect(clinicalError(position, years)).toBe('Select at least one preferred primary specialty');
     }
   });
 

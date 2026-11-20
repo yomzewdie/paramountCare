@@ -100,7 +100,7 @@ describe('useEmploymentReferenceForm — validation', () => {
 
     act(() => result.current.blurField('supervisorPhone'));
 
-    expect(result.current.errors.supervisorPhone).toBe('Enter a valid 10-digit phone number.');
+    expect(result.current.errors.supervisorPhone).toBe('Enter a complete 10-digit U.S. phone number, e.g. (555) 123-4567.');
     expect(result.current.errors.supervisorName).toBeUndefined();
   });
 

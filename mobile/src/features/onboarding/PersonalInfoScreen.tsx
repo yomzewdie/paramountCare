@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import type { PersonalInfo } from '@pcs/shared';
+import { formatUsPhoneDisplay, usPhoneInputToStored, type PersonalInfo } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
 import { SelectField } from '../../components/SelectField';
@@ -133,7 +133,7 @@ export default function PersonalInfoScreen() {
 
       <FormSection title="Contact Information">
         <TextField label="Email Address" required keyboardType="email-address" autoCapitalize="none" autoComplete="email" textContentType="emailAddress" returnKeyType="next" onSubmitEditing={() => focusNext('email')} {...field('email')} />
-        <TextField label="Phone Number" required keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" returnKeyType="next" onSubmitEditing={() => focusNext('phone')} {...field('phone')} />
+        <TextField label="Phone Number" required keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" returnKeyType="next" onSubmitEditing={() => focusNext('phone')} {...field('phone')} value={formatUsPhoneDisplay(form.data.phone)} onChangeText={(t) => form.setField('phone', usPhoneInputToStored(t))} placeholder="+1 (555) 123-4567" />
       </FormSection>
 
       <FormSection title="Home Address">

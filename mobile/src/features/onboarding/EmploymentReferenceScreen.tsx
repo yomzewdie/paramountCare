@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import { getPacket, type EmploymentReference } from '@pcs/shared';
+import { formatUsPhoneDisplay, getPacket, usPhoneInputToStored, type EmploymentReference } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { TextField } from '../../components/TextField';
 import { CheckboxField } from '../../components/CheckboxField';
@@ -124,7 +124,7 @@ export default function EmploymentReferenceScreen() {
         <TextField label="Supervisor's Name" required autoComplete="off" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorName')} {...field('supervisorName')} />
         <TextField label="Supervisor's Title" required autoComplete="off" placeholder="e.g. Charge RN, Nurse Manager, DON" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorTitle')} {...field('supervisorTitle')} />
         <TextField label="Facility / Employer" required autoComplete="off" hint="Where you reported to this supervisor" returnKeyType="next" onSubmitEditing={() => focusNext('employerName')} {...field('employerName')} />
-        <TextField label="Supervisor's Phone" required keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorPhone')} {...field('supervisorPhone')} />
+        <TextField label="Supervisor's Phone" required keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" returnKeyType="next" onSubmitEditing={() => focusNext('supervisorPhone')} {...field('supervisorPhone')} value={formatUsPhoneDisplay(form.data.supervisorPhone)} onChangeText={(t) => form.setField('supervisorPhone', usPhoneInputToStored(t))} placeholder="+1 (555) 123-4567" />
         <TextField label="Supervisor's Email" hint="Optional" keyboardType="email-address" autoCapitalize="none" autoComplete="off" returnKeyType="done" onSubmitEditing={() => {}} {...field('supervisorEmail')} />
       </FormSection>
 

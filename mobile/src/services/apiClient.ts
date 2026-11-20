@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { CLIENT_TIME_ZONE_HEADER, deviceTimeZone } from '@pcs/shared';
 import { getAccessToken, setAccessToken } from './tokenStore';
 import { getStoredRefreshToken, setStoredRefreshToken, clearStoredRefreshToken } from './secureStore';
 import { createRefreshCoordinator, type RefreshOutcome } from '../features/auth/refreshCoordinator';
@@ -101,6 +102,10 @@ export const authenticatedFetch = async (input: RequestInfo | URL, init?: Reques
     const headers = new Headers(init?.headers);
     const token = getAccessToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
+    // The applicant's own time zone, so the Worker can tell what "today" is
+    // for them (Available Start Date can't be in the past).
+    const timeZone = deviceTimeZone();
+    if (timeZone && !headers.has(CLIENT_TIME_ZONE_HEADER)) headers.set(CLIENT_TIME_ZONE_HEADER, timeZone);
     return timedFetch(input, { ...init, headers }, timeoutMs);
   };
 

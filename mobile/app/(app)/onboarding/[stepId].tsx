@@ -191,7 +191,7 @@ export default function OnboardingStep() {
   const theme = useTheme();
   const { progress } = useSession();
   const { stepId } = useLocalSearchParams<{ stepId: string }>();
-  const nav = useStepNavigation();
+  const nav = useStepNavigation((id) => !!REAL_STEP_SCREENS[id]);
 
   const RealScreen = stepId ? REAL_STEP_SCREENS[stepId] : undefined;
   const stepPosition = computePhaseStepPosition(progress?.steps, stepId);
@@ -208,6 +208,8 @@ export default function OnboardingStep() {
                   stepNumber={stepPosition.stepNumber}
                   totalSteps={stepPosition.totalSteps}
                   onBack={nav.leave}
+                  previousLabel={nav.previous?.label}
+                  onPrevious={nav.previous ? nav.goPrevious : undefined}
                 />
               ),
             }}

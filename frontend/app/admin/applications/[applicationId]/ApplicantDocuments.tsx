@@ -103,3 +103,52 @@ export function ResumeActions({ source, resume }: { source: DocumentSource; resu
     </div>
   );
 }
+
+export interface GeneratedFormEntry {
+  title: string;
+  /** The form's document row, when one exists — opens in the viewer. */
+  document: DocumentRecord | null;
+  /** The dedicated signed-form download, for an application whose form has
+   * no document row (it is then download-only, as before). */
+  fallbackHref: string;
+  fallbackFileName: string;
+}
+
+/** The signed I-9 and W-4 generated at submission: View in the portal's
+ * document viewer and Download Original, through the same protected,
+ * id-based routes as every other document. */
+export function GeneratedForms({ source, forms }: { source: DocumentSource; forms: GeneratedFormEntry[] }) {
+  const { openViewer, viewer } = useDocumentViewer(source);
+  return (
+    <div className="space-y-3">
+      {forms.map((form) => (
+        <div key={form.title} className="space-y-1.5">
+          <p className="text-xs font-semibold text-slate-500">{form.title}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {form.document && (
+              <button
+                type="button"
+                onClick={() => openViewer(form.title, [form.document!])}
+                aria-label={`View ${form.title}`}
+                className="inline-flex items-center gap-2 px-4 py-2.5 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-semibold rounded-lg transition-colors"
+              >
+                <Eye size={15} />
+                View
+              </button>
+            )}
+            <a
+              href={form.document ? downloadUrl(source, form.document.id) : form.fallbackHref}
+              download={form.document?.fileName ?? form.fallbackFileName}
+              aria-label={`Download original ${form.title}`}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+            >
+              <Download size={15} />
+              Download Original
+            </a>
+          </div>
+        </div>
+      ))}
+      {viewer}
+    </div>
+  );
+}

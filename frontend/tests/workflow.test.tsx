@@ -125,6 +125,19 @@ describe('workflow panel', () => {
     expect(renderToStaticMarkup(<WorkflowPanel workflow={{ ...blocked, permissions: { overrideClearance: false } }} />)).not.toContain('override');
   });
 
+  it('once cleared, says whether the applicant was emailed — and a failed email never reads as a failed clearance', () => {
+    const cleared = (email: 'sent' | 'failed' | null) => workflow({ clearance: { clearedAt: '2026-11-19T10:00:00.000Z', clearedBy: 'admin@example.com', ready: true, overrideAllowed: false, checklist: [], email } });
+    const sent = renderToStaticMarkup(<WorkflowPanel workflow={cleared('sent')} />);
+    expect(sent).toContain('Cleared');
+    expect(sent).toContain('The applicant was emailed that they are cleared');
+    const failed = renderToStaticMarkup(<WorkflowPanel workflow={cleared('failed')} />);
+    expect(failed).toContain('The clinician is cleared, but the clearance email could not be delivered');
+    expect(failed).not.toContain('role="alert"');
+    const none = renderToStaticMarkup(<WorkflowPanel workflow={cleared(null)} />);
+    expect(none).not.toContain('clearance email');
+    expect(none).not.toContain('was emailed');
+  });
+
   it('Clear is enabled when every item is met', () => {
     const ready = workflow({ clearance: { clearedAt: null, clearedBy: null, ready: true, overrideAllowed: false, checklist: [{ key: 'submitted', label: 'Onboarding application submitted', met: true }] } });
     const html = renderToStaticMarkup(<WorkflowPanel workflow={ready} />);

@@ -51,7 +51,7 @@ describe('Review — structured experience and attachments', () => {
     show(<ReviewScreen />);
     expect(screen.getByText('Total Years of Professional Experience')).toBeTruthy();
     expect(screen.getByText('2.5 years')).toBeTruthy();
-    expect(screen.getByText('Primary Clinical Specialty')).toBeTruthy();
+    expect(screen.getByText('Preferred Primary Specialties')).toBeTruthy();
     expect(screen.getByText('ICU, ER')).toBeTruthy();
     expect(screen.getByText('Specialty / Unit Preference')).toBeTruthy();
     expect(screen.getByText('OR')).toBeTruthy();
@@ -61,7 +61,7 @@ describe('Review — structured experience and attachments', () => {
     provide({ employmentApplication: { positionApplied: 'LVN', totalYearsExperience: '0', primaryClinicalSpecialty: [] } });
     show(<ReviewScreen />);
     expect(screen.getByText('0 years')).toBeTruthy();
-    expect(screen.getByText('Primary Clinical Specialty')).toBeTruthy();
+    expect(screen.getByText('Preferred Primary Specialties')).toBeTruthy();
   });
 
   it('a CNA reads the canonical CNA value', () => {
@@ -99,7 +99,7 @@ describe('Applicant Details', () => {
     provide({ employmentApplication: { positionApplied: 'Tech' } });
     show(<EmploymentApplicationScreen />);
     expect(screen.getByText(/Total Years of Professional Experience/)).toBeTruthy();
-    expect(screen.getByText(/Primary Clinical Specialty/)).toBeTruthy();
+    expect(screen.getByText(/Preferred Primary Specialties/)).toBeTruthy();
     expect(screen.getAllByText('CT Tech')).toHaveLength(2); // both questions, one taxonomy
     expect(screen.queryByText('ICU')).toBeNull();
   });
@@ -116,7 +116,7 @@ describe('Applicant Details', () => {
     provide({ employmentApplication: { positionApplied: 'CNA' } });
     show(<EmploymentApplicationScreen />);
     expect(screen.getByText(/Total Years of Professional Experience/)).toBeTruthy();
-    expect(screen.queryByText(/Primary Clinical Specialty/)).toBeNull();
+    expect(screen.queryByText(/Preferred Primary Specialties/)).toBeNull();
     expect(screen.queryByText(/Specialty \/ Unit Preference/)).toBeNull();
     expect(screen.getByText(/CNA applicants need at least 1 year/)).toBeTruthy();
   });

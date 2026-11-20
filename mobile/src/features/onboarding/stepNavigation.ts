@@ -34,6 +34,21 @@ export function nextStepInPhase(steps: StepDisplayItem[], stepId: string): StepD
   return phase.steps.slice(index + 1).find((s) => !s.completed) ?? null;
 }
 
+/**
+ * The step before `stepId` in packet order — across phases — that has a real
+ * screen, for "Previous step". Null on the first step. Backward navigation is
+ * only offered while the application is in progress: a submitted application
+ * stays locked (see useStepNavigation's `previous`).
+ */
+export function previousStep(steps: StepDisplayItem[], stepId: string, hasScreen: (id: string) => boolean): StepDisplayItem | null {
+  const index = steps.findIndex((s) => s.id === stepId);
+  if (index <= 0) return null;
+  for (let i = index - 1; i >= 0; i--) {
+    if (hasScreen(steps[i].id)) return steps[i];
+  }
+  return null;
+}
+
 export type StepExit =
   | { kind: 'next'; stepId: string }
   | { kind: 'leave'; to: StepOrigin };
@@ -56,9 +71,9 @@ function parseOrigin(value: unknown): StepOrigin {
   return value === 'home' || value === 'review' ? value : 'onboarding';
 }
 
-export function useStepNavigation() {
+export function useStepNavigation(hasScreen: (id: string) => boolean = () => true) {
   const router = useRouter();
-  const { progress } = useSession();
+  const { progress, session } = useSession();
   const params = useLocalSearchParams<{ stepId: string; origin?: string }>();
   const stepId = params.stepId ?? '';
   const origin = parseOrigin(params.origin);
@@ -78,8 +93,21 @@ export function useStepNavigation() {
     if (exit.to === 'home') router.navigate('/(app)/home');
   }
 
+  // Previous step: in progress only, and never from Review's "Edit" (which
+  // always returns straight to Review). Replaces this screen, like Continue,
+  // so step screens never pile up — the header's Back still leaves to where
+  // the applicant came from.
+  const previous = session?.status !== 'submitted' && origin !== 'review' && progress
+    ? previousStep(progress.steps, stepId, hasScreen)
+    : null;
+
   return {
     origin,
+    /** The step "Previous" opens, or null when it isn't offered. */
+    previous,
+    goPrevious: () => {
+      if (previous) router.replace({ pathname: '/(app)/onboarding/[stepId]', params: { stepId: previous.id, origin } });
+    },
     /** After Continue — the step was just marked complete. */
     afterComplete: () => go(decideStepExit(progress?.steps, stepId, origin, true)),
     /** After Save Progress, or the header's back button. */
