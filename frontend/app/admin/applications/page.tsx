@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { UserPlus } from 'lucide-react';
 import { fetchClinicians } from '@/lib/admin-api';
+import { ADMIN_TIME_NOTE } from '@/lib/admin-display';
 import { hasActiveFilters, pickClinicianQuery, type ClinicianQueryParams } from '@/lib/clinicians';
 import { ClinicianFilters } from './ClinicianFilters';
 import { ClinicianTable, QueueTabs } from './ClinicianTable';
@@ -46,7 +47,7 @@ async function Clinicians({ params }: { params: ClinicianQueryParams }) {
   return (
     <>
       <QueueTabs params={params} counts={queueCounts} />
-      <div className="px-6 py-3 border-b border-slate-100 bg-slate-50">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-slate-100 bg-slate-50">
         <p className="text-xs text-slate-500">
           {pagination.total === 0 ? 'No results' : `${pagination.total} clinician${pagination.total !== 1 ? 's' : ''}`}
           {params.search && (
@@ -55,6 +56,7 @@ async function Clinicians({ params }: { params: ClinicianQueryParams }) {
             </span>
           )}
         </p>
+        <p className="text-xs text-slate-400">{ADMIN_TIME_NOTE}</p>
       </div>
       <ClinicianTable data={data} filtered={hasActiveFilters(params) || !!params.queue} />
       {data.length > 0 && (

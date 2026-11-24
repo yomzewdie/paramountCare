@@ -111,8 +111,8 @@ describe('display safety', () => {
     expect(rows.some(([k]) => k.includes('Deep'))).toBe(false);
   });
   it('formatDate handles SQLite-style and ISO timestamps and bad input', () => {
-    expect(formatDate('2026-09-23T12:00:00.000Z')).toContain('2026');
-    expect(formatDate('2026-09-23 12:00:00')).toContain('2026');
+    expect(formatDate('2026-09-23T12:00:00.000Z')).toBe('Sep 23, 2026, 5:00 AM PDT');
+    expect(formatDate('2026-09-23 12:00:00')).toBe('Sep 23, 2026, 5:00 AM PDT');
     expect(formatDate(null)).toBe('—');
     expect(formatDate('garbage')).toBe('—');
   });

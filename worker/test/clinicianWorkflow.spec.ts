@@ -20,8 +20,10 @@ async function newCandidate(cookie: string, label: string, extra: Record<string,
   return adminApi(cookie).ok(adminApi(cookie).post('', { firstName: 'Cara', lastName: 'Candidate', email: uniqueEmail(label), phone: '5551230000', position: 'RN', ...extra }), 201);
 }
 
-async function list(cookie: string, params: Record<string, string> = {}): Promise<ClinicianPage> {
-  const res = await SELF.fetch(`${BASE}/api/admin/clinicians?${new URLSearchParams(params)}`, { headers: { cookie } });
+async function list(cookie: string, params: Record<string, string | string[]> = {}): Promise<ClinicianPage> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) for (const v of [value].flat()) qs.append(key, v);
+  const res = await SELF.fetch(`${BASE}/api/admin/clinicians?${qs}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   return res.json();
 }
@@ -78,6 +80,29 @@ describe('Recently Onboarded', () => {
     const page = await list(cookie, { recentlyOnboarded: 'true' });
     expect(page.data.map((c) => c.clinicianRecordId)).toEqual([recent.clinician.clinicianRecordId]);
     expect(page.data[0].queue).toBe('cleared');
+  });
+
+  it('the Cleared date range is Pacific calendar days, and combines with positions, specialties and workflow filters', async () => {
+    const cookie = await loginAsAdmin();
+    const api = adminApi(cookie);
+    const rn = await newCandidate(cookie, 'mswf-rn');
+    const lvn = await newCandidate(cookie, 'mswf-lvn', { position: 'LVN' });
+    const cna = await newCandidate(cookie, 'mswf-cna', { position: 'CNA' });
+    const ids = [rn, lvn, cna].map((d) => d.clinician.clinicianRecordId!);
+    // 05:30 UTC on 24 November is 9:30 PM PST on 23 November.
+    for (const id of ids) await env.DB.prepare(`UPDATE clinicians SET cleared_at = '2026-11-24 05:30:00', cleared_by = 1 WHERE id = ?`).bind(id).run();
+    await api.ok(api.put(`/${ids[0]}/verifications/background_check`, { status: 'pending' }));
+    await api.ok(api.put(`/${ids[2]}/verifications/background_check`, { status: 'pending' }));
+    const found = async (params: Record<string, string | string[]>) =>
+      (await list(cookie, { search: 'mswf', ...params })).data.map((c) => c.clinicianRecordId).sort((a, b) => a! - b!);
+
+    expect(await found({ clearedFrom: '2026-11-23', clearedTo: '2026-11-23' })).toEqual(ids);
+    expect(await found({ clearedFrom: '2026-11-24' })).toEqual([]);
+    // (RN or LVN) and Background Check pending and cleared on 23 November.
+    expect(await found({ position: ['RN', 'LVN'], backgroundCheck: 'pending', clearedFrom: '2026-11-23', clearedTo: '2026-11-23' })).toEqual([ids[0]]);
+    expect(await found({ position: ['RN', 'LVN', 'CNA'], backgroundCheck: 'pending' })).toEqual([ids[0], ids[2]]);
+    // A candidate added by a recruiter has no specialty answer yet, so any specialty selection excludes them.
+    expect(await found({ position: ['RN', 'LVN'], specialty: ['icu', 'er'] })).toEqual([]);
   });
 });
 

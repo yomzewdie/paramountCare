@@ -85,9 +85,11 @@ admin.get('/applications', async (c) => {
 // calculated onboarding queue, completion and required documents (see
 // services/clinicians.ts). Search, filters and sort apply to the complete set
 // before paging. Query parameters: page, pageSize, search, sort
-// (recent | name_asc | name_desc), queue, position, specialty, and
-// startedFrom/startedTo, lastActiveFrom/lastActiveTo, completedFrom/completedTo
-// as YYYY-MM-DD (UTC, inclusive).
+// (recent | name_asc | name_desc), queue, position and specialty (each may
+// repeat — position=RN&position=LVN — matching any of them), and
+// startedFrom/startedTo, lastActiveFrom/lastActiveTo, completedFrom/completedTo,
+// clearedFrom/clearedTo as YYYY-MM-DD: inclusive calendar days in Pacific time
+// (ADMIN_TIME_ZONE), the zone the Admin Portal displays.
 
 const DATE_PARAM = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -106,13 +108,16 @@ function parseClinicianQuery(c: Context<AppEnv>): ParsedClinicianQuery {
   if (!CLINICIAN_SORTS.includes(sort)) return { ok: false, error: 'Unknown sort' };
   const queue = param('queue') as OnboardingQueue | undefined;
   if (queue && !ONBOARDING_QUEUES.includes(queue)) return { ok: false, error: 'Unknown queue' };
-  const position = param('position');
-  if (position && !isOptionValue(POSITION_OPTIONS, position)) return { ok: false, error: 'Unknown position' };
-  const specialty = param('specialty');
-  if (specialty && !isOptionValue(SPECIALTY_OPTIONS, specialty)) return { ok: false, error: 'Unknown specialty' };
+  // Every value of a repeatable filter is checked; one unknown value rejects
+  // the request, exactly as a single unknown value always has.
+  const values = (name: string) => Array.from(new Set((c.req.queries(name) ?? []).map((v) => v.trim()).filter(Boolean)));
+  const position = values('position');
+  if (position.some((p) => !isOptionValue(POSITION_OPTIONS, p))) return { ok: false, error: 'Unknown position' };
+  const specialty = values('specialty');
+  if (specialty.some((s) => !isOptionValue(SPECIALTY_OPTIONS, s))) return { ok: false, error: 'Unknown specialty' };
 
-  const ranges: Record<'started' | 'lastActive' | 'completed', DateRange> = { started: {}, lastActive: {}, completed: {} };
-  for (const field of ['started', 'lastActive', 'completed'] as const) {
+  const ranges: Record<'started' | 'lastActive' | 'completed' | 'cleared', DateRange> = { started: {}, lastActive: {}, completed: {}, cleared: {} };
+  for (const field of ['started', 'lastActive', 'completed', 'cleared'] as const) {
     for (const end of ['from', 'to'] as const) {
       const value = param(`${field}${end === 'from' ? 'From' : 'To'}`);
       if (!value) continue;

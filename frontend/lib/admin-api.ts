@@ -7,7 +7,7 @@ import { cookies } from 'next/headers';
 import { getWorkerBaseUrl } from './server-config';
 import type { InvitesPage } from './invitations';
 import { DOC_TYPE_LABELS } from './document-labels';
-import type { ClinicianPage, ClinicianQueryParams, OnboardingSummary } from './clinicians';
+import { clinicianSearchParams, type ClinicianPage, type ClinicianQueryParams, type OnboardingSummary } from './clinicians';
 import type { ClinicianWorkflow } from './clinician-workflow';
 
 function getApiBase(): string {
@@ -74,7 +74,8 @@ export interface ApplicationDetail {
 
 /** One page of the clinician list, filtered, sorted and paged by the Worker. */
 export async function fetchClinicians(params: ClinicianQueryParams = {}, pageSize = 20): Promise<ClinicianPage> {
-  const qs = new URLSearchParams({ ...params, pageSize: String(pageSize) });
+  const qs = clinicianSearchParams(params);
+  qs.set('pageSize', String(pageSize));
   const res = await adminFetch(`/api/admin/clinicians?${qs.toString()}`);
   if (!res.ok) throw new Error(`Failed to fetch clinicians: ${res.status}`);
   return res.json() as Promise<ClinicianPage>;

@@ -1,4 +1,5 @@
 import {
+  ADMIN_TIME_ZONE,
   POSITION_OPTIONS,
   SPECIALTY_OPTIONS,
   computeOverallCompletion,
@@ -9,8 +10,10 @@ import {
   getPacket,
   isApplicantDocType,
   isOptionValue,
+  nextIsoDate,
   normalizeEmploymentApplication,
   requiredDocumentGroups,
+  startOfDayInTimeZone,
   stepsInForce,
   summarizeRequiredDocuments,
   type OnboardingFormData,
@@ -413,20 +416,23 @@ export type ClinicianSort = 'recent' | 'name_asc' | 'name_desc';
 export const CLINICIAN_SORTS: readonly ClinicianSort[] = ['recent', 'name_asc', 'name_desc'];
 
 export interface DateRange {
-  /** Inclusive, YYYY-MM-DD (UTC). */
+  /** Inclusive calendar day, YYYY-MM-DD, in the Admin Portal's zone (ADMIN_TIME_ZONE). */
   from?: string;
-  /** Inclusive, YYYY-MM-DD (UTC). */
+  /** Inclusive calendar day, YYYY-MM-DD, in the Admin Portal's zone (ADMIN_TIME_ZONE). */
   to?: string;
 }
 
 export interface ClinicianQuery {
   search?: string;
   queue?: OnboardingQueue;
-  position?: string;
-  specialty?: string;
+  /** Any of these positions (OR); none means every position. */
+  position?: readonly string[];
+  /** Any of these specialties, in either specialty answer (OR); none means every specialty. */
+  specialty?: readonly string[];
   started?: DateRange;
   lastActive?: DateRange;
   completed?: DateRange;
+  cleared?: DateRange;
   /** Cleared within the last 14 days. */
   recentlyOnboarded?: boolean;
   verifications?: Partial<Record<VerificationKind, VerificationStatus>>;
@@ -463,14 +469,17 @@ export function matchesSearch(clinician: ClinicianListItem, search: string): boo
     (term.length >= MIN_ID_SEARCH_LENGTH && ids.some((id) => id.includes(term))));
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
+/** Whether a stored UTC timestamp falls on one of the range's calendar days
+ * as the Admin Portal shows them (Pacific time, standard or daylight). */
 function inRange(timestamp: string | null, range: DateRange | undefined): boolean {
   if (!range || (!range.from && !range.to)) return true;
   if (!timestamp) return false;
   const time = Date.parse(timestamp);
-  if (range.from && time < Date.parse(`${range.from}T00:00:00.000Z`)) return false;
-  if (range.to && time >= Date.parse(`${range.to}T00:00:00.000Z`) + DAY_MS) return false;
+  if (Number.isNaN(time)) return false;
+  const from = range.from ? startOfDayInTimeZone(range.from, ADMIN_TIME_ZONE) : null;
+  const end = range.to ? startOfDayInTimeZone(nextIsoDate(range.to), ADMIN_TIME_ZONE) : null;
+  if (from !== null && time < from) return false;
+  if (end !== null && time >= end) return false;
   return true;
 }
 
@@ -485,9 +494,11 @@ function matchesFilters(clinician: ClinicianListItem, query: ClinicianQuery, now
     if (clinician.verifications?.[kind] !== status) return false;
   }
   if (query.documentReview && !(clinician.documentReview && clinician.documentReview[REVIEW_COUNT_FIELD[query.documentReview]] > 0)) return false;
-  if (query.position && clinician.position !== query.position) return false;
-  if (query.specialty && !clinician.specialtyPreference.includes(query.specialty) && !clinician.primaryClinicalSpecialty.includes(query.specialty)) return false;
-  return inRange(clinician.startedAt, query.started) && inRange(clinician.lastActiveAt, query.lastActive) && inRange(clinician.completedAt, query.completed);
+  // OR within a category, AND across categories.
+  if (query.position?.length && !(clinician.position && query.position.includes(clinician.position))) return false;
+  if (query.specialty?.length && !query.specialty.some((s) => clinician.specialtyPreference.includes(s) || clinician.primaryClinicalSpecialty.includes(s))) return false;
+  return inRange(clinician.startedAt, query.started) && inRange(clinician.lastActiveAt, query.lastActive) &&
+    inRange(clinician.completedAt, query.completed) && inRange(clinician.clearedAt, query.cleared);
 }
 
 /** "Last, First" when there is a name; otherwise the email. */

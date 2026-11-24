@@ -70,7 +70,7 @@ describe('clinician list helpers', () => {
 
   it('keeps only known query parameters, and queue tabs keep every other filter from page 1', () => {
     const params = pickClinicianQuery({ position: 'RN', specialty: 'icu', page: '3', queue: 'invited', evil: 'x', search: '  ' });
-    expect(params).toEqual({ position: 'RN', specialty: 'icu', page: '3', queue: 'invited' });
+    expect(params).toEqual({ position: ['RN'], specialty: ['icu'], page: '3', queue: 'invited' });
     expect(queueHref(params, 'almost_done')).toBe('/admin/applications?position=RN&specialty=icu&queue=almost_done');
     expect(queueHref(params, '')).toBe('/admin/applications?position=RN&specialty=icu');
     expect(hasActiveFilters({ queue: 'invited', sort: 'name_asc', page: '2' })).toBe(false);
@@ -130,7 +130,7 @@ describe('clinician table', () => {
 
 describe('queue tabs', () => {
   const counts = { all: 13, new_applicant: 1, invited: 3, in_progress: 3, almost_done: 2, application_completed: 2, cleared: 1, on_hold: 1 };
-  const html = renderToStaticMarkup(<QueueTabs params={{ queue: 'almost_done', position: 'RN' }} counts={counts} />);
+  const html = renderToStaticMarkup(<QueueTabs params={{ queue: 'almost_done', position: ['RN'] }} counts={counts} />);
 
   it('offers All and every queue, with counts', () => {
     for (const s of ['>All<', '>New Applicants<', '>Invited<', '>In Progress<', '>Almost Done<', '>Application Completed<', '>Cleared<', '>On Hold<', '>13<', '>3<', '>2<', '>1<']) expect(html).toContain(s);
@@ -147,10 +147,12 @@ describe('filters', () => {
   const html = renderToStaticMarkup(<ClinicianFilters />);
 
   it('offers search, position, specialty, sort and date ranges', () => {
-    for (const s of ['aria-label="Search clinicians"', 'aria-label="Position"', 'aria-label="Specialty"', 'aria-label="Sort"', 'Name A–Z', 'Name Z–A', 'Application started', 'Last active', 'Application completed']) {
+    for (const s of [
+      'aria-label="Search clinicians"', 'aria-label="Position: All positions"', 'aria-label="Specialty: All specialties"', 'aria-label="Sort"', 'Name A–Z', 'Name Z–A',
+      'Application Started', 'Last Active', 'Completed / Submitted', 'Cleared', 'Recently Onboarded (Last 14 Days)',
+    ]) {
       expect(html).toContain(s);
     }
-    for (const position of ['CNA', 'Tech', 'LVN', 'RN', 'NP']) expect(html).toContain(`value="${position}"`);
   });
 
   it('no longer offers the status values nothing ever produces', () => {

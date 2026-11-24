@@ -1,6 +1,7 @@
 // Display-safety helpers for the admin application-detail page.
 
 import {
+  ADMIN_TIME_ZONE,
   EMPLOYMENT_TYPE_OPTIONS,
   LEGACY_EMPLOYMENT_TYPE_LABELS,
   LEGACY_LICENSE_TYPE_LABELS,
@@ -18,21 +19,42 @@ import {
   isoDateToSlash,
 } from '@pcs/shared';
 
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
+// ── Admin date/time display ─────────────────────────────────────────────────
+//
+// The one place Admin Portal timestamps are formatted. Stored timestamps are
+// UTC (ISO, or SQLite's "YYYY-MM-DD HH:MM:SS" without a zone); they are shown
+// in Pacific time through the IANA zone, so PST and PDT each apply on their
+// own dates — never a fixed offset or a hard-coded "PST".
+
+export const ADMIN_TIME_NOTE = 'Times shown in Pacific Time';
+
+/** A stored UTC timestamp as a Date; null when missing or unreadable. */
+export function parseAdminTimestamp(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
   const d = new Date(iso.includes('T') || iso.endsWith('Z') ? iso : iso.replace(' ', 'T') + 'Z');
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
-  }) + ' UTC';
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Date only (UTC), for compact table cells. */
+const DATE_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: ADMIN_TIME_ZONE, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+});
+const DATE_FORMAT = new Intl.DateTimeFormat('en-US', { timeZone: ADMIN_TIME_ZONE, year: 'numeric', month: 'short', day: 'numeric' });
+
+/** ICU may separate "9:15" and "PM" with a narrow no-break space; plain
+ * spaces keep the text identical on the server and in every browser. */
+const plainSpaces = (text: string) => text.replace(/[\u202f\u00a0]/g, ' ');
+
+/** Date and time in Pacific time with its zone — "Nov 23, 2026, 9:15 PM PST",
+ * "Jul 23, 2026, 9:15 PM PDT"; "—" when missing or unreadable. */
+export function formatDate(iso: string | null | undefined): string {
+  const d = parseAdminTimestamp(iso);
+  return d ? plainSpaces(DATE_TIME_FORMAT.format(d)) : '—';
+}
+
+/** The Pacific calendar date only, for compact table cells — "Nov 23, 2026". */
 export function formatShortDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso.includes('T') || iso.endsWith('Z') ? iso : iso.replace(' ', 'T') + 'Z');
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const d = parseAdminTimestamp(iso);
+  return d ? plainSpaces(DATE_FORMAT.format(d)) : '—';
 }
 
 export function formatFileSize(bytes: number): string {

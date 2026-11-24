@@ -106,18 +106,30 @@ export const SORT_OPTIONS = [
   { value: 'name_desc', label: 'Name Z–A' },
 ] as const;
 
+/** The date ranges, each an inclusive span of Pacific calendar days. */
 export const DATE_FILTERS = [
-  { key: 'started', label: 'Application started' },
-  { key: 'lastActive', label: 'Last active' },
-  { key: 'completed', label: 'Application completed' },
+  { key: 'started', label: 'Application Started' },
+  { key: 'lastActive', label: 'Last Active' },
+  { key: 'completed', label: 'Completed / Submitted' },
+  { key: 'cleared', label: 'Cleared' },
 ] as const;
+
+/** Recently Onboarded — the Worker's one definition (cleared within the last
+ * 14 days, inclusive), offered as the Cleared date shortcut. */
+export const RECENTLY_ONBOARDED_PARAM = 'recentlyOnboarded';
+export const RECENTLY_ONBOARDED_LABEL = 'Recently Onboarded (Last 14 Days)';
 
 /** Every query parameter the Worker's clinician list understands. */
 export const CLINICIAN_QUERY_PARAMS = [
   'page', 'search', 'sort', 'queue', 'position', 'specialty',
-  'startedFrom', 'startedTo', 'lastActiveFrom', 'lastActiveTo', 'completedFrom', 'completedTo',
+  'startedFrom', 'startedTo', 'lastActiveFrom', 'lastActiveTo', 'completedFrom', 'completedTo', 'clearedFrom', 'clearedTo',
   'recentlyOnboarded', 'backgroundCheck', 'referenceVerification', 'i9Verification', 'w4Verification', 'documentReview',
 ] as const;
+
+/** Filters that may hold several values, each sent as its own repeated
+ * parameter (position=RN&position=LVN) — never joined with commas, so a value
+ * containing punctuation can't be split. Any one value matches (OR). */
+export const MULTI_VALUE_QUERY_PARAMS = ['position', 'specialty'] as const;
 
 // ── Recruiter workflow ───────────────────────────────────────────────────────
 
@@ -149,32 +161,70 @@ export function reviewStatusLabel(status: ReviewStatus): string {
   return REVIEW_STATUS_OPTIONS.find((o) => o.value === status)?.label ?? status;
 }
 
-export type ClinicianQueryParams = Partial<Record<(typeof CLINICIAN_QUERY_PARAMS)[number], string>>;
+type MultiValueParam = (typeof MULTI_VALUE_QUERY_PARAMS)[number];
+type SingleValueParam = Exclude<(typeof CLINICIAN_QUERY_PARAMS)[number], MultiValueParam>;
 
-/** Only the known parameters, trimmed and non-empty. */
+export type ClinicianQueryParams = Partial<Record<SingleValueParam, string>> & Partial<Record<MultiValueParam, string[]>>;
+
+const isMultiValue = (key: string): key is MultiValueParam => (MULTI_VALUE_QUERY_PARAMS as readonly string[]).includes(key);
+
+/** Only the known parameters, trimmed and non-empty. A multi-value filter
+ * keeps every distinct value (a single value, as in older links, is a list of
+ * one); any other parameter keeps its first. */
 export function pickClinicianQuery(params: Record<string, string | string[] | undefined>): ClinicianQueryParams {
   const picked: ClinicianQueryParams = {};
   for (const key of CLINICIAN_QUERY_PARAMS) {
     const raw = params[key];
-    const value = (Array.isArray(raw) ? raw[0] : raw)?.trim();
-    if (value) picked[key] = value;
+    const all = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).map((v) => v.trim()).filter(Boolean);
+    if (all.length === 0) continue;
+    if (isMultiValue(key)) picked[key] = Array.from(new Set(all));
+    else picked[key] = all[0];
   }
   return picked;
 }
 
+/** The parameters as a query string, repeating each multi-value filter. */
+export function clinicianSearchParams(params: ClinicianQueryParams, omit: readonly string[] = []): URLSearchParams {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params) as [string, string | string[] | undefined][]) {
+    if (omit.includes(key) || value === undefined) continue;
+    for (const v of Array.isArray(value) ? value : [value]) if (v) qs.append(key, v);
+  }
+  return qs;
+}
+
 /** The list URL for a queue tab: every other filter kept, back to page 1. */
 export function queueHref(params: ClinicianQueryParams, queue: OnboardingQueue | ''): string {
-  const next = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (key !== 'queue' && key !== 'page' && value) next.set(key, value);
-  }
+  const next = clinicianSearchParams(params, ['queue', 'page']);
   if (queue) next.set('queue', queue);
   const qs = next.toString();
   return `/admin/applications${qs ? `?${qs}` : ''}`;
 }
 
 export function hasActiveFilters(params: ClinicianQueryParams): boolean {
-  return Object.entries(params).some(([key, value]) => key !== 'page' && key !== 'sort' && key !== 'queue' && !!value);
+  return Object.entries(params).some(([key, value]) =>
+    key !== 'page' && key !== 'sort' && key !== 'queue' && (Array.isArray(value) ? value.length > 0 : !!value));
+}
+
+/** A multi-select's collapsed text: "All positions", "RN, LVN", or "3 positions". */
+export function selectionSummary(selected: readonly string[], options: readonly { value: string; label: string }[], noun: { all: string; plural: string }): string {
+  if (selected.length === 0) return noun.all;
+  if (selected.length > 2) return `${selected.length} ${noun.plural}`;
+  // In the menu's own order, whatever order they were chosen in.
+  const ordered = [...options.filter((o) => selected.includes(o.value)).map((o) => o.label), ...selected.filter((v) => !options.some((o) => o.value === v))];
+  return ordered.join(', ');
+}
+
+/** The Dates control's collapsed text, so an active date filter is visible
+ * without opening it: "Dates", "Dates: Recently Onboarded", "Dates: Cleared",
+ * or "Dates: 2 active". */
+export function dateFilterSummary(get: (key: string) => string | null): string {
+  const active: string[] = DATE_FILTERS.filter(({ key }) => get(`${key}From`) || get(`${key}To`)).map(({ label }) => label);
+  const recently = get(RECENTLY_ONBOARDED_PARAM) === 'true';
+  if (recently && !active.includes('Cleared')) active.push('Recently Onboarded');
+  if (active.length === 0) return 'Dates';
+  if (active.length === 1) return `Dates: ${active[0]}`;
+  return `Dates: ${active.length} active`;
 }
 
 // ── Display ──────────────────────────────────────────────────────────────────

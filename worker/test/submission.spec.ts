@@ -653,18 +653,23 @@ describe('I-9 PDF durability — self-healing on idempotent re-submit', () => {
 // recover the SAME submitted session via the existing per-user UNIQUE
 // constraint (insertSessionOrGetExisting), so SessionContext ends up with
 // the real submitted state either way, never a fresh blank one.
-describe('mobile restart/resume flow — a submitted session is recovered, never duplicated', () => {
-  it('/mine no longer finds a submitted session (it is no longer active)', async () => {
-    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('resume-mine-404'));
-    await submittedSession(accessToken);
+describe('mobile restart/resume flow - a submitted session is recovered, never duplicated', () => {
+  // Every test here only reads (or recovers without changing) one submitted
+  // session, so they share it: one full submission instead of three.
+  let accessToken: string;
+  let submitted: Awaited<ReturnType<typeof submittedSession>>;
+  beforeAll(async () => {
+    ({ accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('resume-recovery')));
+    submitted = await submittedSession(accessToken);
+  });
 
+  it('/mine no longer finds a submitted session (it is no longer active)', async () => {
     const res = await SELF.fetch(`${BASE}/api/sessions/mine`, { headers: { Authorization: `Bearer ${accessToken}` } });
     expect(res.status).toBe(404);
   });
 
   it('the get-or-create fallback (POST /api/sessions) recovers the SAME submitted session rather than creating a new one', async () => {
-    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('resume-recover'));
-    const { applicationId } = await submittedSession(accessToken);
+    const { applicationId } = submitted;
 
     const res = await SELF.fetch(`${BASE}/api/sessions`, {
       method: 'POST',
@@ -682,8 +687,7 @@ describe('mobile restart/resume flow — a submitted session is recovered, never
   });
 
   it('a direct GET by the known session id still returns the full authoritative submitted state (SessionContext\'s own re-fetch path)', async () => {
-    const { accessToken } = await registerVerifyAndLoginApplicant(uniqueEmail('resume-get-by-id'));
-    const { session, applicationId } = await submittedSession(accessToken);
+    const { session, applicationId } = submitted;
 
     const res = await SELF.fetch(`${BASE}/api/sessions/${session.sessionId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     expect(res.status).toBe(200);

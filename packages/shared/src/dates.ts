@@ -168,3 +168,46 @@ export function ageOnDate(birthIsoDate: string, onIsoDate: string): number | nul
 export function maskSlashDateOrNotApplicable(text: string): string {
   return /[a-z]/i.test(text) ? text.toUpperCase().slice(0, 10) : maskSlashDateInput(text);
 }
+
+// ── Admin Portal time zone ───────────────────────────────────────────────────
+//
+// Timestamps are stored in UTC. The Admin Portal shows them, and reads its
+// date-only filters, in Paramount Care's own zone, so the day a recruiter
+// filters on is the day the list shows. Always the IANA zone (never a fixed
+// "PST" offset), so standard and daylight time each apply automatically.
+
+export const ADMIN_TIME_ZONE = 'America/Los_Angeles';
+
+/** How far `timeZone`'s wall clock is ahead of UTC at `instant`, in ms. */
+function zoneOffsetMs(instant: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(instant));
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const wall = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+  return wall - Math.floor(instant / 1000) * 1000;
+}
+
+/**
+ * The UTC instant (ms) at which calendar day `isoDate` begins in `timeZone`
+ * — midnight local time, whatever the offset is that day. Null for an
+ * impossible date. Day N runs from startOfDayInTimeZone(N) up to, not
+ * including, startOfDayInTimeZone(N + 1), so a 23- or 25-hour daylight-saving
+ * day is still exactly one calendar day.
+ */
+export function startOfDayInTimeZone(isoDate: string, timeZone: string): number | null {
+  if (!isValidIsoDate(isoDate)) return null;
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const wallMidnight = Date.UTC(y, m - 1, d);
+  // A first guess with the offset at that instant, then corrected with the
+  // offset actually in force at the guessed moment (they differ only when a
+  // transition falls between the two).
+  const guess = wallMidnight - zoneOffsetMs(wallMidnight, timeZone);
+  return wallMidnight - zoneOffsetMs(guess, timeZone);
+}
+
+/** The calendar day after `isoDate`, as YYYY-MM-DD. */
+export function nextIsoDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}

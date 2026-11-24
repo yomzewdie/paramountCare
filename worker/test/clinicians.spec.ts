@@ -14,8 +14,15 @@ import {
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-async function list(cookie: string, params: Record<string, string> = {}): Promise<ClinicianPage> {
-  const res = await SELF.fetch(`${BASE}/api/admin/clinicians?${new URLSearchParams(params)}`, { headers: { cookie } });
+/** A list request; an array value repeats the parameter (position=RN&position=LVN). */
+function listQuery(params: Record<string, string | string[]>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) for (const v of [value].flat()) qs.append(key, v);
+  return qs.toString();
+}
+
+async function list(cookie: string, params: Record<string, string | string[]> = {}): Promise<ClinicianPage> {
+  const res = await SELF.fetch(`${BASE}/api/admin/clinicians?${listQuery(params)}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   return (await res.json()) as ClinicianPage;
 }
@@ -270,8 +277,51 @@ describe('GET /api/admin/clinicians', () => {
       expect((await SELF.fetch(`${BASE}/api/admin/clinicians?specialty=tele`, { headers: { cookie } })).status).toBe(400);
     });
 
+    it('several positions match any of them (RN or LVN), in one combined list sorted by last name', async () => {
+      const page = await list(cookie, { position: ['RN', 'LVN'], sort: 'name_asc' });
+      expect(emails(page)).toEqual(['ana.lopez@example.com', 'jane.smith@example.com', 'janet.smithers@example.com', 'old.timer@example.com']);
+      expect(page.data.map((c) => c.email)).toEqual(['ana.lopez@example.com', 'jane.smith@example.com', 'janet.smithers@example.com', 'old.timer@example.com']);
+      expect(page.pagination.total).toBe(4);
+    });
+
+    it('every position selected is everyone with a position; none selected is everyone', async () => {
+      const everyPosition = await list(cookie, { position: ['CNA', 'Tech', 'LVN', 'RN', 'NP'] });
+      expect(everyPosition.pagination.total).toBe(7);
+      expect(emails(everyPosition)).not.toContain('pending.invitee@example.com');
+      expect((await list(cookie, {})).pagination.total).toBe(10);
+      // An empty value is no selection, as before.
+      expect((await list(cookie, { position: '' })).pagination.total).toBe(10);
+      // Repeating a value changes nothing.
+      expect(emails(await list(cookie, { position: ['NP', 'NP'] }))).toEqual(['nina.prac@example.com']);
+    });
+
+    it('several specialties match any of them, in either specialty answer', async () => {
+      expect(emails(await list(cookie, { specialty: ['pacu', 'tele_dou'] }))).toEqual(['ana.lopez@example.com', 'old.timer@example.com']);
+      expect(emails(await list(cookie, { specialty: ['cst', 'cna'] }))).toEqual(['bob.brown@example.com', 'tess.tech@example.com']);
+    });
+
+    it('a clinician with several specialties matches when any one is selected, and is listed once', async () => {
+      // Nina prefers ER; her primary clinical specialty is ICU.
+      const page = await list(cookie, { specialty: ['er', 'icu'] });
+      expect(page.data.filter((c) => c.email === 'nina.prac@example.com')).toHaveLength(1);
+      expect(emails(page)).toEqual(['jane.smith@example.com', 'janet.smithers@example.com', 'nina.prac@example.com', 'old.timer@example.com']);
+      expect(emails(await list(cookie, { specialty: ['icu', 'pacu'], position: 'NP' }))).toEqual(['nina.prac@example.com']);
+    });
+
+    it('a single position or specialty, as in existing links, still works unchanged', async () => {
+      const res = await SELF.fetch(`${BASE}/api/admin/clinicians?position=RN&specialty=icu`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(emails((await res.json()) as ClinicianPage)).toEqual(['jane.smith@example.com', 'janet.smithers@example.com']);
+    });
+
+    it('every supplied value is validated: one unknown value rejects the request', async () => {
+      for (const qs of ['position=RN&position=Doctor', 'position=RN&position=rn', 'specialty=icu&specialty=cardiology', 'specialty=tele_dou&specialty=tele', 'position=RN,LVN']) {
+        expect((await SELF.fetch(`${BASE}/api/admin/clinicians?${qs}`, { headers: { cookie } })).status).toBe(400);
+      }
+    });
+
     it('rejects values outside the shared taxonomies', async () => {
-      for (const qs of ['position=Doctor', 'specialty=cardiology', 'queue=archived', 'sort=age', 'startedFrom=2026-13-01', 'lastActiveTo=yesterday']) {
+      for (const qs of ['position=Doctor', 'specialty=cardiology', 'queue=archived', 'sort=age', 'startedFrom=2026-13-01', 'lastActiveTo=yesterday', 'clearedFrom=2026-02-30']) {
         expect((await SELF.fetch(`${BASE}/api/admin/clinicians?${qs}`, { headers: { cookie } })).status).toBe(400);
       }
     });
@@ -315,6 +365,24 @@ describe('GET /api/admin/clinicians', () => {
   });
 
   describe('combined filters and pagination', () => {
+    it('OR within position and within specialty, AND across them and the queue', async () => {
+      // (RN or LVN) and (ICU or Tele-DOU) and In Progress.
+      expect(emails(await list(cookie, { position: ['RN', 'LVN'], specialty: ['icu', 'tele_dou'], queue: 'in_progress' }))).toEqual(['ana.lopez@example.com', 'janet.smithers@example.com']);
+      // Add a date: only Ana was last active in September.
+      expect(emails(await list(cookie, { position: ['RN', 'LVN'], specialty: ['icu', 'tele_dou'], lastActiveTo: '2026-09-30' }))).toEqual(['ana.lopez@example.com']);
+      // Add search.
+      expect(emails(await list(cookie, { position: ['RN', 'LVN'], specialty: ['icu', 'tele_dou'], search: 'smith' }))).toEqual(['jane.smith@example.com', 'janet.smithers@example.com']);
+      // Queue counts describe the multi-value filters too.
+      expect((await list(cookie, { position: ['RN', 'LVN'] })).queueCounts).toMatchObject({ all: 4, in_progress: 2, almost_done: 1, application_completed: 1 });
+    });
+
+    it('pages a multi-value filtered set', async () => {
+      const first = await list(cookie, { position: ['RN', 'LVN'], sort: 'name_asc', pageSize: '3', page: '1' });
+      const second = await list(cookie, { position: ['RN', 'LVN'], sort: 'name_asc', pageSize: '3', page: '2' });
+      expect(first.pagination).toEqual({ page: 1, pageSize: 3, total: 4, totalPages: 2 });
+      expect([...first.data, ...second.data].map((c) => c.email)).toEqual(['ana.lopez@example.com', 'jane.smith@example.com', 'janet.smithers@example.com', 'old.timer@example.com']);
+    });
+
     it('RN + ICU + Almost Done', async () => {
       expect(emails(await list(cookie, { position: 'RN', specialty: 'icu', queue: 'almost_done' }))).toEqual(['jane.smith@example.com']);
     });
@@ -395,6 +463,36 @@ describe('clinician list access', () => {
       expect((await SELF.fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } })).status).toBe(403);
       expect((await SELF.fetch(`${BASE}${path}`)).status).toBe(401);
     }
+  });
+});
+
+describe('date filters are Pacific calendar days', () => {
+  let cookie: string;
+  beforeAll(async () => {
+    cookie = await loginAsAdmin();
+    // Started 03:30 UTC on 1 July = 8:30 PM PDT on 30 June; last active
+    // 05:30 UTC on 24 November = 9:30 PM PST on 23 November.
+    await seedSession({
+      email: 'late.evening@example.com', firstName: 'Late', lastName: 'Evening',
+      formData: { employmentApplication: employmentApplication('RN', ['icu']) },
+      createdAt: '2026-07-01 03:30:00', updatedAt: '2026-11-24 05:30:00',
+    });
+  });
+  const found = async (params: Record<string, string>) => emails(await list(cookie, { search: 'late.evening', ...params })).length === 1;
+
+  it('an evening in winter (PST) belongs to that Pacific day, not the next UTC day', async () => {
+    expect(await found({ lastActiveFrom: '2026-11-23', lastActiveTo: '2026-11-23' })).toBe(true);
+    expect(await found({ lastActiveFrom: '2026-11-24' })).toBe(false);
+    expect(await found({ lastActiveTo: '2026-11-22' })).toBe(false);
+  });
+
+  it('an evening in summer (PDT) likewise', async () => {
+    expect(await found({ startedFrom: '2026-06-30', startedTo: '2026-06-30' })).toBe(true);
+    expect(await found({ startedFrom: '2026-07-01' })).toBe(false);
+  });
+
+  it('a range includes both whole days', async () => {
+    expect(await found({ startedFrom: '2026-06-01', startedTo: '2026-06-30', lastActiveFrom: '2026-11-23', lastActiveTo: '2026-11-30' })).toBe(true);
   });
 });
 

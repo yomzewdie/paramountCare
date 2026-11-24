@@ -94,7 +94,7 @@ describe('clinician list: workflow', () => {
 
   it('offers the workflow filters', () => {
     const html = renderToStaticMarkup(<ClinicianFilters />);
-    for (const s of ['Recently onboarded', 'aria-label="Background Check"', 'aria-label="Reference Verification"', 'aria-label="I-9 Verification"', 'aria-label="W-4 Verification"', 'aria-label="Document review"', 'Has needs correction']) {
+    for (const s of ['Recently Onboarded (Last 14 Days)', 'aria-label="Background Check"', 'aria-label="Reference Verification"', 'aria-label="I-9 Verification"', 'aria-label="W-4 Verification"', 'aria-label="Document review"', 'Has needs correction']) {
       expect(html).toContain(s);
     }
   });
