@@ -16,7 +16,7 @@ import type {
   DirectDepositBankAccount,
 } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
-import { i9SlotFilled } from './documentAttachments';
+import { i9SlotFilled, type I9ReuseHolder } from './documentAttachments';
 import {
   EMPLOYMENT_TYPE_OPTIONS,
   LICENSE_TYPE_OPTIONS,
@@ -399,7 +399,7 @@ const REQUIRED_UPLOAD_FIELD: Record<string, { field: keyof UploadedDocuments; la
 /** `formData` (the whole session), when given, lets an I-9 List B / List C
  * slot be filled by the applicant's chosen reuse of an Identity Documents
  * upload (documentAttachments.ts i9ReuseSource). */
-export function validateDocuments(data: UploadedDocuments, step?: PacketStep, formData?: Record<string, unknown>): FieldErrors {
+export function validateDocuments(data: UploadedDocuments, step?: PacketStep, formData?: I9ReuseHolder): FieldErrors {
   const errors: FieldErrors = {};
   const config = step?.config;
 
@@ -668,7 +668,7 @@ export function validateStep(
 
       case 'document_upload':
         if (step.subtype === 'resume') return validateResume(data.resumeDocument);
-        return validateDocuments(data.uploadedDocuments, step, data as unknown as Record<string, unknown>);
+        return validateDocuments(data.uploadedDocuments, step, data);
 
       case 'exam':
       case 'review':

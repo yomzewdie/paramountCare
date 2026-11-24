@@ -153,6 +153,10 @@ export interface I9DocumentReuseEntry {
 
 export type I9DocumentReuse = Partial<Record<'list_b' | 'list_c', I9DocumentReuseEntry>>;
 
+/** Anything carrying the (untrusted) reuse choice: typed form data, or the
+ * raw stored JSON. Only `i9DocumentReuse` is read, and it is re-checked. */
+export type I9ReuseHolder = { readonly i9DocumentReuse?: unknown } | null | undefined;
+
 /** The one Identity Documents upload an I-9 slot may reuse, or null. Matched
  * explicitly — the value can come straight from a URL. */
 export function reusableSourceForI9DocType(i9DocType: string): string | null {
@@ -164,7 +168,7 @@ export function reusableSourceForI9DocType(i9DocType: string): string | null {
 /** The doc type an I-9 slot currently reuses (the applicant chose it, for an
  * allowed pairing, with List C's restriction confirmed), or null. Says nothing
  * about whether the source still holds files — callers check that. */
-export function i9ReuseSource(formData: FormDataLike, i9DocType: string): string | null {
+export function i9ReuseSource(formData: I9ReuseHolder, i9DocType: string): string | null {
   const allowed = reusableSourceForI9DocType(i9DocType);
   if (!allowed) return null;
   const entry = asRecord(asRecord(formData?.i9DocumentReuse)[i9DocType]);
@@ -184,7 +188,7 @@ export function withI9Reuse(formData: Record<string, unknown>, i9DocType: 'list_
 
 /** Whether an I-9 slot is filled: its own upload, or a reused Identity
  * Documents upload that still holds files. */
-export function i9SlotFilled(formData: FormDataLike, i9DocType: string, has: (docType: string) => boolean): boolean {
+export function i9SlotFilled(formData: I9ReuseHolder, i9DocType: string, has: (docType: string) => boolean): boolean {
   if (has(i9DocType)) return true;
   const source = i9ReuseSource(formData, i9DocType);
   return !!source && has(source);

@@ -24,11 +24,15 @@ function stopReusing(token: string, s: TestSession, docType: string) {
   });
 }
 
-async function ok(res: Response | Promise<Response>): Promise<SessionState> {
+/** A session as the applicant API serializes it (serializeSession): the
+ * shared test view plus the completion it computes on every response. */
+type SerializedSession = SessionState & { completionPercent: number | null };
+
+async function ok<T extends SessionState = SessionState>(res: Response | Promise<Response>): Promise<T> {
   const r = await res;
   const body = await r.json();
   expect(r.status, JSON.stringify(body)).toBe(200);
-  return body as SessionState;
+  return body as T;
 }
 
 const DL_AS_LIST_B = { source: 'drivers_license' };
@@ -97,7 +101,7 @@ describe('reusing an Identity Documents upload for the I-9', () => {
     expect(review(detail, 'social_security_card')).toMatchObject({ required: true, label: 'Social Security Card' });
     const i9 = review(detail, 'i9_identity');
     expect(i9.files.map((f) => f.docType)).toEqual(['drivers_license', 'social_security_card']);
-    expect((i9 as unknown as { reusedFor: unknown }).reusedFor).toEqual([{ slot: 'list_b', source: 'drivers_license' }, { slot: 'list_c', source: 'social_security_card' }]);
+    expect(i9.reusedFor).toEqual([{ slot: 'list_b', source: 'drivers_license' }, { slot: 'list_c', source: 'social_security_card' }]);
     expect(JSON.stringify(detail)).not.toMatch(/uploads\/|objectKey|r2\.dev/);
   });
 
@@ -290,7 +294,7 @@ describe('applications submitted before Identity Documents existed', () => {
     await env.DB.prepare('UPDATE onboarding_sessions SET form_data_json = ?, step_states_json = ? WHERE session_id = ?').bind(historicalForm, historicalSteps, s.sessionId).run();
     await env.DB.prepare(`DELETE FROM application_documents WHERE application_id = ? AND doc_type IN ('drivers_license', 'social_security_card')`).bind(applicationId).run();
 
-    const mine = await ok(SELF.fetch(`${BASE}/api/sessions/${s.sessionId}`, { headers: auth(accessToken) }));
+    const mine = await ok<SerializedSession>(SELF.fetch(`${BASE}/api/sessions/${s.sessionId}`, { headers: auth(accessToken) }));
     expect(mine.completionPercent).toBe(100);
 
     let detail = await api.ok(api.get(`/${clinicianId}`));

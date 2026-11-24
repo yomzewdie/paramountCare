@@ -80,7 +80,7 @@ export function requiredDocumentGroupsForStep(step: PacketStep, formData: FormDa
     if (step.subtype === 'resume') return [group(RESUME_DOC_TYPE, [RESUME_DOC_TYPE], has(RESUME_DOC_TYPE))];
     const groups: RequiredDocumentGroup[] = [];
     if (step.config?.i9Uploads) {
-      const filled = (docType: string) => i9SlotFilled(formData as Record<string, unknown> | null | undefined, docType, has);
+      const filled = (docType: string) => i9SlotFilled(formData, docType, has);
       groups.push(group(I9_IDENTITY_REQUIREMENT, i9IdentityDocTypes(formData), filled('list_a') || (filled('list_b') && filled('list_c'))));
     }
     for (const docType of step.config?.requiredUploads ?? []) groups.push(group(docType, [docType], has(docType)));
@@ -100,7 +100,7 @@ export function requiredDocumentGroupsForStep(step: PacketStep, formData: FormDa
  * and C, plus any Identity Documents upload chosen to stand in for B or C. */
 export function i9IdentityDocTypes(formData: FormDataLike): string[] {
   const reused = (['list_b', 'list_c'] as const)
-    .map((docType) => i9ReuseSource(formData as Record<string, unknown> | null | undefined, docType))
+    .map((docType) => i9ReuseSource(formData, docType))
     .filter((docType): docType is string => !!docType);
   return ['list_a', 'list_b', 'list_c', ...reused];
 }

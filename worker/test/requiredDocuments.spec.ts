@@ -153,10 +153,10 @@ describe('reusing an Identity Documents upload for the I-9', () => {
 
   it('the Documents step validator and completion agree', () => {
     const step = packet.steps.find((s) => s.id === 'documents')!;
-    const formData = { ...defaultFormData, uploadedDocuments: { ...defaultFormData.uploadedDocuments, ...both, cprCertification: fileRef('cpr.jpg') } } as unknown as Record<string, unknown>;
-    expect(validateDocuments(formData.uploadedDocuments as OnboardingFormData['uploadedDocuments'], step, formData).i9).toBeDefined();
-    const reusing = { ...formData, i9DocumentReuse: { list_b: reuseB, list_c: reuseC } };
-    expect(validateDocuments(reusing.uploadedDocuments as OnboardingFormData['uploadedDocuments'], step, reusing)).toEqual({});
+    const formData: OnboardingFormData = { ...defaultFormData, uploadedDocuments: { ...defaultFormData.uploadedDocuments, ...both, cprCertification: fileRef('cpr.jpg') } };
+    expect(validateDocuments(formData.uploadedDocuments, step, formData).i9).toBeDefined();
+    const reusing: OnboardingFormData = { ...formData, i9DocumentReuse: { list_b: reuseB, list_c: reuseC } };
+    expect(validateDocuments(reusing.uploadedDocuments, step, reusing)).toEqual({});
   });
 });
 

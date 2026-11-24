@@ -189,7 +189,7 @@ function documentsCompletion(data: OnboardingFormData['uploadedDocuments'], form
     list_a: 'listA', list_b: 'listB', list_c: 'listC', drivers_license: 'driversLicense', social_security_card: 'socialSecurityCard',
   };
   const has = (docType: string) => !!field[docType] && !!data[field[docType]];
-  const filled = (docType: string) => i9SlotFilled(formData as unknown as Record<string, unknown>, docType, has);
+  const filled = (docType: string) => i9SlotFilled(formData, docType, has);
   const i9 = (filled('list_a') || (filled('list_b') && filled('list_c'))) ? 1 : 0;
   const completed = i9 + cpr;
   const total = 2;
