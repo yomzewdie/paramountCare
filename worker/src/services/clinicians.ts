@@ -11,6 +11,7 @@ import {
   isOptionValue,
   normalizeEmploymentApplication,
   requiredDocumentGroups,
+  stepsInForce,
   summarizeRequiredDocuments,
   type OnboardingFormData,
   type RequiredDocumentSummary,
@@ -187,9 +188,15 @@ export function clinicianProfile(rawEmploymentApplication: unknown): Pick<Clinic
 /** Completion and documents owed, by the shared rules. Unknown (null) when the
  * session's packet is unknown or its stored data can't be evaluated — one
  * malformed session never takes the whole list down. */
-export function sessionProgress(packetId: string, formData: Record<string, unknown>): { completionPercent: number | null; requiredDocuments: RequiredDocumentSummary | null } {
-  const packet = getPacket(packetId);
-  if (!packet) return { completionPercent: null, requiredDocuments: null };
+export function sessionProgress(
+  packetId: string,
+  formData: Record<string, unknown>,
+  session?: { status?: string | null; stepStates?: Record<string, unknown> | null },
+): { completionPercent: number | null; requiredDocuments: RequiredDocumentSummary | null } {
+  const current = getPacket(packetId);
+  if (!current) return { completionPercent: null, requiredDocuments: null };
+  // A submitted application is held to the steps it was submitted under.
+  const packet = session ? stepsInForce(current, session) : current;
   try {
     const shaped = { ...defaultFormData, ...formData } as unknown as OnboardingFormData;
     return {
@@ -226,7 +233,8 @@ export function sessionClinician(
   reviews: readonly DocumentReviewRow[] = [],
 ): ClinicianListItem {
   const formData = parseObject(session.form_data_json);
-  const progress = sessionProgress(session.packet_id, formData);
+  const inForce = { status: session.status, stepStates: parseObject(session.step_states_json) };
+  const progress = sessionProgress(session.packet_id, formData, inForce);
   const submitted = session.status === 'submitted' || !!application;
   const profile = clinicianProfile(formData.employmentApplication);
   return {
@@ -251,13 +259,18 @@ export function sessionClinician(
     documentCount: application ? application.document_count : null,
     invitation: invitationOf(invite),
     ...workflowFields(record),
-    documentReview: record ? reviewSummary(session.packet_id, formData, reviews) : null,
+    documentReview: record ? reviewSummary(session.packet_id, formData, reviews, inForce) : null,
   };
 }
 
-function reviewSummary(packetId: string, formData: Record<string, unknown>, reviews: readonly DocumentReviewRow[]): DocumentReviewSummary | null {
+function reviewSummary(
+  packetId: string,
+  formData: Record<string, unknown>,
+  reviews: readonly DocumentReviewRow[],
+  session: { status?: string | null; stepStates?: Record<string, unknown> | null },
+): DocumentReviewSummary | null {
   try {
-    return summarizeReviewStates(requirementReviewStates(packetId, formData, reviews));
+    return summarizeReviewStates(requirementReviewStates(packetId, formData, reviews, session));
   } catch (e) {
     console.warn('[clinicians] could not evaluate document reviews:', e);
     return null;
@@ -591,11 +604,12 @@ export function onboardingSummary(
   const documents = visibleSessionUploads(session, uploads).map((u) => ({
     id: u.id, docType: u.doc_type, fileName: u.file_name, fileSize: u.file_size, uploadedAt: toIsoTimestamp(u.uploaded_at) ?? u.uploaded_at,
   }));
-  const packet = getPacket(session.packet_id);
-  if (!packet) return { clinician, steps: [], requiredDocuments: [], documents };
+  const current = getPacket(session.packet_id);
+  if (!current) return { clinician, steps: [], requiredDocuments: [], documents };
 
   const formData = parseObject(session.form_data_json);
   const stepStates = parseObject(session.step_states_json);
+  const packet = stepsInForce(current, { status: session.status, stepStates });
   let completions: Record<string, StepCompletion> = {};
   try {
     completions = computeStepCompletion({ ...defaultFormData, ...formData } as unknown as OnboardingFormData);

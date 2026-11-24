@@ -6,6 +6,17 @@ import { Download, Eye } from 'lucide-react';
 import { reviewStatusLabel, type ReviewStatus } from '@/lib/clinicians';
 import { clinicianAction, type ClinicianWorkflow, type RequirementReview } from '@/lib/clinician-workflow';
 import { downloadUrl, type DocumentSource } from '@/lib/document-viewer';
+import { DOC_TYPE_LABELS } from '@/lib/document-labels';
+
+const I9_SLOT_LABELS: Record<string, string> = { list_b: 'List B', list_c: 'List C' };
+
+/** Review rows grouped so Paramount Care's own Identity Documents are never
+ * mistaken for the federal Form I-9 document selection. */
+const SECTIONS: { key: string; title: string; note?: string; matches: (requirement: string) => boolean }[] = [
+  { key: 'identity', title: 'Identity Documents', note: 'Paramount Care onboarding requirement', matches: (r) => r === 'drivers_license' || r === 'social_security_card' },
+  { key: 'i9', title: 'Form I-9 document selection', note: 'Federal Form I-9: one List A document, or one List B and one List C document', matches: (r) => r === 'i9_identity' },
+  { key: 'other', title: 'Other documents', matches: () => true },
+];
 import { useDocumentViewer } from '../applications/[applicationId]/DocumentViewer';
 
 const STATUS_STYLES: Record<ReviewStatus, string> = {
@@ -78,11 +89,23 @@ function RequirementRow({ review, clinicianId, onHold, source, onView }: {
         )}
         {review.changedAfterReview && <span className="font-medium text-amber-700">Changed since review</span>}
       </div>
+      {review.reusedFor && review.reusedFor.length > 0 && (
+        <ul className="text-xs text-slate-600" aria-label="Reused from Identity Documents">
+          {review.reusedFor.map((r) => (
+            <li key={r.slot}>{I9_SLOT_LABELS[r.slot] ?? r.slot}: uses the {DOC_TYPE_LABELS[r.source] ?? r.source} uploaded in Identity Documents (chosen by the applicant)</li>
+          ))}
+        </ul>
+      )}
       {fileCount > 0 && (
         <ul className="space-y-1">
           {review.files.map((file, index) => (
             <li key={file.id} className="flex items-center justify-between gap-3 text-xs">
-              <span className="truncate text-slate-700">{file.fileName}</span>
+              <span className="truncate text-slate-700">
+                {file.fileName}
+                {review.requirement === 'i9_identity' && file.docType && (file.docType === 'drivers_license' || file.docType === 'social_security_card') && (
+                  <span className="ml-1 text-slate-400">({DOC_TYPE_LABELS[file.docType]} from Identity Documents)</span>
+                )}
+              </span>
               <span className="flex flex-shrink-0 gap-3 font-semibold">
                 <button type="button" onClick={() => onView(index)} className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800" aria-label={`View ${file.fileName}`}>
                   <Eye size={12} />
@@ -158,20 +181,36 @@ export function DocumentReviewPanel({ workflow }: { workflow: ClinicianWorkflow 
 
 function ReviewList({ workflow, source }: { workflow: ClinicianWorkflow; source: DocumentSource }) {
   const { openViewer, viewer } = useDocumentViewer(source);
+  const placed = new Set<string>();
+  const sections = SECTIONS.map((section) => {
+    const reviews = workflow.documentReviews.requirements.filter((r) => !placed.has(r.requirement) && section.matches(r.requirement));
+    reviews.forEach((r) => placed.add(r.requirement));
+    return { ...section, reviews };
+  }).filter((section) => section.reviews.length > 0);
   return (
     <>
-      <ul className="space-y-2">
-        {workflow.documentReviews.requirements.map((review) => (
-          <RequirementRow
-            key={review.requirement}
-            review={review}
-            clinicianId={workflow.clinician.clinicianRecordId!}
-            onHold={!!workflow.onHold}
-            source={source}
-            onView={(index) => openViewer(review.label, review.files, index)}
-          />
+      <div className="space-y-4">
+        {sections.map((section) => (
+          <section key={section.key} aria-label={section.title} className="space-y-2">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.title}</h3>
+              {section.note && <p className="text-xs text-slate-400">{section.note}</p>}
+            </div>
+            <ul className="space-y-2">
+              {section.reviews.map((review) => (
+                <RequirementRow
+                  key={review.requirement}
+                  review={review}
+                  clinicianId={workflow.clinician.clinicianRecordId!}
+                  onHold={!!workflow.onHold}
+                  source={source}
+                  onView={(index) => openViewer(review.label, review.files, index)}
+                />
+              ))}
+            </ul>
+          </section>
         ))}
-      </ul>
+      </div>
       {viewer}
     </>
   );

@@ -16,6 +16,7 @@ import type {
   DirectDepositBankAccount,
 } from './onboarding';
 import { defaultEmploymentReference } from './onboarding';
+import { i9SlotFilled } from './documentAttachments';
 import {
   EMPLOYMENT_TYPE_OPTIONS,
   LICENSE_TYPE_OPTIONS,
@@ -323,6 +324,26 @@ export function validateEmploymentReference(raw: EmploymentReference): FieldErro
   return errors;
 }
 
+// ── Employment Reference #2: same facility as #1 (a warning, never an error) ─
+//
+// Reference #2 may be from the same facility as Reference #1 — allowed, but
+// worth a gentle nudge. Compared without regard to capitalization, leading/
+// trailing whitespace, or runs of inner spaces; nothing stored is changed.
+
+export const SAME_FACILITY_REFERENCE_WARNING =
+  'Reference #2 is from the same facility as Reference #1. If possible, using a reference from a different facility may help us verify a broader range of your work experience.';
+
+function normalizedFacility(name: unknown): string {
+  return typeof name === 'string' ? name.trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+
+/** Whether two references name the same facility. False while either is blank. */
+export function isSameReferenceFacility(first: unknown, second: unknown): boolean {
+  const a = normalizedFacility(first);
+  const b = normalizedFacility(second);
+  return a !== '' && b !== '' && a === b;
+}
+
 // ── Resume ────────────────────────────────────────────────────────────────────
 //
 // The whole "About You & Work History" phase. Like every other document
@@ -369,17 +390,26 @@ export function validateSafety(data: SafetyEducationData): FieldErrors {
 // associated" check is needed beyond "is the field non-null."
 
 const REQUIRED_UPLOAD_FIELD: Record<string, { field: keyof UploadedDocuments; label: string }> = {
-  nursing_license: { field: 'nursingLicense', label: 'your professional license or certification' },
-  cpr_cert:        { field: 'cprCertification', label: 'your CPR/BLS certification' },
+  nursing_license:      { field: 'nursingLicense', label: 'your professional license or certification' },
+  cpr_cert:             { field: 'cprCertification', label: 'your CPR/BLS certification' },
+  drivers_license:      { field: 'driversLicense', label: "your Driver's License" },
+  social_security_card: { field: 'socialSecurityCard', label: 'your Social Security Card' },
 };
 
-export function validateDocuments(data: UploadedDocuments, step?: PacketStep): FieldErrors {
+/** `formData` (the whole session), when given, lets an I-9 List B / List C
+ * slot be filled by the applicant's chosen reuse of an Identity Documents
+ * upload (documentAttachments.ts i9ReuseSource). */
+export function validateDocuments(data: UploadedDocuments, step?: PacketStep, formData?: Record<string, unknown>): FieldErrors {
   const errors: FieldErrors = {};
   const config = step?.config;
 
   if (config?.i9Uploads) {
-    const hasListA = !!data.listA;
-    const hasListBAndC = !!data.listB && !!data.listC;
+    const field: Record<string, keyof UploadedDocuments> = {
+      list_a: 'listA', list_b: 'listB', list_c: 'listC', drivers_license: 'driversLicense', social_security_card: 'socialSecurityCard',
+    };
+    const has = (docType: string) => !!field[docType] && !!data[field[docType]];
+    const hasListA = has('list_a');
+    const hasListBAndC = i9SlotFilled(formData, 'list_b', has) && i9SlotFilled(formData, 'list_c', has);
     if (!hasListA && !hasListBAndC) {
       errors.i9 = 'Upload a List A document, or both a List B and a List C document, to verify your identity and work authorization.';
     }
@@ -638,7 +668,7 @@ export function validateStep(
 
       case 'document_upload':
         if (step.subtype === 'resume') return validateResume(data.resumeDocument);
-        return validateDocuments(data.uploadedDocuments, step);
+        return validateDocuments(data.uploadedDocuments, step, data as unknown as Record<string, unknown>);
 
       case 'exam':
       case 'review':

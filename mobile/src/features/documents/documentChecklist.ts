@@ -21,6 +21,9 @@ export interface ChecklistItem {
   done: boolean;
   group: 'identity' | 'credential';
   optional: boolean;
+  /** An I-9 slot filled by the applicant's chosen Identity Documents upload:
+   * that upload's doc type (its files are `attachments`). */
+  reusedFrom?: string;
 }
 
 export interface DocumentChecklist {
@@ -53,14 +56,17 @@ export function buildDocumentChecklist(input: {
   documents: UploadedDocuments;
   /** The session's formData, for requirements holding several attachments. */
   formData?: Record<string, unknown>;
+  /** I-9 slots currently filled by a reused Identity Documents upload: slot -> its doc type. */
+  reusedFrom?: Partial<Record<string, string>>;
 }): DocumentChecklist {
-  const { requiredSlots, optionalSlots = [], identityPath, documents, formData } = input;
+  const { requiredSlots, optionalSlots = [], identityPath, documents, formData, reusedFrom = {} } = input;
   const identityRequired = requiredSlots.some((s) => s.group === 'identity');
   const toItem = (slot: DocumentSlotDef, group: ChecklistItem['group'], optional = false): ChecklistItem => {
     const file = documents[slot.formDataField] ?? null;
-    const stored = formData ? documentAttachmentsFor(formData, slot.docType) : [];
+    const source = reusedFrom[slot.docType];
+    const stored = formData ? documentAttachmentsFor(formData, source ?? slot.docType) : [];
     const attachments = stored.length > 0 ? stored : file ? [file] : [];
-    return { docType: slot.docType, slot, file, attachments, done: !!file, group, optional };
+    return { docType: slot.docType, slot, file, attachments, done: !!file, group, optional, ...(source ? { reusedFrom: source } : {}) };
   };
 
   const identityItems = identityRequired && identityPath

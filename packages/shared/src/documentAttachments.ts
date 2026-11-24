@@ -39,12 +39,20 @@ export const VACCINE_PROOF_STEP_BY_DOC_TYPE: Readonly<Record<string, string>> = 
   flu_vaccination_proof: 'flu_declination',
 };
 
+/** Paramount Care's own onboarding identity documents (the Identity
+ * Documents step) — an operational requirement, separate from the federal
+ * Form I-9 document selection (List A, or List B + List C). */
+export const DRIVERS_LICENSE_DOC_TYPE = 'drivers_license';
+export const SOCIAL_SECURITY_CARD_DOC_TYPE = 'social_security_card';
+
 const UPLOADED_DOCUMENT_FIELD_BY_DOC_TYPE: Readonly<Record<string, string>> = {
   list_a: 'listA',
   list_b: 'listB',
   list_c: 'listC',
   nursing_license: 'nursingLicense',
   cpr_cert: 'cprCertification',
+  [DRIVERS_LICENSE_DOC_TYPE]: 'driversLicense',
+  [SOCIAL_SECURITY_CARD_DOC_TYPE]: 'socialSecurityCard',
 };
 
 export const DIRECT_DEPOSIT_DOC_TYPE = 'direct_deposit_voided_check';
@@ -117,4 +125,67 @@ export function withDocumentAttachments(formData: Record<string, unknown>, docTy
   if (Object.keys(groups).length > 0) return { ...next, documentAttachments: groups };
   const { documentAttachments: _empty, ...rest } = next;
   return rest;
+}
+
+// ── Reusing an Identity Documents upload for the I-9 ────────────────────────
+//
+// An applicant who already uploaded their Driver's License or Social Security
+// card in the Identity Documents step may choose to use that same upload for
+// their I-9 List B or List C document instead of uploading it again. It is
+// only ever the applicant's own explicit choice (never inferred from what was
+// uploaded or from citizenship status), and only for the legally applicable
+// pairing: a driver's license as List B; a Social Security card as List C, and
+// only once the applicant confirms it carries no employment restriction.
+//
+// Stored as a reference by DOCUMENT TYPE within the same session
+// (`formData.i9DocumentReuse.list_b = { source: 'drivers_license', … }`),
+// never as an object key — so it can only ever resolve to this session's own
+// files, and no file is copied or stored twice. Server-owned: written only by
+// the Worker's reuse route, never by the generic session PATCH.
+
+export interface I9DocumentReuseEntry {
+  /** The Identity Documents doc type whose files stand in for this I-9 slot. */
+  source: string;
+  selectedAt: string;
+  /** List C only: the applicant confirmed the card has no employment restriction. */
+  unrestrictedConfirmed?: boolean;
+}
+
+export type I9DocumentReuse = Partial<Record<'list_b' | 'list_c', I9DocumentReuseEntry>>;
+
+/** The one Identity Documents upload an I-9 slot may reuse, or null. Matched
+ * explicitly — the value can come straight from a URL. */
+export function reusableSourceForI9DocType(i9DocType: string): string | null {
+  if (i9DocType === 'list_b') return DRIVERS_LICENSE_DOC_TYPE;
+  if (i9DocType === 'list_c') return SOCIAL_SECURITY_CARD_DOC_TYPE;
+  return null;
+}
+
+/** The doc type an I-9 slot currently reuses (the applicant chose it, for an
+ * allowed pairing, with List C's restriction confirmed), or null. Says nothing
+ * about whether the source still holds files — callers check that. */
+export function i9ReuseSource(formData: FormDataLike, i9DocType: string): string | null {
+  const allowed = reusableSourceForI9DocType(i9DocType);
+  if (!allowed) return null;
+  const entry = asRecord(asRecord(formData?.i9DocumentReuse)[i9DocType]);
+  if (entry.source !== allowed) return null;
+  if (i9DocType === 'list_c' && entry.unrestrictedConfirmed !== true) return null;
+  return allowed;
+}
+
+/** Sets (or, with null, clears) one I-9 slot's reuse choice. */
+export function withI9Reuse(formData: Record<string, unknown>, i9DocType: 'list_b' | 'list_c', entry: I9DocumentReuseEntry | null): Record<string, unknown> {
+  const { [i9DocType]: _previous, ...others } = asRecord(formData.i9DocumentReuse);
+  const next = entry ? { ...others, [i9DocType]: entry } : others;
+  if (Object.keys(next).length > 0) return { ...formData, i9DocumentReuse: next };
+  const { i9DocumentReuse: _empty, ...rest } = formData;
+  return rest;
+}
+
+/** Whether an I-9 slot is filled: its own upload, or a reused Identity
+ * Documents upload that still holds files. */
+export function i9SlotFilled(formData: FormDataLike, i9DocType: string, has: (docType: string) => boolean): boolean {
+  if (has(i9DocType)) return true;
+  const source = i9ReuseSource(formData, i9DocType);
+  return !!source && has(source);
 }

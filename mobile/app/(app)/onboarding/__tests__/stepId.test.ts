@@ -10,6 +10,7 @@ import I9Screen from '../../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../../src/features/onboarding/DocumentsScreen';
+import IdentityDocumentsScreen from '../../../../src/features/onboarding/IdentityDocumentsScreen';
 import SafetyAcknowledgementsScreen from '../../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 import ReviewScreen from '../../../../src/features/onboarding/ReviewScreen';
 import ResumeScreen from '../../../../src/features/onboarding/ResumeScreen';
@@ -62,6 +63,10 @@ describe('onboarding [stepId] real-screen registry', () => {
 
   it('maps flu_declination to the same real VaccineDeclinationScreen as hep_b_declination/tdap_declination', () => {
     expect(REAL_STEP_SCREENS.flu_declination).toBe(VaccineDeclinationScreen);
+  });
+
+  it('maps identity_documents to the real IdentityDocumentsScreen', () => {
+    expect(REAL_STEP_SCREENS.identity_documents).toBe(IdentityDocumentsScreen);
   });
 
   it('maps documents to the real DocumentsScreen', () => {
@@ -186,9 +191,10 @@ describe('onboarding [stepId] real-screen registry', () => {
       const ddIdx = packet.steps.findIndex((s) => s.id === 'direct_deposit');
       expect(i9Idx).toBeGreaterThanOrEqual(0);
       expect(ddIdx).toBe(i9Idx + 1);
-      // `documents` is always the very next step after direct_deposit, in
-      // every packet — now a real screen, confirmed above.
-      expect(packet.steps[ddIdx + 1].id).toBe('documents');
+      // Then Paramount Care's Identity Documents, immediately followed by
+      // `documents` (the I-9 document selection), in every packet.
+      expect(packet.steps[ddIdx + 1].id).toBe('identity_documents');
+      expect(packet.steps[ddIdx + 2].id).toBe('documents');
     }
   });
 
@@ -387,7 +393,7 @@ describe('onboarding [stepId] real-screen registry', () => {
       expect(computePhaseStepPosition(generalRnSteps, 'i9')).toEqual({
         phaseLabel: 'Pay, Health & Documents',
         stepNumber: 5,
-        totalSteps: 7,
+        totalSteps: 8,
       });
     });
 
@@ -401,12 +407,12 @@ describe('onboarding [stepId] real-screen registry', () => {
 
     it('is packet-aware, not hardcoded: the same step id resolves to a different phase count on a shorter packet', () => {
       const icuRnSteps = deriveProgress('icu_rn', {})!.steps;
-      // icu_rn's condensed "Pay, Health & Documents" phase has only 4 steps
-      // (w4, i9, direct_deposit, documents) — no vaccine declinations.
+      // icu_rn's condensed "Pay, Health & Documents" phase has only 5 steps
+      // (w4, i9, direct_deposit, identity_documents, documents) — no vaccine declinations.
       expect(computePhaseStepPosition(icuRnSteps, 'i9')).toEqual({
         phaseLabel: 'Pay, Health & Documents',
         stepNumber: 2,
-        totalSteps: 4,
+        totalSteps: 5,
       });
     });
 

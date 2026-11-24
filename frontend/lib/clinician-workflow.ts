@@ -18,6 +18,8 @@ export interface ReviewFile {
   fileName: string;
   fileSize: number;
   uploadedAt: string;
+  /** The upload slot it was attached to (e.g. list_b, drivers_license). */
+  docType?: string | null;
 }
 
 export interface RequirementReview {
@@ -35,6 +37,9 @@ export interface RequirementReview {
   correctionNotified: boolean;
   updatedAt: string | null;
   files: ReviewFile[];
+  /** I-9 identity only: List B / List C slots the applicant chose to fill with
+   * an Identity Documents upload (those files are listed in `files` too). */
+  reusedFor?: { slot: 'list_b' | 'list_c'; source: string }[];
 }
 
 export interface ClinicianWorkflow {

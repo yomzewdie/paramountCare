@@ -236,13 +236,14 @@ describe('POST /api/sessions/:sessionId/submit — document promotion', () => {
     const body = await res.json() as { applicationId: string };
 
     // icu_rn's real required uploads: the resume, direct_deposit voided
-    // check, list_a (i9Uploads), nursing_license, cpr_cert — 5 promoted live
-    // uploads, plus the generated I-9 and W-4 PDFs (6th and 7th; both have
+    // check, the Identity Documents driver's license and Social Security
+    // card, list_a (i9Uploads), nursing_license, cpr_cert — 7 promoted live
+    // uploads, plus the generated I-9 and W-4 PDFs (8th and 9th; both have
     // session_id/doc_type null since they're server-generated, not promoted
     // applicant uploads — see the dedicated I-9/W-4 PDF generation tests
     // in i9Finalization.spec.ts / w4Finalization.spec.ts for those).
     const docCount = await countApplicationDocuments(body.applicationId);
-    expect(docCount).toBe(7);
+    expect(docCount).toBe(9);
 
     const rows = await env.DB.prepare('SELECT object_key, doc_type, session_id FROM application_documents WHERE application_id = ? AND doc_type IS NOT NULL')
       .bind(body.applicationId).all<{ object_key: string; doc_type: string; session_id: string }>();
@@ -250,7 +251,7 @@ describe('POST /api/sessions/:sessionId/submit — document promotion', () => {
       expect(row.session_id).toBe(session.sessionId);
     }
     const docTypes = rows.results.map((r) => r.doc_type).sort();
-    expect(docTypes).toEqual(['applicant_resume', 'cpr_cert', 'direct_deposit_voided_check', 'list_a', 'nursing_license'].sort());
+    expect(docTypes).toEqual(['applicant_resume', 'cpr_cert', 'direct_deposit_voided_check', 'drivers_license', 'list_a', 'nursing_license', 'social_security_card'].sort());
   });
 
   it('a cross-user file can never be promoted, even if it somehow ended up referenced', async () => {
@@ -270,7 +271,7 @@ describe('POST /api/sessions/:sessionId/submit — document promotion', () => {
       .bind(body.applicationId).all<{ object_key: string }>();
     // Every promoted object key belongs to a doc_type this packet actually
     // required, uploaded by the owner — the stranger's file never appears.
-    expect(rows.results.length).toBe(5);
+    expect(rows.results.length).toBe(7);
   });
 
   it('retrying an already-submitted session does not duplicate application_documents rows', async () => {

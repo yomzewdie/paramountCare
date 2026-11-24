@@ -32,7 +32,10 @@ export function completeFormData(packetId: string): Record<string, unknown> {
     directDepositData: DIRECT_DEPOSIT_DATA,
     directDepositProofDocument: fileRef('check.jpg'),
     resumeDocument: fileRef('resume.pdf', 'application/pdf'),
-    uploadedDocuments: { listA: fileRef('passport.jpg'), cprCertification: fileRef('cpr.jpg') },
+    uploadedDocuments: {
+      listA: fileRef('passport.jpg'), cprCertification: fileRef('cpr.jpg'),
+      driversLicense: fileRef('license.jpg'), socialSecurityCard: fileRef('ss-card.jpg'),
+    },
   };
   const acknowledgements: Record<string, unknown> = {};
   const references: Record<string, unknown> = {};
@@ -53,7 +56,7 @@ export function withAllVaccinesProvidingProof(formData: Record<string, unknown>)
 }
 
 /** Removes stored documents from form data. */
-export function withoutDocuments(formData: Record<string, unknown>, which: ('resume' | 'identity' | 'cpr' | 'directDeposit')[]): Record<string, unknown> {
+export function withoutDocuments(formData: Record<string, unknown>, which: ('resume' | 'identity' | 'cpr' | 'directDeposit' | 'identityDocuments')[]): Record<string, unknown> {
   const next: Record<string, unknown> = { ...formData, uploadedDocuments: { ...(formData.uploadedDocuments as Record<string, unknown>) } };
   const uploaded = next.uploadedDocuments as Record<string, unknown>;
   for (const doc of which) {
@@ -61,6 +64,7 @@ export function withoutDocuments(formData: Record<string, unknown>, which: ('res
     if (doc === 'directDeposit') delete next.directDepositProofDocument;
     if (doc === 'identity') { delete uploaded.listA; delete uploaded.listB; delete uploaded.listC; }
     if (doc === 'cpr') delete uploaded.cprCertification;
+    if (doc === 'identityDocuments') { delete uploaded.driversLicense; delete uploaded.socialSecurityCard; }
   }
   return next;
 }

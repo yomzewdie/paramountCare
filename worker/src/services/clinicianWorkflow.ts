@@ -1,4 +1,4 @@
-import { documentAttachmentsFor } from '@pcs/shared';
+import { I9_IDENTITY_REQUIREMENT, documentAttachmentsFor, i9ReuseSource } from '@pcs/shared';
 import {
   VERIFICATION_COLUMNS,
   VERIFICATION_KINDS,
@@ -81,11 +81,16 @@ export interface ReviewFile {
   fileName: string;
   fileSize: number;
   uploadedAt: string;
+  /** The upload slot it was attached to (e.g. list_b, drivers_license). */
+  docType: string | null;
 }
 
 export interface RequirementReview extends RequirementReviewState {
   /** The requirement's current files, by the id their source serves them by. */
   files: ReviewFile[];
+  /** I-9 identity only: the List B / List C slots the applicant chose to fill
+   * with an Identity Documents upload (whose files are listed above too). */
+  reusedFor?: { slot: 'list_b' | 'list_c'; source: string }[];
 }
 
 /** Where the files listed in a review come from: the submitted application's
@@ -96,10 +101,14 @@ export type ReviewFileSource = 'application' | 'session' | null;
 export function documentReviews(ctx: ClinicianContext): { source: ReviewFileSource; requirements: RequirementReview[] } {
   if (!ctx.session) return { source: null, requirements: [] };
   const formData = parseObject(ctx.session.form_data_json);
-  const states = requirementReviewStates(ctx.session.packet_id, formData, ctx.reviews);
-  const toFile = (f: { id: number; file_name: string; file_size: number; uploaded_at: string }): ReviewFile => ({
-    id: f.id, fileName: f.file_name, fileSize: f.file_size, uploadedAt: toIsoTimestamp(f.uploaded_at) ?? f.uploaded_at,
+  const states = requirementReviewStates(ctx.session.packet_id, formData, ctx.reviews, { status: ctx.session.status, stepStates: parseObject(ctx.session.step_states_json) });
+  const toFile = (f: { id: number; file_name: string; file_size: number; uploaded_at: string; doc_type: string | null }): ReviewFile => ({
+    id: f.id, fileName: f.file_name, fileSize: f.file_size, uploadedAt: toIsoTimestamp(f.uploaded_at) ?? f.uploaded_at, docType: f.doc_type,
   });
+  const reusedFor = (['list_b', 'list_c'] as const)
+    .map((slot) => ({ slot, source: i9ReuseSource(formData, slot) }))
+    .filter((r): r is { slot: 'list_b' | 'list_c'; source: string } => !!r.source);
+  const withReuse = (s: RequirementReviewState) => (s.requirement === I9_IDENTITY_REQUIREMENT && reusedFor.length > 0 ? { ...s, reusedFor } : s);
 
   if (ctx.application) {
     const order = (doc: DocumentRow) => documentAttachmentsFor(formData, doc.doc_type ?? '').findIndex((f) => f.objectKey === doc.object_key);
@@ -107,7 +116,7 @@ export function documentReviews(ctx: ClinicianContext): { source: ReviewFileSour
     return {
       source: 'application',
       requirements: states.map((s) => ({
-        ...s,
+        ...withReuse(s),
         files: current.filter((d) => s.docTypes.includes(d.doc_type!)).sort((a, b) => order(a) - order(b) || a.id - b.id).map(toFile),
       })),
     };
@@ -115,7 +124,7 @@ export function documentReviews(ctx: ClinicianContext): { source: ReviewFileSour
   const uploads = visibleSessionUploads(ctx.session, ctx.uploads);
   return {
     source: 'session',
-    requirements: states.map((s) => ({ ...s, files: uploads.filter((u) => s.docTypes.includes(u.doc_type)).map(toFile) })),
+    requirements: states.map((s) => ({ ...withReuse(s), files: uploads.filter((u) => s.docTypes.includes(u.doc_type)).map(toFile) })),
   };
 }
 

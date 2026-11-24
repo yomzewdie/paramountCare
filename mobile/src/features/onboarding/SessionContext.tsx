@@ -7,6 +7,8 @@ import {
   updateSession,
   associateDocument,
   removeDocument,
+  reuseDocument,
+  stopReusingDocument,
   submitApplication,
   getSession,
   getCorrections,
@@ -68,6 +70,10 @@ interface SessionContextValue {
    * no objectKey, clears the whole requirement) and deletes the underlying R2
    * object(s) server-side. */
   removeDocument: (docType: string, objectKey?: string) => Promise<SaveStepResult>;
+  /** Uses an Identity Documents upload for an I-9 List B / List C slot (the
+   * applicant's explicit choice; List C needs `confirmUnrestricted`), or with
+   * `null` stops using it. Optional so test doubles needn't provide it. */
+  reuseForI9?: (docType: 'list_b' | 'list_c', choice: { source: string; confirmUnrestricted?: boolean } | null) => Promise<SaveStepResult>;
   /**
    * M16 (ADR-029) — the real final application submission via
    * `POST /api/sessions/:id/submit`, never a plain PATCH marking `review`
@@ -217,6 +223,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return applied;
   }, [loadCorrections]);
 
+  const reuseForI9Fn = useCallback(async (docType: 'list_b' | 'list_c', choice: { source: string; confirmUnrestricted?: boolean } | null): Promise<SaveStepResult> => {
+    const current = sessionRef.current;
+    if (!current) return { status: 'error', error: appError('unknown') };
+    const result = choice
+      ? await reuseDocument(current.sessionId, docType, { revision: current.revision, ...choice })
+      : await stopReusingDocument(current.sessionId, docType, { revision: current.revision });
+    const applied = applyUpdateResult(result);
+    if (applied.status === 'saved') void loadCorrections(current.sessionId);
+    return applied;
+  }, [loadCorrections]);
+
   const submitApplicationFn = useCallback(async (): Promise<SubmitResult> => {
     const current = sessionRef.current;
     if (!current) return { status: 'error', error: appError('unknown') };
@@ -245,17 +262,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // formData included: a step stored 'completed' under older rules is shown
     // as not complete (steps.ts effectiveStepStates) — Home and Review agree
     // with what final submission will accept.
-    () => (session ? deriveProgress(session.packetId, session.stepStates, session.formData) : null),
+    () => (session ? deriveProgress(session.packetId, session.stepStates, session.formData, session.status) : null),
     [session],
   );
 
   const value = useMemo<SessionContextValue>(
     () => ({
       status, session, progress, error, refresh: load, saveStep,
-      associateDocument: associateDocumentFn, removeDocument: removeDocumentFn,
+      associateDocument: associateDocumentFn, removeDocument: removeDocumentFn, reuseForI9: reuseForI9Fn,
       submitApplication: submitApplicationFn, corrections,
     }),
-    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn, submitApplicationFn, corrections],
+    [status, session, progress, error, load, saveStep, associateDocumentFn, removeDocumentFn, reuseForI9Fn, submitApplicationFn, corrections],
   );
   const correctionsValue = useMemo(() => ({ corrections }), [corrections]);
 

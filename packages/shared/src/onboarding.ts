@@ -1,4 +1,5 @@
 import { defaultEmploymentApplicationData } from './employmentApplication';
+import type { I9DocumentReuse } from './documentAttachments';
 
 // ── Personal Info ─────────────────────────────────────────────────────────────
 export interface PersonalInfo {
@@ -215,6 +216,11 @@ export interface UploadedDocuments {
   // Professional Credentials
   nursingLicense: UploadedFile | null;
   cprCertification: UploadedFile | null;
+  // Paramount Care Identity Documents (its own onboarding requirement, not
+  // the I-9 selection above). Optional in the type: sessions and applications
+  // from before this requirement simply don't have them.
+  driversLicense?: UploadedFile | null;
+  socialSecurityCard?: UploadedFile | null;
 }
 
 // ── IRS W-4 (2026) ────────────────────────────────────────────────────────────
@@ -392,6 +398,9 @@ export interface OnboardingFormData {
    * files, keyed by doc_type; each requirement's own field above always holds
    * its first attachment. Server-owned — see documentAttachments.ts. */
   documentAttachments?: Record<string, UploadedFile[]>;
+  /** I-9 List B / List C slots the applicant chose to fill with an upload from
+   * the Identity Documents step. Server-owned — see documentAttachments.ts. */
+  i9DocumentReuse?: I9DocumentReuse;
 }
 
 // ── Step identifier ───────────────────────────────────────────────────────────
@@ -463,6 +472,8 @@ export const defaultFormData: OnboardingFormData = {
     listC: null,
     nursingLicense: null,
     cprCertification: null,
+    driversLicense: null,
+    socialSecurityCard: null,
   },
   signatureData: {
     signatureDataUrl: null,

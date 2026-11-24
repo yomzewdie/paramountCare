@@ -13,6 +13,7 @@ import {
   requiresUnitPreference,
 } from './employmentApplication';
 import { isValidIsoDate } from './dates';
+import { i9SlotFilled } from './documentAttachments';
 import { validateEmploymentApplication, validatePersonalInfo } from './validation';
 
 export interface StepCompletion {
@@ -179,12 +180,27 @@ function directDepositCompletion(
 // gets set via the ownership-verified session-association endpoint, never by
 // a local selection alone, so "completed" here can never mean "picked but not
 // actually uploaded."
-function documentsCompletion(data: OnboardingFormData['uploadedDocuments']): StepCompletion {
+// A List B / List C slot the applicant chose to fill with an Identity
+// Documents upload counts as filled here — the I-9 requirement still counts
+// once, and the Identity Documents step counts its own documents separately.
+function documentsCompletion(data: OnboardingFormData['uploadedDocuments'], formData: OnboardingFormData): StepCompletion {
   const cpr = data.cprCertification ? 1 : 0;
-  const i9 = (!!data.listA || (!!data.listB && !!data.listC)) ? 1 : 0;
+  const field: Record<string, keyof OnboardingFormData['uploadedDocuments']> = {
+    list_a: 'listA', list_b: 'listB', list_c: 'listC', drivers_license: 'driversLicense', social_security_card: 'socialSecurityCard',
+  };
+  const has = (docType: string) => !!field[docType] && !!data[field[docType]];
+  const filled = (docType: string) => i9SlotFilled(formData as unknown as Record<string, unknown>, docType, has);
+  const i9 = (filled('list_a') || (filled('list_b') && filled('list_c'))) ? 1 : 0;
   const completed = i9 + cpr;
   const total = 2;
   return { step: 'documents', completed, total, percent: pct(completed, total) };
+}
+
+// Paramount Care's Identity Documents step: Driver's License and Social
+// Security Card, one each.
+function identityDocumentsCompletion(data: OnboardingFormData['uploadedDocuments']): StepCompletion {
+  const completed = (data.driversLicense ? 1 : 0) + (data.socialSecurityCard ? 1 : 0);
+  return { step: 'identity_documents', completed, total: 2, percent: pct(completed, 2) };
 }
 
 function acknowledgementsCompletion(
@@ -247,7 +263,8 @@ export function computeStepCompletion(data: OnboardingFormData): Record<string, 
     'employment_ref_2':       employmentCompletion(data, 'employment_ref_2'),
     'employment_ref_3':       employmentCompletion(data, 'employment_ref_3'),
     'safety_acknowledgements': safetyCompletion(data.safetyEducation),
-    'documents':              documentsCompletion(data.uploadedDocuments),
+    'identity_documents':     identityDocumentsCompletion(data.uploadedDocuments),
+    'documents':              documentsCompletion(data.uploadedDocuments, data),
     'resume':                 resumeCompletion(data.resumeDocument),
     'review':                 { step: 'review', completed: 1, total: 1, percent: 100 },
   };

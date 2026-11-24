@@ -60,9 +60,9 @@ describe('packet structure — resume-first (v6)', () => {
     }
   });
 
-  it('keeps every v5 step id (only `resume` is new), so in-progress sessions never reference a removed step', () => {
+  it('keeps every v5 step id (only `resume` and the later-added Identity Documents are new), so in-progress sessions never reference a removed step', () => {
     const ids = getPacket('general_rn')!.steps.map((s) => s.id);
-    expect(ids.filter((id) => id !== 'resume').sort()).toEqual([...V5_GENERAL_RN_STEP_IDS].sort());
+    expect(ids.filter((id) => id !== 'resume' && id !== 'identity_documents').sort()).toEqual([...V5_GENERAL_RN_STEP_IDS].sort());
   });
 
   it('places the Application Statement after the references and before the background authorization', () => {

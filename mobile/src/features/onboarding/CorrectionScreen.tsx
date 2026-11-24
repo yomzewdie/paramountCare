@@ -1,6 +1,6 @@
 import { Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { documentAttachmentsFor, type UploadedFile } from '@pcs/shared';
+import { documentAttachmentsFor, i9ReuseSource, type UploadedFile } from '@pcs/shared';
 import { Screen } from '../../components/Screen';
 import { Button } from '../../components/Button';
 import { DocumentSlotCard, type DocumentSlotCardSlot } from '../../components/DocumentSlotCard';
@@ -9,7 +9,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useSession } from './SessionContext';
 import { useCorrections } from './CorrectionsContext';
 import { useDocumentSlot } from '../documents/useDocumentSlot';
-import { CREDENTIAL_SLOT_BY_KEY, IDENTITY_SLOTS, RESUME_SLOT, VACCINE_PROOF_SLOT_BY_TYPE } from '../documents/documentSlots';
+import { CREDENTIAL_SLOT_BY_KEY, IDENTITY_SLOTS, PARAMOUNT_IDENTITY_SLOTS, RESUME_SLOT, VACCINE_PROOF_SLOT_BY_TYPE } from '../documents/documentSlots';
 import {
   CREDENTIAL_DOCUMENT_REQUIREMENT,
   IDENTITY_DOCUMENT_REQUIREMENT,
@@ -28,6 +28,8 @@ import {
 export function correctionSlotFor(docType: string): { slot: DocumentSlotCardSlot; requirement: DocumentRequirement } | null {
   const identity = IDENTITY_SLOTS.find((s) => s.docType === docType);
   if (identity) return { slot: identity, requirement: IDENTITY_DOCUMENT_REQUIREMENT };
+  const paramountIdentity = PARAMOUNT_IDENTITY_SLOTS.find((s) => s.docType === docType);
+  if (paramountIdentity) return { slot: { label: paramountIdentity.label, description: paramountIdentity.description }, requirement: IDENTITY_DOCUMENT_REQUIREMENT };
   const credential = CREDENTIAL_SLOT_BY_KEY[docType];
   if (credential) return { slot: credential, requirement: CREDENTIAL_DOCUMENT_REQUIREMENT };
   if (docType === RESUME_SLOT.docType) return { slot: RESUME_SLOT, requirement: RESUME_REQUIREMENT };
@@ -45,7 +47,9 @@ export function correctionSlotFor(docType: string): { slot: DocumentSlotCardSlot
 /** Which of a requirement's document types to show: the ones holding files
  * (the I-9 path the applicant chose), or every one if none do. */
 export function correctionDocTypes(docTypes: string[], formData: Record<string, unknown>): string[] {
-  const withFiles = docTypes.filter((docType) => documentAttachmentsFor(formData, docType).length > 0);
+  // An I-9 slot filled by a reused Identity Documents upload counts as held:
+  // uploading a different document there replaces the reuse.
+  const withFiles = docTypes.filter((docType) => documentAttachmentsFor(formData, docType).length > 0 || !!i9ReuseSource(formData, docType));
   return (withFiles.length > 0 ? withFiles : docTypes).filter((docType) => correctionSlotFor(docType) !== null);
 }
 

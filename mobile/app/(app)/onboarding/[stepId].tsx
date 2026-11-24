@@ -18,6 +18,7 @@ import I9Screen from '../../../src/features/onboarding/I9Screen';
 import VaccineDeclinationScreen from '../../../src/features/onboarding/VaccineDeclinationScreen';
 import DirectDepositScreen from '../../../src/features/onboarding/DirectDepositScreen';
 import DocumentsScreen from '../../../src/features/onboarding/DocumentsScreen';
+import IdentityDocumentsScreen from '../../../src/features/onboarding/IdentityDocumentsScreen';
 import ResumeScreen from '../../../src/features/onboarding/ResumeScreen';
 import SafetyAcknowledgementsScreen from '../../../src/features/onboarding/SafetyAcknowledgementsScreen';
 import ReviewScreen from '../../../src/features/onboarding/ReviewScreen';
@@ -152,6 +153,7 @@ export const REAL_STEP_SCREENS: Partial<Record<string, React.ComponentType>> = {
   tdap_declination: VaccineDeclinationScreen,
   flu_declination: VaccineDeclinationScreen,
   direct_deposit: DirectDepositScreen,
+  identity_documents: IdentityDocumentsScreen,
   documents: DocumentsScreen,
   safety_acknowledgements: SafetyAcknowledgementsScreen,
   jcaho_review: AcknowledgementScreen,

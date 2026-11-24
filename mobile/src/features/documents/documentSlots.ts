@@ -51,11 +51,54 @@ export const IDENTITY_SLOTS: DocumentSlotDef[] = [
     docType: 'list_c',
     formDataField: 'listC',
     label: 'List C — Work Authorization Document',
-    description: 'Establishes authorization to work. Must be combined with a List B document.',
-    examples: 'Social Security Card, U.S. Birth Certificate, Employment Authorization (DHS)',
+    // Form I-9 List C accepts a Social Security card only WITHOUT an
+    // employment restriction — the copy says so rather than implying every
+    // card qualifies (the applicant chooses; nothing reads the card itself).
+    description:
+      'Establishes authorization to work. Must be combined with a List B document. A Social Security card printed with "NOT VALID FOR EMPLOYMENT", "VALID FOR WORK ONLY WITH INS AUTHORIZATION" or "VALID FOR WORK ONLY WITH DHS AUTHORIZATION" is not a List C document.',
+    examples: 'Social Security card without an employment restriction, U.S. Birth Certificate, Employment Authorization (DHS)',
     group: 'identity',
   },
 ];
+
+/**
+ * Paramount Care's Identity Documents step — the company's own onboarding
+ * requirement (Driver's License and Social Security Card), deliberately NOT
+ * part of the I-9 slots above and not tied to citizenship status. Each is one
+ * logical requirement that, like every other document, may hold several
+ * attachments (a license's front and back; a card's front and back).
+ */
+export const PARAMOUNT_IDENTITY_SLOTS: DocumentSlotDef[] = [
+  {
+    docType: 'drivers_license',
+    formDataField: 'driversLicense',
+    label: "Driver's License",
+    description: "Upload the front of your current driver's license, then the back (use Upload More to add it).",
+    examples: '',
+  },
+  {
+    docType: 'social_security_card',
+    formDataField: 'socialSecurityCard',
+    label: 'Social Security Card',
+    description: 'Upload the front of your Social Security card. Add the back too if anything is printed or written on it.',
+    examples: '',
+  },
+];
+
+/** The Identity Documents upload an I-9 slot may reuse, with the applicant-
+ * facing wording for it (documentAttachments.ts reusableSourceForI9DocType). */
+export const I9_REUSE_OPTIONS: Record<'list_b' | 'list_c', { source: string; useLabel: string; inUse: string }> = {
+  list_b: {
+    source: 'drivers_license',
+    useLabel: "Use the Driver's License already uploaded",
+    inUse: "Using the Driver's License you uploaded in Identity Documents",
+  },
+  list_c: {
+    source: 'social_security_card',
+    useLabel: 'Use the Social Security Card already uploaded',
+    inUse: 'Using the Social Security Card you uploaded in Identity Documents',
+  },
+};
 
 export const CREDENTIAL_SLOT_BY_KEY: Record<string, DocumentSlotDef> = {
   nursing_license: {

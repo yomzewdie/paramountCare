@@ -5,6 +5,7 @@ import {
   hasStoredDocument,
   requirementForDocType,
   reviewableRequirements,
+  stepsInForce,
 } from '@pcs/shared';
 import type { ClinicianRecordRow } from '../db/queries/clinicianRecords';
 import {
@@ -49,9 +50,18 @@ export interface RequirementReviewState {
   updatedAt: string | null;
 }
 
-export function requirementReviewStates(packetId: string, formData: Record<string, unknown>, reviews: readonly DocumentReviewRow[]): RequirementReviewState[] {
-  const packet = getPacket(packetId);
-  if (!packet) return [];
+/** `session` (its status and step states), when given, holds a submitted
+ * application only to the steps it was submitted under (stepsInForce) — a
+ * requirement added to the packet later never appears on, or blocks, it. */
+export function requirementReviewStates(
+  packetId: string,
+  formData: Record<string, unknown>,
+  reviews: readonly DocumentReviewRow[],
+  session?: { status?: string | null; stepStates?: Record<string, unknown> | null },
+): RequirementReviewState[] {
+  const current = getPacket(packetId);
+  if (!current) return [];
+  const packet = session ? stepsInForce(current, session) : current;
   const acknowledgements = formData.acknowledgements as Parameters<typeof isDocumentActiveForSubmission>[1];
   const stored = hasStoredDocument(formData);
   const has = (docType: string) => stored(docType) && isDocumentActiveForSubmission(docType, acknowledgements);

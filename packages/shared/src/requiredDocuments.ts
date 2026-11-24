@@ -2,9 +2,13 @@ import type { OnboardingFormData } from './onboarding';
 import type { OnboardingPacket, PacketStep } from './packets';
 import {
   DIRECT_DEPOSIT_DOC_TYPE,
+  DRIVERS_LICENSE_DOC_TYPE,
   RESUME_DOC_TYPE,
+  SOCIAL_SECURITY_CARD_DOC_TYPE,
   VACCINE_PROOF_STEP_BY_DOC_TYPE,
   documentAttachmentsFor,
+  i9ReuseSource,
+  i9SlotFilled,
 } from './documentAttachments';
 
 // ── Required documents as logical requirements ───────────────────────────────
@@ -14,9 +18,15 @@ import {
 // (license front + back is one), and only requirements that are active for
 // THIS applicant count:
 //  - Resume (the resume step);
-//  - I-9 identity: List A, or List B + List C together — one requirement;
-//  - each `requiredUploads` credential (CPR/BLS); `optionalUploads` (the
-//    professional license) never count;
+//  - I-9 identity: List A, or List B + List C together — one requirement.
+//    List B / List C may be filled by the applicant's explicit choice to
+//    reuse their Identity Documents Driver's License / Social Security card
+//    (documentAttachments.ts i9ReuseSource); the I-9 requirement still counts
+//    once, and the Identity Documents requirements count on their own;
+//  - each `requiredUploads` document: CPR/BLS, and the Identity Documents
+//    step's Driver's License and Social Security Card (Paramount Care's own
+//    onboarding requirement — never part of the I-9 calculation);
+//    `optionalUploads` (the professional license) never count;
 //  - Direct Deposit bank verification;
 //  - vaccination proof only where the applicant's answer is "providing proof".
 // Only the packet's required steps contribute.
@@ -31,7 +41,8 @@ export interface RequiredDocumentGroup {
   key: string;
   /** The packet step it belongs to. */
   stepId: string;
-  /** Every doc type that can hold files for it (identity: List A, B and C). */
+  /** Every doc type whose files make it up (identity: List A, B and C, plus
+   * an Identity Documents upload the applicant chose to reuse for List B/C). */
   docTypes: string[];
   satisfied: boolean;
 }
@@ -69,7 +80,8 @@ export function requiredDocumentGroupsForStep(step: PacketStep, formData: FormDa
     if (step.subtype === 'resume') return [group(RESUME_DOC_TYPE, [RESUME_DOC_TYPE], has(RESUME_DOC_TYPE))];
     const groups: RequiredDocumentGroup[] = [];
     if (step.config?.i9Uploads) {
-      groups.push(group(I9_IDENTITY_REQUIREMENT, ['list_a', 'list_b', 'list_c'], has('list_a') || (has('list_b') && has('list_c'))));
+      const filled = (docType: string) => i9SlotFilled(formData as Record<string, unknown> | null | undefined, docType, has);
+      groups.push(group(I9_IDENTITY_REQUIREMENT, i9IdentityDocTypes(formData), filled('list_a') || (filled('list_b') && filled('list_c'))));
     }
     for (const docType of step.config?.requiredUploads ?? []) groups.push(group(docType, [docType], has(docType)));
     return groups;
@@ -82,6 +94,29 @@ export function requiredDocumentGroupsForStep(step: PacketStep, formData: FormDa
     if (docType) return [group(docType, [docType], has(docType))];
   }
   return [];
+}
+
+/** The I-9 identity requirement's doc types for this applicant: List A, B
+ * and C, plus any Identity Documents upload chosen to stand in for B or C. */
+export function i9IdentityDocTypes(formData: FormDataLike): string[] {
+  const reused = (['list_b', 'list_c'] as const)
+    .map((docType) => i9ReuseSource(formData as Record<string, unknown> | null | undefined, docType))
+    .filter((docType): docType is string => !!docType);
+  return ['list_a', 'list_b', 'list_c', ...reused];
+}
+
+/**
+ * The packet as it applies to one session. An application is held to the
+ * steps it was submitted under: a step added to the packet later (`addedLater`,
+ * e.g. Identity Documents) that a SUBMITTED session never completed is left
+ * out, so it never adds a requirement, an incomplete step or a clearance
+ * blocker to an application that was already submitted. Every other step —
+ * and every step of a session still in progress — applies as always.
+ */
+export function stepsInForce(packet: OnboardingPacket, session: { status?: string | null; stepStates?: Record<string, unknown> | null }): OnboardingPacket {
+  if (session.status !== 'submitted') return packet;
+  const steps = packet.steps.filter((step) => !step.addedLater || session.stepStates?.[step.id] === 'completed');
+  return steps.length === packet.steps.length ? packet : { ...packet, steps };
 }
 
 /** Every document requirement active for this applicant, across the packet's required steps. */
@@ -130,6 +165,8 @@ export function reviewableRequirements(packet: OnboardingPacket, formData: FormD
 export const DOCUMENT_REQUIREMENT_LABELS: Readonly<Record<string, string>> = {
   applicant_resume: 'Resume',
   [I9_IDENTITY_REQUIREMENT]: 'I-9 identity document',
+  [DRIVERS_LICENSE_DOC_TYPE]: "Driver's License",
+  [SOCIAL_SECURITY_CARD_DOC_TYPE]: 'Social Security Card',
   list_a: 'I-9 List A document',
   list_b: 'I-9 List B document',
   list_c: 'I-9 List C document',

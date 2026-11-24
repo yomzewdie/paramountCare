@@ -102,7 +102,7 @@ describe('groupStepsIntoPhases', () => {
         'application_statement', 'background_auth', 'health_info_auth', 'patient_bill_of_rights',
       ]);
       expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
-        'hep_b_declination', 'tdap_declination', 'flu_declination', 'w4', 'i9', 'direct_deposit', 'documents',
+        'hep_b_declination', 'tdap_declination', 'flu_declination', 'w4', 'i9', 'direct_deposit', 'identity_documents', 'documents',
       ]);
       expect(groups.find((g) => g.id === 'safety_review')!.steps.map((s) => s.id)).toEqual([
         'jcaho_review', 'safety_acknowledgements', 'safety_exam', 'review',
@@ -127,7 +127,7 @@ describe('groupStepsIntoPhases', () => {
         ]);
         expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['application_statement', 'background_auth']);
         expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
-          'w4', 'i9', 'direct_deposit', 'documents',
+          'w4', 'i9', 'direct_deposit', 'identity_documents', 'documents',
         ]);
         expect(groups.find((g) => g.id === 'safety_review')!.steps.map((s) => s.id)).toEqual([
           'safety_acknowledgements', 'review',
@@ -153,7 +153,7 @@ describe('groupStepsIntoPhases', () => {
       const groups = groupStepsIntoPhases(progress.steps);
       expect(groups.find((g) => g.id === 'authorizations')!.steps.map((s) => s.id)).toEqual(['application_statement', 'background_auth']);
       expect(groups.find((g) => g.id === 'pay_health_documents')!.steps.map((s) => s.id)).toEqual([
-        'w4', 'i9', 'direct_deposit', 'documents',
+        'w4', 'i9', 'direct_deposit', 'identity_documents', 'documents',
       ]);
       expect(groups.find((g) => g.id === 'safety_review')!.steps.map((s) => s.id)).toEqual([
         'safety_acknowledgements', 'review',
@@ -206,7 +206,7 @@ describe('derivePhaseStatus', () => {
 
   it('is "completed" once every REQUIRED step in the phase is completed, even if raw activity data is incomplete/missing', () => {
     const packet = getPacket('general_rn')!;
-    const phaseStepIds = ['hep_b_declination', 'tdap_declination', 'flu_declination', 'w4', 'i9', 'direct_deposit', 'documents'];
+    const phaseStepIds = ['hep_b_declination', 'tdap_declination', 'flu_declination', 'w4', 'i9', 'direct_deposit', 'identity_documents', 'documents'];
     const allCompleted = Object.fromEntries(phaseStepIds.map((id) => [id, 'completed']));
     const progress = deriveProgress('general_rn', allCompleted)!;
     const group = groupStepsIntoPhases(progress.steps).find((g) => g.id === 'pay_health_documents')!;

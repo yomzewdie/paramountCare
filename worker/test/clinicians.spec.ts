@@ -125,7 +125,7 @@ describe('GET /api/admin/clinicians', () => {
       const jane = byEmail(await list(cookie), 'jane.smith@example.com')!;
       expect(jane).toMatchObject({
         firstName: 'Jane', lastName: 'Smith', position: 'RN', specialtyPreference: ['icu'], primaryClinicalSpecialty: ['icu'],
-        queue: 'almost_done', requiredDocuments: { total: 4, completed: 2, remaining: 2 },
+        queue: 'almost_done', requiredDocuments: { total: 6, completed: 4, remaining: 2 },
         startedAt: '2026-10-01T09:00:00.000Z', lastActiveAt: '2026-11-01T10:00:00.000Z', completedAt: null,
         applicationId: null, documentCount: null, invitation: { status: 'used', sentAt: '2026-09-30T08:00:00.000Z' },
       });
@@ -137,7 +137,7 @@ describe('GET /api/admin/clinicians', () => {
     it('80% or more complete with more than 5 documents owed stays In Progress', async () => {
       const janet = byEmail(await list(cookie), 'janet.smithers@example.com')!;
       expect(janet.completionPercent).toBeGreaterThanOrEqual(80);
-      expect(janet.requiredDocuments).toEqual({ total: 7, completed: 0, remaining: 7 });
+      expect(janet.requiredDocuments).toEqual({ total: 9, completed: 2, remaining: 7 });
       expect(janet.queue).toBe('in_progress');
     });
 

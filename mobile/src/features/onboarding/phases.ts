@@ -77,6 +77,7 @@ const STEP_ID_TO_PHASE: Record<string, OnboardingPhaseId> = {
   w4: 'pay_health_documents',
   i9: 'pay_health_documents',
   direct_deposit: 'pay_health_documents',
+  identity_documents: 'pay_health_documents', // Paramount Care Identity Documents, just before the I-9 selection
   documents: 'pay_health_documents',
 
   jcaho_review: 'safety_review', // general_rn/lvn only

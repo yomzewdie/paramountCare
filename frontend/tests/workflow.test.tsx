@@ -186,6 +186,34 @@ describe('document review panel', () => {
     expect(html).toContain('Reset to Pending');
   });
 
+  it("shows Identity Documents separately from the Form I-9 selection, naming an Identity Documents upload the applicant chose for the I-9", () => {
+    const html = renderToStaticMarkup(<DocumentReviewPanel workflow={workflow({
+      documentReviews: { source: 'application', requirements: [
+        requirement({ requirement: 'drivers_license', label: "Driver's License", docTypes: ['drivers_license'], files: [{ id: 11, fileName: 'dl-front.jpg', fileSize: 1, uploadedAt: '', docType: 'drivers_license' }, { id: 12, fileName: 'dl-back.jpg', fileSize: 1, uploadedAt: '', docType: 'drivers_license' }] }),
+        requirement({ requirement: 'social_security_card', label: 'Social Security Card', docTypes: ['social_security_card'], files: [{ id: 13, fileName: 'ss.jpg', fileSize: 1, uploadedAt: '', docType: 'social_security_card' }] }),
+        requirement({
+          requirement: 'i9_identity', label: 'I-9 identity document', docTypes: ['list_a', 'list_b', 'list_c', 'drivers_license'],
+          files: [{ id: 11, fileName: 'dl-front.jpg', fileSize: 1, uploadedAt: '', docType: 'drivers_license' }, { id: 14, fileName: 'birth-cert.jpg', fileSize: 1, uploadedAt: '', docType: 'list_c' }],
+          reusedFor: [{ slot: 'list_b', source: 'drivers_license' }],
+        }),
+        requirement(),
+      ] },
+    })} />);
+    const at = (text: string) => html.indexOf(text);
+    expect(at('Identity Documents</h3>')).toBeGreaterThan(-1);
+    expect(html).toContain('Paramount Care onboarding requirement');
+    expect(at('Form I-9 document selection</h3>')).toBeGreaterThan(at('Identity Documents</h3>'));
+    expect(at('Other documents</h3>')).toBeGreaterThan(at('Form I-9 document selection</h3>'));
+    // Identity Documents rows come before the I-9 heading; CPR after "Other documents".
+    expect(at('aria-label="Driver&#x27;s License"')).toBeLessThan(at('Form I-9 document selection</h3>'));
+    expect(at('aria-label="CPR / BLS certification"')).toBeGreaterThan(at('Other documents</h3>'));
+    expect(html).toContain('List B: uses the Driver&#x27;s License uploaded in Identity Documents (chosen by the applicant)');
+    expect(html).toContain('(Driver&#x27;s License from Identity Documents)');
+    // Reviewed with the same statuses and secure links as every other document.
+    expect(html).toContain('href="/api/admin/documents/PCS-2026-AB12/11"');
+    expect(html).not.toMatch(/uploads\/|r2\.dev|objectKey/);
+  });
+
   it('shows a correction, a change since review, and a held email', () => {
     const html = renderToStaticMarkup(<DocumentReviewPanel workflow={workflow({
       onHold: { since: '2026-11-02T00:00:00.000Z', by: null, reason: null },

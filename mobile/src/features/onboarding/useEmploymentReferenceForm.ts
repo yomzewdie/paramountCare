@@ -1,11 +1,20 @@
 import { useMemo, useState } from 'react';
-import { defaultEmploymentReference, validateEmploymentReference, type EmploymentReference, type FieldErrors } from '@pcs/shared';
+import {
+  SAME_FACILITY_REFERENCE_WARNING,
+  defaultEmploymentReference,
+  isSameReferenceFacility,
+  validateEmploymentReference,
+  type EmploymentReference,
+  type FieldErrors,
+} from '@pcs/shared';
 import { useSession } from './SessionContext';
 import type { SaveStepResult } from './SessionContext';
 import { visibleErrors as revealTouched, touchAll } from './formTouch';
 import { isStepValidationRejection } from './serverValidationError';
 
 const FORM_DATA_KEY = 'employmentReferences';
+const FIRST_REFERENCE_STEP_ID = 'employment_ref_1';
+const SECOND_REFERENCE_STEP_ID = 'employment_ref_2';
 
 export type SubmitOutcome =
   | { kind: 'saved' }
@@ -61,6 +70,19 @@ export function useEmploymentReferenceForm(stepId: string) {
   const errors = useMemo<FieldErrors>(() => validateEmploymentReference(data), [data]);
 
   const shownErrors = useMemo<FieldErrors>(() => revealTouched(errors, touched), [errors, touched]);
+
+  // Reference #2 naming the same facility as Reference #1: a warning only —
+  // never an error, never blocks Continue, never changes what's saved. Shown
+  // once the facility is entered (left the field, or already saved), not
+  // while it's still being typed, and only when Reference #1 has one too.
+  const savedEmployerName = readStored(session?.formData, stepId).employerName;
+  const firstReferenceFacility = stepId === SECOND_REFERENCE_STEP_ID
+    ? readStored(session?.formData, FIRST_REFERENCE_STEP_ID).employerName
+    : '';
+  const facilityEntered = !!touched.employerName || data.employerName === savedEmployerName;
+  const facilityWarning = stepId === SECOND_REFERENCE_STEP_ID && facilityEntered && isSameReferenceFacility(firstReferenceFacility, data.employerName)
+    ? SAME_FACILITY_REFERENCE_WARNING
+    : null;
 
   function setField<K extends keyof EmploymentReference>(field: K, value: EmploymentReference[K]): void {
     setData((d) => ({ ...d, [field]: value }));
@@ -146,6 +168,8 @@ export function useEmploymentReferenceForm(stepId: string) {
     setField,
     blurField,
     errors: shownErrors,
+    /** Reference #2 only: a non-blocking same-facility notice, or null. */
+    facilityWarning,
     isDirty,
     isSaving,
     isCompleting,

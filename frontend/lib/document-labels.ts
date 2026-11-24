@@ -13,6 +13,9 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   // bank account verification document (voided check, bank letter, or
   // banking-app screenshot).
   direct_deposit_voided_check: 'Direct deposit — bank account verification',
+  // Paramount Care's own Identity Documents requirement — not I-9 documents.
+  drivers_license: "Driver's License",
+  social_security_card: 'Social Security Card',
   list_a: 'I-9 List A document',
   list_b: 'I-9 List B document',
   list_c: 'I-9 List C document',

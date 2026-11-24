@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getPacket,
+  i9ReuseSource,
   validateDocuments,
   defaultFormData,
   type UploadedDocuments,
@@ -9,6 +10,7 @@ import {
 import { useSession } from './SessionContext';
 import { useDocumentSlot } from '../documents/useDocumentSlot';
 import {
+  I9_REUSE_OPTIONS,
   IDENTITY_SLOTS,
   resolveRequiredSlots,
   resolveOptionalSlots,
@@ -61,7 +63,7 @@ function readStoredDocuments(formData: Record<string, unknown> | undefined): Upl
  * instead of within one slot.
  */
 export function useDocumentsForm() {
-  const { session, saveStep } = useSession();
+  const { session, saveStep, reuseForI9 } = useSession();
 
   const step = session ? getPacket(session.packetId)?.steps.find((s) => s.id === STEP_ID) : undefined;
   const requiredSlots = useMemo(() => resolveRequiredSlots(step), [step]);
@@ -69,7 +71,45 @@ export function useDocumentsForm() {
   const requiredDocTypes = useMemo(() => new Set(requiredSlots.map((s) => s.docType)), [requiredSlots]);
   const identityRequired = requiredDocTypes.has('list_a');
 
-  const documents = readStoredDocuments(session?.formData);
+  const storedDocuments = readStoredDocuments(session?.formData);
+
+  // An I-9 List B / List C slot the applicant chose to fill with their
+  // Identity Documents upload (never automatic — see I9_REUSE_OPTIONS). For
+  // every I-9 rule on this screen it counts as that slot's document: the
+  // reused file stands in for the slot's own (which the Worker keeps empty
+  // while a reuse is in place).
+  const reusing = {
+    list_b: !!i9ReuseSource(session?.formData, 'list_b'),
+    list_c: !!i9ReuseSource(session?.formData, 'list_c'),
+  };
+  const documents: UploadedDocuments = {
+    ...storedDocuments,
+    listB: storedDocuments.listB ?? (reusing.list_b ? storedDocuments.driversLicense ?? null : null),
+    listC: storedDocuments.listC ?? (reusing.list_c ? storedDocuments.socialSecurityCard ?? null : null),
+  };
+  const reuse = {
+    list_b: { active: reusing.list_b && !!storedDocuments.driversLicense, available: !!storedDocuments.driversLicense },
+    list_c: { active: reusing.list_c && !!storedDocuments.socialSecurityCard, available: !!storedDocuments.socialSecurityCard },
+  };
+  const [reuseBusy, setReuseBusy] = useState(false);
+  const [reuseError, setReuseError] = useState<string | null>(null);
+
+  /** The applicant's explicit choice to use (or, with `false`, stop using) an
+   * Identity Documents upload for this I-9 slot. List C requires the
+   * applicant's confirmation that the card has no employment restriction. */
+  async function setReuse(docType: 'list_b' | 'list_c', use: boolean, confirmUnrestricted?: boolean): Promise<boolean> {
+    if (!reuseForI9) return false;
+    setReuseBusy(true);
+    setReuseError(null);
+    const choice = use ? { source: I9_REUSE_OPTIONS[docType].source, ...(docType === 'list_c' ? { confirmUnrestricted: confirmUnrestricted === true } : {}) } : null;
+    let result = await reuseForI9(docType, choice);
+    // A stale revision is simply retried once against the fresh session.
+    if (result.status === 'conflict') result = await reuseForI9(docType, choice);
+    setReuseBusy(false);
+    if (result.status === 'saved') return true;
+    setReuseError(result.status === 'error' ? result.error.message : 'Your onboarding was updated elsewhere. Please try again.');
+    return false;
+  }
 
   const [touched, setTouched] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -90,7 +130,7 @@ export function useDocumentsForm() {
 
   const isCompleted = session?.stepStates[STEP_ID] === 'completed';
 
-  const errors = useMemo<FieldErrors>(() => validateDocuments(documents, step), [documents, step]);
+  const errors = useMemo<FieldErrors>(() => validateDocuments(storedDocuments, step, session?.formData), [storedDocuments, step, session?.formData]);
 
   // M14 hardening: `errors.i9` (shared, server-authoritative) only ever
   // asks "does SOME path satisfy the requirement" — by design, since that
@@ -136,8 +176,8 @@ export function useDocumentsForm() {
   // `requiredDocTypes`/`resolveRequiredSlots`, not by which of these calls
   // happened to run.
   const listA = useDocumentSlot('list_a', documents.listA, IDENTITY_DOCUMENT_REQUIREMENT);
-  const listB = useDocumentSlot('list_b', documents.listB, IDENTITY_DOCUMENT_REQUIREMENT);
-  const listC = useDocumentSlot('list_c', documents.listC, IDENTITY_DOCUMENT_REQUIREMENT);
+  const listB = useDocumentSlot('list_b', storedDocuments.listB, IDENTITY_DOCUMENT_REQUIREMENT);
+  const listC = useDocumentSlot('list_c', storedDocuments.listC, IDENTITY_DOCUMENT_REQUIREMENT);
   const nursingLicense = useDocumentSlot('nursing_license', documents.nursingLicense, CREDENTIAL_DOCUMENT_REQUIREMENT);
   const cprCertification = useDocumentSlot('cpr_cert', documents.cprCertification, CREDENTIAL_DOCUMENT_REQUIREMENT);
 
@@ -190,22 +230,31 @@ export function useDocumentsForm() {
     if (identityPath === 'list_b_c' && documents.listB && documents.listC && documents.listA) {
       removeOnce('list_a', documents.listA.objectKey, listA);
     } else if (identityPath === 'list_a' && documents.listA) {
-      if (documents.listB) removeOnce('list_b', documents.listB.objectKey, listB);
-      if (documents.listC) removeOnce('list_c', documents.listC.objectKey, listC);
+      // Only the slots' OWN files are removed; a reused Identity Documents
+      // upload is never deleted here — just no longer used for the I-9.
+      if (storedDocuments.listB) removeOnce('list_b', storedDocuments.listB.objectKey, listB);
+      if (storedDocuments.listC) removeOnce('list_c', storedDocuments.listC.objectKey, listC);
+      for (const docType of ['list_b', 'list_c'] as const) {
+        const guardKey = `reuse:${docType}`;
+        if (reusing[docType] && !cleanedUpKeys.current.has(guardKey)) {
+          cleanedUpKeys.current.add(guardKey);
+          void setReuse(docType, false);
+        }
+      }
     }
     // listA/listB/listC are fresh objects every render (useDocumentSlot
     // returns a new object each time) — depending on the actual document
     // values (which only change when the session does) instead avoids
     // re-running this effect on every unrelated render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [identityRequired, identityPath, documents.listA, documents.listB, documents.listC]);
+  }, [identityRequired, identityPath, documents.listA, documents.listB, documents.listC, reusing.list_b, reusing.list_c]);
 
   async function saveProgress(): Promise<SubmitOutcome> {
     setIsSaving(true);
     setSaveError(null);
     const result = await saveStep({
       formDataKey: FORM_DATA_KEY,
-      stepData: documents,
+      stepData: storedDocuments,
       stepId: STEP_ID,
       status: isCompleted ? undefined : 'in_progress',
     });
@@ -234,7 +283,7 @@ export function useDocumentsForm() {
 
     setIsCompleting(true);
     setSaveError(null);
-    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: documents, stepId: STEP_ID, status: 'completed' });
+    const result = await saveStep({ formDataKey: FORM_DATA_KEY, stepData: storedDocuments, stepId: STEP_ID, status: 'completed' });
     setIsCompleting(false);
     if (result.status === 'saved') return { kind: 'saved' };
     if (result.status === 'conflict') return { kind: 'conflict' };
@@ -251,8 +300,15 @@ export function useDocumentsForm() {
     requiredSlots,
     /** Documents this packet offers but doesn't require. */
     optionalSlots,
-    /** The session's stored uploads for this step. */
+    /** This step's documents as the I-9 rules see them: each slot's own
+     * upload, or the Identity Documents upload the applicant chose for it. */
     documents,
+    /** Per I-9 List B / List C slot: whether an Identity Documents upload can
+     * be reused there, and whether it currently is. */
+    reuse,
+    setReuse,
+    reuseBusy,
+    reuseError,
     identityRequired,
     identityPath,
     setIdentityPath,

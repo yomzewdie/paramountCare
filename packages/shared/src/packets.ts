@@ -65,13 +65,22 @@ export interface PacketStep {
    * Narrows rendering within a type family.
    * government_form: 'i9' | 'w4'
    * internal_form:   'employment_application' | 'direct_deposit'
-   * document_upload: 'resume' (the applicant's resume); omitted for the
-   *                  config-driven Documents & Credentials step
+   * document_upload: 'resume' (the applicant's resume); 'identity_documents'
+   *                  (Paramount Care's Driver's License + Social Security
+   *                  Card); omitted for the config-driven Documents &
+   *                  Credentials step
    */
   subtype?: string;
   label: string;
   /** Required steps must be completed before the packet can be submitted. */
   required: boolean;
+  /**
+   * Added to the packet after applications were already being submitted
+   * (today: Identity Documents). An application submitted without it is not
+   * held to it — see requiredDocuments.ts stepsInForce. Sessions still in
+   * progress must complete it like any other required step.
+   */
+  addedLater?: boolean;
   config?: PacketStepConfig;
 }
 
@@ -202,6 +211,23 @@ const APPLICANT_DETAILS_STEP: PacketStep = {
   label:    'Applicant Details',
   required: true,
   config:   { requiresSignature: true },
+};
+
+// Paramount Care's own identity-document requirement (Driver's License and
+// Social Security Card), separate from — and just before — the federal Form
+// I-9 document selection in Documents & Credentials. Not an I-9 step and not
+// tied to citizenship status. Added as a new step id: sessions already in
+// progress keep every completed step and simply have this one still to do;
+// an application submitted before it existed is never held to it
+// (requiredDocuments.ts stepsInForce).
+const IDENTITY_DOCUMENTS_STEP: PacketStep = {
+  id:       'identity_documents',
+  type:     'document_upload',
+  subtype:  'identity_documents',
+  label:    'Identity Documents',
+  required: true,
+  addedLater: true,
+  config:   { requiredUploads: ['drivers_license', 'social_security_card'] },
 };
 
 // Full GENERAL_RN packet per OnboardingFlow.pdf, resume-first.
@@ -382,6 +408,7 @@ const GENERAL_RN_STEPS: PacketStep[] = [
   },
 
   // Phase 6 — Document Uploads
+  IDENTITY_DOCUMENTS_STEP,
   {
     id:       'documents',
     type:     'document_upload',
@@ -459,6 +486,7 @@ const VARIANT_BASE_STEPS: PacketStep[] = [
   { id: 'w4',                  type: 'government_form',  subtype: 'w4',   label: 'Tax Forms / W-4',              required: true, config: { requiresSignature: true } },
   { id: 'i9',                  type: 'government_form',  subtype: 'i9',   label: 'Form I-9 (Section 1)',         required: true, config: { requiresSignature: true } },
   { id: 'direct_deposit',      type: 'internal_form',    subtype: 'direct_deposit', label: 'Direct Deposit Authorization', required: true, config: { requiresSignature: true } },
+  IDENTITY_DOCUMENTS_STEP,
   { id: 'documents',           type: 'document_upload',      label: 'Documents & Credentials',  required: true, config: { i9Uploads: true, requiredUploads: ['cpr_cert'], optionalUploads: ['nursing_license'] } },
   { id: 'safety_acknowledgements', type: 'acknowledgement',  label: 'Safety & Education Exam',       required: true, config: { acknowledgementId: 'safety_acknowledgements', requiresSignature: false } },
   { id: 'review',              type: 'review',               label: 'Review & Submit',               required: true },

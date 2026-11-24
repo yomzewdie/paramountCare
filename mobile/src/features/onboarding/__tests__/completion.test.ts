@@ -51,7 +51,7 @@ const FULLY_COMPLETE_FORM_DATA: OnboardingFormData = {
     patientSafety: true, infectionControl: true, fireSafety: true, patientRightsHipaa: true,
     workplaceViolence: true, backSafety: true, hazardousMaterials: true, documentationStandards: true, examAttestation: true,
   },
-  uploadedDocuments: { listA: VALID_UPLOAD, listB: null, listC: null, nursingLicense: VALID_UPLOAD, cprCertification: VALID_UPLOAD },
+  uploadedDocuments: { listA: VALID_UPLOAD, listB: null, listC: null, nursingLicense: VALID_UPLOAD, cprCertification: VALID_UPLOAD, driversLicense: VALID_UPLOAD, socialSecurityCard: VALID_UPLOAD },
   acknowledgements: {
     application_statement: SIGNED_ACK,
     background_auth: SIGNED_ACK,

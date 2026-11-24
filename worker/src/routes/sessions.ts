@@ -3,7 +3,10 @@ import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/requireAuth';
 import { requireApplicant } from '../middleware/requireApplicant';
-import { createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema, submitSessionSchema } from '../schemas/sessions';
+import {
+  createSessionSchema, updateSessionSchema, associateDocumentSchema, removeDocumentSchema, submitSessionSchema,
+  reuseDocumentSchema, stopReusingDocumentSchema,
+} from '../schemas/sessions';
 import { generateSessionId } from '../utils/sessionId';
 import {
   MAX_ATTACHMENTS_PER_DOCUMENT,
@@ -19,9 +22,13 @@ import {
   START_DATE_IN_PAST_MESSAGE,
   defaultFormData,
   withDocumentAttachments,
-  docTypesForRequirement,
   requiredDocumentGroups,
   requirementForDocType,
+  documentRequirementLabel,
+  i9ReuseSource,
+  reusableSourceForI9DocType,
+  stepsInForce,
+  withI9Reuse,
   type OnboardingFormData,
   type UploadedFile,
 } from '@pcs/shared';
@@ -71,7 +78,7 @@ function serializeSession(row: OnboardingSessionRow) {
   try { formData = JSON.parse(row.form_data_json || '{}'); } catch { /* leave {} */ }
 
   const packet = getPacket(row.packet_id);
-  const completionPercent = packet ? computeOverallCompletion(packet, withDefaults(formData)) : null;
+  const completionPercent = packet ? computeOverallCompletion(stepsInForce(packet, { status: row.status, stepStates }), withDefaults(formData)) : null;
 
   return {
     sessionId: row.session_id,
@@ -177,9 +184,13 @@ async function documentAccess(db: D1Database, session: OnboardingSessionRow, doc
 
 function leavesRequiredDocumentEmpty(session: OnboardingSessionRow, nextFormData: Record<string, unknown>, docType: string): boolean {
   const packet = getPacket(session.packet_id);
+  if (!packet) return false;
+  let stepStates: Record<string, unknown> = {};
+  try { stepStates = JSON.parse(session.step_states_json || '{}'); } catch { /* none */ }
   const requirement = requirementForDocType(docType);
-  if (!packet || !requiredDocumentGroups(packet, nextFormData).some((g) => g.key === requirement)) return false;
-  return docTypesForRequirement(requirement).every((type) => documentAttachmentsFor(nextFormData, type).length === 0);
+  const group = requiredDocumentGroups(stepsInForce(packet, { status: session.status, stepStates }), nextFormData).find((g) => g.key === requirement);
+  // Its doc types include an Identity Documents upload reused for the I-9.
+  return !!group && group.docTypes.every((type) => documentAttachmentsFor(nextFormData, type).length === 0);
 }
 
 /** A file no longer part of a requirement is deleted — unless it was
@@ -204,10 +215,19 @@ async function reconcileAfterCorrection(db: D1Database, session: OnboardingSessi
 
 /** Applies a document change to the recruiter's review: a reviewed
  * requirement goes back to Pending (audited). Never fails the request. */
-async function afterDocumentChange(db: D1Database, session: OnboardingSessionRow, docType: string): Promise<void> {
+async function afterDocumentChange(db: D1Database, session: OnboardingSessionRow, docType: string, updated?: OnboardingSessionRow): Promise<void> {
   try {
     const record = session.user_id !== null ? await findClinicianRecordByUserId(db, session.user_id) : null;
-    if (record) await recordApplicantDocumentChange(db, { clinicianId: record.id, docType, applicationId: session.application_id, sessionId: session.session_id });
+    if (!record) return;
+    const change = (type: string) => recordApplicantDocumentChange(db, { clinicianId: record.id, docType: type, applicationId: session.application_id, sessionId: session.session_id });
+    await change(docType);
+    // An Identity Documents upload the applicant chose to use for their I-9
+    // changed: so did that I-9 document (one I-9 requirement, however many
+    // slots reuse it).
+    let formData: Record<string, unknown> = {};
+    try { formData = JSON.parse(updated?.form_data_json || '{}'); } catch { /* none */ }
+    const reusing = (['list_b', 'list_c'] as const).find((i9DocType) => i9ReuseSource(formData, i9DocType) === docType);
+    if (reusing) await change(reusing);
   } catch (e) {
     console.error('[sessions] document review reset failed after a document change:', e);
   }
@@ -228,6 +248,7 @@ const SERVER_OWNED_FORM_DATA_KEYS = [
   'vaccineProofDocuments',
   'directDepositProofDocument',
   'documentAttachments',
+  'i9DocumentReuse',
 ] as const;
 
 function withServerOwnedKeys(incoming: Record<string, unknown>, stored: Record<string, unknown>): Record<string, unknown> {
@@ -606,7 +627,10 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
       ? [replaceObjectKey]
       : (await findSlotDocuments(c.env.DB, { sessionId, docType })).map((row) => row.object_key);
 
-  const nextFormData = withDocumentAttachments(storedFormData, docType, nextFiles);
+  // A file of its own for an I-9 List B / List C slot replaces any reused
+  // Identity Documents upload there.
+  const withFiles = withDocumentAttachments(storedFormData, docType, nextFiles);
+  const nextFormData = docType === 'list_b' || docType === 'list_c' ? withI9Reuse(withFiles, docType, null) : withFiles;
 
   const updateResult = await updateSessionWithRevision(c.env.DB, {
     sessionId,
@@ -651,7 +675,7 @@ sessions.post('/:sessionId/documents/:docType', async (c) => {
     if (staleKey === objectKey) continue;
     await retireDocument(c.env, { objectKey: staleKey, userId: payload.uid });
   }
-  await afterDocumentChange(c.env.DB, authResult.session, docType);
+  await afterDocumentChange(c.env.DB, authResult.session, docType, updateResult.session);
 
   return c.json(serializeSession(updateResult.session), 200);
 });
@@ -705,11 +729,13 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
   const removedKeys = removeOneKey
     ? [removeOneKey]
     : (await findSlotDocuments(c.env.DB, { sessionId, docType })).map((row) => row.object_key);
-  const nextFormData = withDocumentAttachments(
+  const withoutFiles = withDocumentAttachments(
     storedFormData,
     docType,
     removeOneKey ? currentFiles.filter((f) => f.objectKey !== removeOneKey) : [],
   );
+  // Clearing an I-9 List B / List C slot also clears a reused upload there.
+  const nextFormData = !removeOneKey && (docType === 'list_b' || docType === 'list_c') ? withI9Reuse(withoutFiles, docType, null) : withoutFiles;
   // A correction to a submitted application fixes a required document; it
   // never leaves one empty (an optional one may simply be removed).
   if (access === 'correction' && leavesRequiredDocumentEmpty(authResult.session, nextFormData, docType)) {
@@ -740,8 +766,140 @@ sessions.delete('/:sessionId/documents/:docType', async (c) => {
   for (const removedKey of removedKeys) {
     await retireDocument(c.env, { objectKey: removedKey, userId: payload.uid });
   }
-  await afterDocumentChange(c.env.DB, authResult.session, docType);
+  await afterDocumentChange(c.env.DB, authResult.session, docType, updateResult.session);
 
+  return c.json(serializeSession(updateResult.session), 200);
+});
+
+// ── PUT/DELETE /api/sessions/:sessionId/documents/:docType/reuse ───────────
+//
+// The applicant's own choice to use the Driver's License / Social Security
+// card they uploaded in Identity Documents as their I-9 List B / List C
+// document, instead of uploading it again (documentAttachments.ts). Only the
+// legally applicable pairing is accepted, List C only with the applicant's
+// confirmation that the card carries no employment restriction, and only
+// while the source holds files in THIS session. Named by document type —
+// never by object key — so it can't reach another session's or applicant's
+// files. Same ownership, submitted-lock / correction and revision rules as
+// every other document change.
+function readFormData(session: OnboardingSessionRow): Record<string, unknown> {
+  try {
+    return JSON.parse(session.form_data_json || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function sessionConflict(c: Context<AppEnv>, current: OnboardingSessionRow) {
+  return c.json(
+    { error: 'Conflict', message: 'This session was updated elsewhere since you last read it.', currentRevision: current.revision, current: serializeSession(current) },
+    409,
+  );
+}
+
+sessions.put('/:sessionId/documents/:docType/reuse', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const docType = c.req.param('docType');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+
+  const source = reusableSourceForI9DocType(docType);
+  if (!source || (docType !== 'list_b' && docType !== 'list_c')) {
+    return c.json({ error: 'Only an I-9 List B or List C document can use an upload from Identity Documents.' }, 422);
+  }
+
+  const authResult = await loadOwnedSession(c, sessionId);
+  if (!authResult.ok) return authResult.response;
+  const access = await documentAccess(c.env.DB, authResult.session, docType);
+  if (access === 'locked') return rejectIfSubmitted(authResult.session)!;
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const parsed = reuseDocumentSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
+  }
+  if (parsed.data.source !== source) {
+    return c.json({ error: "A Driver's License can be used only as a List B document, and a Social Security card only as a List C document." }, 422);
+  }
+  if (docType === 'list_c' && parsed.data.confirmUnrestricted !== true) {
+    return c.json({ error: 'Confirm that your Social Security card has no employment restriction to use it as your List C document.' }, 422);
+  }
+
+  const storedFormData = readFormData(authResult.session);
+  if (documentAttachmentsFor(storedFormData, source).length === 0) {
+    return c.json({ error: `Upload your ${documentRequirementLabel(source)} in Identity Documents first.` }, 409);
+  }
+
+  // The slot's own files (if any) give way to the reused upload, cleaned up
+  // only once the change is saved — exactly like replacing them.
+  const staleKeys = (await findSlotDocuments(c.env.DB, { sessionId, docType })).map((row) => row.object_key);
+  const nextFormData = withI9Reuse(withDocumentAttachments(storedFormData, docType, []), docType, {
+    source,
+    selectedAt: new Date().toISOString(),
+    ...(docType === 'list_c' ? { unrestrictedConfirmed: true } : {}),
+  });
+
+  const updateResult = await updateSessionWithRevision(c.env.DB, {
+    sessionId, expectedRevision: parsed.data.revision, ownerUserId: payload.uid, formDataJson: JSON.stringify(nextFormData),
+  });
+  if (!updateResult.ok) {
+    if (updateResult.reason === 'not_found') return c.json({ error: 'Session not found' }, 404);
+    return sessionConflict(c, updateResult.current);
+  }
+
+  if (access === 'correction') await reconcileAfterCorrection(c.env.DB, updateResult.session);
+  for (const staleKey of staleKeys) await retireDocument(c.env, { objectKey: staleKey, userId: payload.uid });
+  await afterDocumentChange(c.env.DB, authResult.session, docType, updateResult.session);
+  return c.json(serializeSession(updateResult.session), 200);
+});
+
+sessions.delete('/:sessionId/documents/:docType/reuse', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const docType = c.req.param('docType');
+  const payload = c.get('jwtPayload');
+  if (!payload) return c.json({ error: 'Unauthorized' }, 401);
+  if (docType !== 'list_b' && docType !== 'list_c') {
+    return c.json({ error: 'Only an I-9 List B or List C document can use an upload from Identity Documents.' }, 422);
+  }
+
+  const authResult = await loadOwnedSession(c, sessionId);
+  if (!authResult.ok) return authResult.response;
+  const access = await documentAccess(c.env.DB, authResult.session, docType);
+  if (access === 'locked') return rejectIfSubmitted(authResult.session)!;
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const parsed = stopReusingDocumentSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Validation failed', issues: parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }, 422);
+  }
+
+  const storedFormData = readFormData(authResult.session);
+  const nextFormData = withI9Reuse(storedFormData, docType, null);
+  if (JSON.stringify(nextFormData) === JSON.stringify(storedFormData)) return c.json(serializeSession(authResult.session), 200);
+  if (access === 'correction' && leavesRequiredDocumentEmpty(authResult.session, nextFormData, docType)) {
+    return c.json({ error: 'Upload the corrected document before removing the last file — this document is required.' }, 422);
+  }
+
+  const updateResult = await updateSessionWithRevision(c.env.DB, {
+    sessionId, expectedRevision: parsed.data.revision, ownerUserId: payload.uid, formDataJson: JSON.stringify(nextFormData),
+  });
+  if (!updateResult.ok) {
+    if (updateResult.reason === 'not_found') return c.json({ error: 'Session not found' }, 404);
+    return sessionConflict(c, updateResult.current);
+  }
+
+  if (access === 'correction') await reconcileAfterCorrection(c.env.DB, updateResult.session);
+  await afterDocumentChange(c.env.DB, authResult.session, docType, updateResult.session);
   return c.json(serializeSession(updateResult.session), 200);
 });
 

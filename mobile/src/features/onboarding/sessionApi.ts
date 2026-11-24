@@ -218,6 +218,45 @@ export async function removeDocument(
   }
 }
 
+/** `PUT /api/sessions/:sessionId/documents/:docType/reuse` — the applicant's
+ * explicit choice to use an Identity Documents upload (Driver's License as
+ * List B; Social Security card as List C, with `confirmUnrestricted`) for
+ * their I-9 instead of uploading it again. Same revision/409 contract. */
+export async function reuseDocument(
+  sessionId: string,
+  docType: 'list_b' | 'list_c',
+  payload: { revision: number; source: string; confirmUnrestricted?: boolean },
+): Promise<UpdateSessionResult> {
+  return documentReuseRequest(sessionId, docType, 'PUT', payload);
+}
+
+/** `DELETE /api/sessions/:sessionId/documents/:docType/reuse` — stop using it. */
+export async function stopReusingDocument(sessionId: string, docType: 'list_b' | 'list_c', payload: { revision: number }): Promise<UpdateSessionResult> {
+  return documentReuseRequest(sessionId, docType, 'DELETE', payload);
+}
+
+async function documentReuseRequest(sessionId: string, docType: string, method: 'PUT' | 'DELETE', payload: Record<string, unknown>): Promise<UpdateSessionResult> {
+  try {
+    const res = await authedRequest(`/api/sessions/${sessionId}/documents/${docType}/reuse`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 409) {
+      const body = (await res.json()) as { current?: SessionResponse; error?: string };
+      if (body.current) return { ok: false, conflict: true, current: body.current };
+      return { ok: false, conflict: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => undefined);
+      return { ok: false, conflict: false, error: toAppError(res.status, body, 'authenticatedRequest') };
+    }
+    return { ok: true, data: (await res.json()) as SessionResponse };
+  } catch (err) {
+    return { ok: false, conflict: false, error: networkFailureToAppError(err) };
+  }
+}
+
 export interface IncompleteStepInfo {
   id: string;
   label: string;

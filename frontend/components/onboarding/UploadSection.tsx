@@ -83,6 +83,9 @@ const IDLE_SLOTS: SlotsState = {
   listC: { status: 'idle' },
   nursingLicense: { status: 'idle' },
   cprCertification: { status: 'idle' },
+  // Mobile-only Identity Documents slots: never offered by this legacy web form.
+  driversLicense: { status: 'idle' },
+  socialSecurityCard: { status: 'idle' },
 };
 
 // ── Drop zone card ─────────────────────────────────────────────────────────────

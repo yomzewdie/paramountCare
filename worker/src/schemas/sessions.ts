@@ -52,6 +52,21 @@ export const removeDocumentSchema = z.object({
 });
 export type RemoveDocumentPayload = z.infer<typeof removeDocumentSchema>;
 
+// The applicant's choice to use an Identity Documents upload (Driver's
+// License / Social Security card) as their I-9 List B / List C document —
+// named by document TYPE, never by object key, so it can only ever resolve to
+// this session's own files. List C requires the applicant's confirmation that
+// the card carries no employment restriction.
+export const reuseDocumentSchema = z.object({
+  revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+  source: z.string().min(1, 'source is required'),
+  confirmUnrestricted: z.boolean().optional(),
+});
+
+export const stopReusingDocumentSchema = z.object({
+  revision: z.number().int().nonnegative('revision must be a non-negative integer'),
+});
+
 // M16 — final submission. Same revision contract as every other
 // session-mutating endpoint; no other client-supplied field is accepted
 // (in particular, no client-supplied "ready"/"complete" flag — see

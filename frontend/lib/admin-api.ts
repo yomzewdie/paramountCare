@@ -117,6 +117,8 @@ const UPLOADED_DOCUMENT_LABELS: Record<string, string> = {
   listC: DOC_TYPE_LABELS.list_c,
   nursingLicense: DOC_TYPE_LABELS.nursing_license,
   cprCertification: DOC_TYPE_LABELS.cpr_cert,
+  driversLicense: DOC_TYPE_LABELS.drivers_license,
+  socialSecurityCard: DOC_TYPE_LABELS.social_security_card,
 };
 
 const VACCINE_STEP_LABELS: Record<string, string> = {

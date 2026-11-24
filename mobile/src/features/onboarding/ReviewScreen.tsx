@@ -12,7 +12,7 @@ import { useReviewSubmission } from './useReviewSubmission';
 import {
   EMPLOYMENT_TYPE_OPTIONS, LEGACY_EMPLOYMENT_TYPE_LABELS, LEGACY_LICENSE_TYPE_LABELS, LEGACY_SHIFT_PREFERENCE_LABELS,
   LICENSE_TYPE_OPTIONS, POSITION_OPTIONS, SHIFT_PREFERENCE_OPTIONS, SPECIALTY_OPTIONS,
-  documentAttachmentsFor, finalizeEmploymentApplication, formatOptionValues, formatYearsOfExperience, isoDateToDisplay, isoDateToSlash,
+  documentAttachmentsFor, finalizeEmploymentApplication, formatOptionValues, formatYearsOfExperience, i9ReuseSource, i9SlotFilled, isoDateToDisplay, isoDateToSlash,
 } from '@pcs/shared';
 import type {
   PersonalInfo, EmploymentReference, AcknowledgementEntry,
@@ -133,6 +133,12 @@ function CheckRow({ label, checked }: { label: string; checked: boolean }) {
   );
 }
 
+
+/** The upload fields the I-9 summary reads (its own slots, and the Identity
+ * Documents uploads an applicant may have chosen to reuse for List B / C). */
+const I9_UPLOAD_FIELDS: Record<string, keyof UploadedDocuments> = {
+  list_a: 'listA', list_b: 'listB', list_c: 'listC', drivers_license: 'driversLicense', social_security_card: 'socialSecurityCard',
+};
 export default function ReviewScreen() {
   const theme = useTheme();
   const router = useRouter();
@@ -159,6 +165,8 @@ export default function ReviewScreen() {
   const i9Data = (formData.i9Data ?? {}) as Partial<I9Data>;
   const safetyEducation = (formData.safetyEducation ?? {}) as Partial<SafetyEducationData>;
   const uploadedDocuments = (formData.uploadedDocuments ?? {}) as Partial<UploadedDocuments>;
+  const i9SlotHas = (docType: string) => !!I9_UPLOAD_FIELDS[docType] && !!uploadedDocuments[I9_UPLOAD_FIELDS[docType]];
+  const i9DocumentsChosen = i9SlotFilled(formData, 'list_a', i9SlotHas) || (i9SlotFilled(formData, 'list_b', i9SlotHas) && i9SlotFilled(formData, 'list_c', i9SlotHas));
   const resumeDocument = (formData.resumeDocument ?? null) as UploadedFile | null;
 
   // A step stored as 'completed' under older rules shows "Needs attention"
@@ -353,8 +361,18 @@ export default function ReviewScreen() {
         </Text>
       </SectionCard>
 
+      {stepInfo('identity_documents').exists ? (
+        <SectionCard title="Identity Documents" {...stepInfo('identity_documents')} stepId="identity_documents" onEdit={onEdit}>
+          <CheckRow label="Driver's License" checked={!!uploadedDocuments.driversLicense} />
+          <CheckRow label="Social Security Card" checked={!!uploadedDocuments.socialSecurityCard} />
+        </SectionCard>
+      ) : null}
+
       <SectionCard title="Documents & Credentials" {...stepInfo('documents')} stepId="documents" onEdit={onEdit}>
-        <CheckRow label="Identity & Work Authorization (I-9)" checked={!!uploadedDocuments.listA || (!!uploadedDocuments.listB && !!uploadedDocuments.listC)} />
+        <CheckRow label="Identity & Work Authorization (I-9)" checked={i9DocumentsChosen} />
+        {i9ReuseSource(formData, 'list_b') || i9ReuseSource(formData, 'list_c') ? (
+          <FieldRow label="I-9 documents from Identity Documents" value={[i9ReuseSource(formData, 'list_b') ? "Driver's License (List B)" : null, i9ReuseSource(formData, 'list_c') ? 'Social Security Card (List C)' : null].filter(Boolean).join(', ')} />
+        ) : null}
         <FieldRow
           label="Professional License / Certification (optional)"
           value={uploadedDocuments.nursingLicense ? attachmentCount(documentAttachmentsFor(formData, 'nursing_license').length) : 'Not provided'}

@@ -4,6 +4,7 @@ import {
   isPacketComplete,
   isStepValid,
   resolveNextRequiredStep,
+  stepsInForce,
   type OnboardingFormData,
   type OnboardingPacket,
   type StepStates,
@@ -83,9 +84,13 @@ export function deriveProgress(
   packetId: string,
   stepStatesRaw: Record<string, string>,
   formData?: Record<string, unknown>,
+  /** The session's status: a submitted application is held only to the steps
+   * it was submitted under (shared stepsInForce). */
+  status?: string,
 ): OnboardingProgress | null {
-  const packet = getPacket(packetId);
-  if (!packet) return null;
+  const current = getPacket(packetId);
+  if (!current) return null;
+  const packet = stepsInForce(current, { status, stepStates: stepStatesRaw });
 
   // The Worker only ever writes values validated against the same
   // StepStatus enum this type describes (see worker/src/schemas/sessions.ts

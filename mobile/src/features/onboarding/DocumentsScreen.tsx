@@ -11,7 +11,19 @@ import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { useDocumentsForm } from './useDocumentsForm';
 import { useSession } from './SessionContext';
 import { DocumentSlotCard } from '../../components/DocumentSlotCard';
+import { CheckboxField } from '../../components/CheckboxField';
 import { attachmentSummary, buildDocumentChecklist, type ChecklistItem } from '../documents/documentChecklist';
+import { I9_REUSE_OPTIONS } from '../documents/documentSlots';
+
+const REUSED_LABEL: Record<string, string> = {
+  drivers_license: "Driver's License from Identity Documents",
+  social_security_card: 'Social Security Card from Identity Documents',
+};
+
+/** The applicant confirms the card qualifies for List C (Form I-9 accepts a
+ * Social Security card only without an employment restriction). */
+const UNRESTRICTED_CARD_CONFIRMATION =
+  'My Social Security card is not printed with "NOT VALID FOR EMPLOYMENT", "VALID FOR WORK ONLY WITH INS AUTHORIZATION" or "VALID FOR WORK ONLY WITH DHS AUTHORIZATION".';
 
 /**
  * Documents & Credentials — a guided checklist over the same required
@@ -42,7 +54,13 @@ export default function DocumentsScreen() {
     identityPath: form.identityPath,
     documents: form.documents,
     formData: session?.formData,
+    reusedFrom: {
+      ...(form.reuse.list_b.active ? { list_b: I9_REUSE_OPTIONS.list_b.source } : {}),
+      ...(form.reuse.list_c.active ? { list_c: I9_REUSE_OPTIONS.list_c.source } : {}),
+    },
   });
+  // List C reuse needs the applicant's own confirmation first.
+  const [cardUnrestricted, setCardUnrestricted] = useState(false);
 
   // The item the applicant opened with Manage/Add, until they tap Done.
   const [reopened, setReopened] = useState<string | null>(null);
@@ -82,6 +100,42 @@ export default function DocumentsScreen() {
     <Text style={[theme.typography.caption, { color, marginBottom: theme.spacing.sm }]}>{text}</Text>
   );
 
+  /** For List B / List C: use the matching Identity Documents upload instead
+   * of uploading it again — only if the applicant chooses to — or, once
+   * chosen, say so (uploading a different document below replaces it). */
+  function renderReuse(docType: 'list_b' | 'list_c') {
+    const option = I9_REUSE_OPTIONS[docType];
+    const state = form.reuse[docType];
+    if (state.active) {
+      return (
+        <View testID={`reuse-active-${docType}`} style={{ marginBottom: theme.spacing.sm, padding: theme.spacing.md, borderRadius: theme.radii.md, backgroundColor: theme.colors.successSurface }}>
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.success }]}>✓ {option.inUse}</Text>
+          {caption('To use a different document instead, upload it below.')}
+          <Button label="Stop using it" variant="secondary" disabled={form.reuseBusy} onPress={() => void form.setReuse(docType, false)} />
+        </View>
+      );
+    }
+    if (!state.available) return null;
+    const needsConfirmation = docType === 'list_c';
+    return (
+      <View testID={`reuse-offer-${docType}`} style={{ marginBottom: theme.spacing.sm }}>
+        {docType === 'list_b'
+          ? caption("A driver's license issued by a U.S. state or outlying possession is a List B document.")
+          : caption('A Social Security card is a List C document only if it has no employment restriction.')}
+        {needsConfirmation ? (
+          <CheckboxField label={UNRESTRICTED_CARD_CONFIRMATION} value={cardUnrestricted} onChange={setCardUnrestricted} />
+        ) : null}
+        <Button
+          label={option.useLabel}
+          disabled={form.reuseBusy || (needsConfirmation && !cardUnrestricted)}
+          onPress={() => void form.setReuse(docType, true, needsConfirmation ? cardUnrestricted : undefined)}
+        />
+        {form.reuseError ? caption(form.reuseError, theme.colors.danger) : null}
+        <Text style={[theme.typography.caption, { color: theme.colors.textMuted, marginTop: theme.spacing.sm }]}>Or upload a different document:</Text>
+      </View>
+    );
+  }
+
   function renderItem(item: ChecklistItem, index: number) {
     const hook = form.slotHooks[item.docType];
     const error = item.group === 'credential' ? form.errors[item.slot.formDataField] : undefined;
@@ -92,6 +146,7 @@ export default function DocumentsScreen() {
           <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>
             {index + 1}. {item.slot.label}
           </Text>
+          {item.docType === 'list_b' || item.docType === 'list_c' ? renderReuse(item.docType) : null}
           <DocumentSlotCard slot={item.slot} hook={hook} error={error} />
           {reopened === item.docType ? (
             <Button label="Done" variant="secondary" onPress={() => setReopened(null)} />
@@ -114,7 +169,7 @@ export default function DocumentsScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[theme.typography.bodyStrong, { color: item.done ? theme.colors.text : theme.colors.textMuted }]}>{item.slot.label}</Text>
               <Text numberOfLines={1} style={[theme.typography.caption, { color: theme.colors.textMuted }]}>
-                {item.done ? attachmentSummary(item.attachments) : item.optional ? 'Optional' : 'Up next'}
+                {item.reusedFrom ? REUSED_LABEL[item.reusedFrom] : item.done ? attachmentSummary(item.attachments) : item.optional ? 'Optional' : 'Up next'}
               </Text>
               {error ? <Text style={[theme.typography.caption, { color: theme.colors.danger }]}>{error}</Text> : null}
             </View>
@@ -171,8 +226,8 @@ export default function DocumentsScreen() {
 
       {checklist.identityRequired ? (
         <View style={{ marginBottom: theme.spacing.md }} onLayout={(e) => setSectionOffset('identity', e)}>
-          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Identity & Work Authorization</Text>
-          {caption('Choose one way to verify your identity and work authorization.')}
+          <Text style={[theme.typography.bodyStrong, { color: theme.colors.text, marginBottom: theme.spacing.xs }]}>Form I-9: Identity & Work Authorization</Text>
+          {caption('Choose one way to verify your identity and work authorization under the federal Form I-9 rules: one List A document, or one List B document and one List C document. This is your own choice — documents you uploaded in Identity Documents are used here only if you select them.')}
           <View style={{ flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.sm }}>
             <View style={{ flex: 1 }}>
               <Button label="List A document" variant={form.identityPath === 'list_a' ? 'primary' : 'secondary'} onPress={() => form.setIdentityPath('list_a')} />
